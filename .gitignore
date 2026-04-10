@@ -15,7 +15,7 @@
 # vendor/
 
 # Project specific
-/knot
+/bin/
 /doc/
 
 # IDE

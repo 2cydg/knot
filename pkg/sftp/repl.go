@@ -2,7 +2,9 @@ package sftp
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -40,8 +42,8 @@ func RunREPL(client *sftp.Client, alias string) error {
 		prompt := fmt.Sprintf("sftp:%s> ", cwd)
 		input, err := line.Prompt(prompt)
 		if err != nil {
-			if err == liner.ErrPromptAborted {
-				fmt.Println("Aborted")
+			if err == liner.ErrPromptAborted || err == io.EOF {
+				fmt.Println()
 				return nil
 			}
 			return err
@@ -62,11 +64,11 @@ func RunREPL(client *sftp.Client, alias string) error {
 		case "exit", "quit", "bye":
 			return nil
 		case "ls":
-			path := cwd
+			p := cwd
 			if len(args) > 1 {
-				path = resolvePath(cwd, args[1])
+				p = resolvePath(cwd, args[1])
 			}
-			files, err := client.ReadDir(path)
+			files, err := client.ReadDir(p)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				continue
@@ -86,9 +88,13 @@ func RunREPL(client *sftp.Client, alias string) error {
 				continue
 			}
 			newPath := resolvePath(cwd, args[1])
-			_, err := client.Stat(newPath)
+			stat, err := client.Stat(newPath)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
+				continue
+			}
+			if !stat.IsDir() {
+				fmt.Printf("Error: %s is not a directory\n", newPath)
 				continue
 			}
 			cwd = newPath
@@ -98,7 +104,7 @@ func RunREPL(client *sftp.Client, alias string) error {
 				continue
 			}
 			remotePath := resolvePath(cwd, args[1])
-			localPath := filepath.Base(remotePath)
+			localPath := path.Base(remotePath)
 			if len(args) > 2 {
 				localPath = args[2]
 			}
@@ -113,7 +119,7 @@ func RunREPL(client *sftp.Client, alias string) error {
 				continue
 			}
 			localPath := args[1]
-			remotePath := filepath.Join(cwd, filepath.Base(localPath))
+			remotePath := path.Join(cwd, filepath.Base(localPath))
 			if len(args) > 2 {
 				remotePath = resolvePath(cwd, args[2])
 			}
@@ -127,8 +133,8 @@ func RunREPL(client *sftp.Client, alias string) error {
 				fmt.Println("Usage: rm <path>")
 				continue
 			}
-			path := resolvePath(cwd, args[1])
-			if err := client.Remove(path); err != nil {
+			p := resolvePath(cwd, args[1])
+			if err := client.Remove(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			}
 		case "mkdir":
@@ -136,8 +142,17 @@ func RunREPL(client *sftp.Client, alias string) error {
 				fmt.Println("Usage: mkdir <path>")
 				continue
 			}
-			path := resolvePath(cwd, args[1])
-			if err := client.Mkdir(path); err != nil {
+			p := resolvePath(cwd, args[1])
+			if err := client.MkdirAll(p); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+		case "rmdir":
+			if len(args) < 2 {
+				fmt.Println("Usage: rmdir <path>")
+				continue
+			}
+			p := resolvePath(cwd, args[1])
+			if err := client.RemoveDirectory(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			}
 		default:
@@ -146,11 +161,11 @@ func RunREPL(client *sftp.Client, alias string) error {
 	}
 }
 
-func resolvePath(cwd, path string) string {
-	if filepath.IsAbs(path) {
-		return path
+func resolvePath(cwd, p string) string {
+	if path.IsAbs(p) {
+		return path.Clean(p)
 	}
-	return filepath.Clean(filepath.Join(cwd, path))
+	return path.Clean(path.Join(cwd, p))
 }
 
 func printHelp() {
@@ -162,6 +177,7 @@ func printHelp() {
 	fmt.Println("  put <local> [rem]  Upload file")
 	fmt.Println("  rm <path>          Remove remote file")
 	fmt.Println("  mkdir <path>       Create remote directory")
+	fmt.Println("  rmdir <path>       Remove remote directory")
 	fmt.Println("  exit/quit/bye      Exit SFTP shell")
 	fmt.Println("  help/?             Show this help")
 }
