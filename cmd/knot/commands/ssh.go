@@ -86,8 +86,10 @@ var sshCmd = &cobra.Command{
 			for range sigCh {
 				c, r, err := term.GetSize(fd)
 				if err == nil {
-					resizePayload, _ := json.Marshal(protocol.ResizePayload{Rows: r, Cols: c})
-					protocol.WriteMessage(conn, protocol.TypeSignal, protocol.SignalResize, resizePayload)
+					resizePayload, err := json.Marshal(protocol.ResizePayload{Rows: r, Cols: c})
+					if err == nil {
+						_ = protocol.WriteMessage(conn, protocol.TypeSignal, protocol.SignalResize, resizePayload)
+					}
 				}
 			}
 		}()

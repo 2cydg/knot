@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 )
@@ -50,14 +49,14 @@ type ResizePayload struct {
 const MaxPayloadSize = 10 * 1024 * 1024 // 10MB
 
 // Header represents the Knot protocol header.
-// Structure: Magic(2) | Version(1) | Type(1) | Reserved(1) | PayloadLength(3)
+// Structure: Magic(2) | Version(1) | Type(1) | Subtype(1) | Length(3)
 // Total Header Size: 8 bytes
 type Header struct {
 	Magic    [2]byte
 	Version  uint8
 	Type     uint8
-	Reserved uint8
-	Length   uint32 // Using 4 bytes for length for simplicity, but we'll limit it.
+	Reserved uint8 // Now correctly mapped as Subtype/Reserved
+	Length   uint32 // Using 3 bytes for length in wire format
 }
 
 const HeaderSize = 8
@@ -69,11 +68,10 @@ func (h *Header) Encode() []byte {
 	buf[2] = h.Version
 	buf[3] = h.Type
 	buf[4] = h.Reserved
-	// Using the last 3 bytes for length would be more complex, 
-	// let's stick to 4 bytes and just ensure we stay within 8 bytes total.
-	// Redefining Header structure for clarity:
-	// Magic(2) | Version(1) | Type(1) | Length(4)
-	binary.BigEndian.PutUint32(buf[4:8], h.Length)
+	// Using 3 bytes for length: buf[5:8]
+	buf[5] = byte(h.Length >> 16)
+	buf[6] = byte(h.Length >> 8)
+	buf[7] = byte(h.Length)
 	return buf
 }
 
@@ -88,12 +86,18 @@ func DecodeHeader(r io.Reader) (*Header, error) {
 		return nil, fmt.Errorf("invalid magic bytes: 0x%02X 0x%02X", buf[0], buf[1])
 	}
 
+	version := buf[2]
+	if version != Version1 {
+		return nil, fmt.Errorf("unsupported protocol version: %d", version)
+	}
+
 	h := &Header{
-		Magic:   [2]byte{buf[0], buf[1]},
-		Version: buf[2],
-		Type:    buf[3],
-		// buf[4:8] is length
-		Length: binary.BigEndian.Uint32(buf[4:8]),
+		Magic:    [2]byte{buf[0], buf[1]},
+		Version:  version,
+		Type:     buf[3],
+		Reserved: buf[4],
+		// buf[5:8] is length (24-bit)
+		Length: uint32(buf[5])<<16 | uint32(buf[6])<<8 | uint32(buf[7]),
 	}
 	return h, nil
 }

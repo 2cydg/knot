@@ -35,6 +35,7 @@ var addCmd = &cobra.Command{
 		userFlag, _ := cmd.Flags().GetString("user")
 		passFlag, _ := cmd.Flags().GetString("password")
 		keyFlag, _ := cmd.Flags().GetString("key")
+		khFlag, _ := cmd.Flags().GetString("known-hosts")
 
 		if hostFlag != "" && userFlag != "" {
 			// Non-interactive mode
@@ -48,6 +49,7 @@ var addCmd = &cobra.Command{
 				User:           userFlag,
 				Password:       passFlag,
 				PrivateKeyPath: keyFlag,
+				KnownHostsPath: khFlag,
 			}
 			if err := cfg.Save(provider); err != nil {
 				return err
@@ -121,6 +123,11 @@ var addCmd = &cobra.Command{
 			return err
 		}
 
+		khPath, err := line.Prompt("Known Hosts Path (optional): ")
+		if err != nil {
+			return err
+		}
+
 		cfg.Servers[alias] = config.ServerConfig{
 			Alias:          alias,
 			Host:           host,
@@ -128,6 +135,7 @@ var addCmd = &cobra.Command{
 			User:           user,
 			Password:       password,
 			PrivateKeyPath: keyPath,
+			KnownHostsPath: khPath,
 		}
 
 		if err := cfg.Save(provider); err != nil {
@@ -145,5 +153,6 @@ func init() {
 	addCmd.Flags().StringP("user", "u", "", "Server user")
 	addCmd.Flags().StringP("password", "p", "", "Server password")
 	addCmd.Flags().StringP("key", "k", "", "Private key path")
+	addCmd.Flags().String("known-hosts", "", "Known hosts file path")
 	rootCmd.AddCommand(addCmd)
 }

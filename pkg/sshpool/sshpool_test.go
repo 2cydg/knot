@@ -3,6 +3,7 @@ package sshpool
 import (
 	"knot/pkg/config"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -43,11 +44,7 @@ func TestSSHConnection(t *testing.T) {
 	}
 
 	got := string(output)
-	if !contains(got, srv.User) {
+	if !strings.Contains(got, srv.User) {
 		t.Fatalf("expected output to contain %s, got %s", srv.User, got)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s[:len(substr)] == substr || contains(s[1:], substr))
 }

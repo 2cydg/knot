@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
@@ -102,6 +103,9 @@ func (d *Daemon) Stop() error {
 	if d.listener != nil {
 		d.listener.Close()
 	}
+	if d.pool != nil {
+		d.pool.CloseAll()
+	}
 	if _, err := os.Stat(d.socketPath); err == nil {
 		return os.Remove(d.socketPath)
 	}
@@ -149,30 +153,35 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 }
 
 func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
+	sendError := func(errMsg string) {
+		log.Printf("SSH Request Error: %s", errMsg)
+		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: "+errMsg))
+	}
+
 	// 1. Load config
 	cfg, err := config.Load(d.crypto)
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to load config: "+err.Error()))
+		sendError("failed to load config: " + err.Error())
 		return
 	}
 
 	srv, ok := cfg.Servers[req.Alias]
 	if !ok {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: server not found"))
+		sendError("server not found: " + req.Alias)
 		return
 	}
 
 	// 2. Get client
 	client, err := d.pool.GetClient(srv)
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to connect to server: "+err.Error()))
+		sendError("failed to connect to server: " + err.Error())
 		return
 	}
 
 	// 3. Create session
 	session, err := client.NewSession()
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to create session: "+err.Error()))
+		sendError("failed to create session: " + err.Error())
 		return
 	}
 	defer session.Close()
@@ -185,28 +194,28 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	if err := session.RequestPty(req.Term, req.Rows, req.Cols, modes); err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to request pty: "+err.Error()))
+		sendError("failed to request pty: " + err.Error())
 		return
 	}
 
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to get stdin pipe"))
+		sendError("failed to get stdin pipe")
 		return
 	}
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to get stdout pipe"))
+		sendError("failed to get stdout pipe")
 		return
 	}
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to get stderr pipe"))
+		sendError("failed to get stderr pipe")
 		return
 	}
 
 	if err := session.Shell(); err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: failed to start shell"))
+		sendError("failed to start shell")
 		return
 	}
 
@@ -216,12 +225,16 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// 5. Proxy I/O
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var wg sync.WaitGroup
 	wg.Add(3)
 
 	// stdout -> conn
 	go func() {
 		defer wg.Done()
+		defer cancel()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := stdout.Read(buf)
@@ -239,6 +252,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	// stderr -> conn
 	go func() {
 		defer wg.Done()
+		defer cancel()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := stderr.Read(buf)
@@ -256,6 +270,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	// conn -> stdin/resize
 	go func() {
 		defer wg.Done()
+		defer cancel()
 		for {
 			msg, err := protocol.ReadMessage(conn)
 			if err != nil {
@@ -264,7 +279,10 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			switch msg.Header.Type {
 			case protocol.TypeData:
 				if msg.Header.Reserved == protocol.DataStdin {
-					stdin.Write(msg.Payload)
+					if _, err := stdin.Write(msg.Payload); err != nil {
+						log.Printf("Failed to write to stdin: %v", err)
+						return
+					}
 				}
 			case protocol.TypeSignal:
 				if msg.Header.Reserved == protocol.SignalResize {
@@ -277,5 +295,19 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		}
 	}()
 
-	wg.Wait()
+	// Wait for completion or context cancellation (e.g. error in one goroutine)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	case <-d.stopCh:
+	}
+
+	// Attempt to get exit status (optional, best effort)
+	// session.Wait() could be used here if we want to send exit status back.
 }

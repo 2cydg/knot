@@ -24,6 +24,7 @@ type ServerConfig struct {
 	User           string `toml:"user"`
 	Password       string `toml:"password,omitempty"`
 	PrivateKeyPath string `toml:"private_key_path,omitempty"`
+	KnownHostsPath string `toml:"known_hosts_path,omitempty"`
 }
 
 type Config struct {
