@@ -56,12 +56,18 @@ var addCmd = &cobra.Command{
 			}
 		}
 
-		host, _ := line.Prompt("Host: ")
+		host, err := line.Prompt("Host: ")
+		if err != nil {
+			return err
+		}
 		if strings.TrimSpace(host) == "" {
 			return fmt.Errorf("host cannot be empty")
 		}
 
-		portStr, _ := line.Prompt("Port (default 22): ")
+		portStr, err := line.Prompt("Port (default 22): ")
+		if err != nil {
+			return err
+		}
 		if portStr == "" {
 			portStr = "22"
 		}
@@ -70,12 +76,23 @@ var addCmd = &cobra.Command{
 			return fmt.Errorf("invalid port number: %v", err)
 		}
 
-		user, _ := line.Prompt("User: ")
+		user, err := line.Prompt("User: ")
+		if err != nil {
+			return err
+		}
 		if strings.TrimSpace(user) == "" {
 			return fmt.Errorf("user cannot be empty")
 		}
-		password, _ := line.PasswordPrompt("Password: ")
-		keyPath, _ := line.Prompt("Private Key Path (optional): ")
+
+		password, err := line.PasswordPrompt("Password: ")
+		if err != nil {
+			return err
+		}
+
+		keyPath, err := line.Prompt("Private Key Path (optional): ")
+		if err != nil {
+			return err
+		}
 
 		cfg.Servers[alias] = config.ServerConfig{
 			Alias:          alias,

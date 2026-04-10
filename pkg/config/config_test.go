@@ -3,6 +3,7 @@ package config
 import (
 	"knot/pkg/crypto"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -41,7 +42,7 @@ func TestConfigLoadSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read config file: %v", err)
 	}
-	if !contains(string(data), "ENC:") {
+	if !strings.Contains(string(data), "ENC:") {
 		t.Fatalf("config file should contain encrypted password: got %s", string(data))
 	}
 
@@ -54,8 +55,4 @@ func TestConfigLoadSave(t *testing.T) {
 	if loadedCfg.Servers["test"].Password != "password123" {
 		t.Fatalf("expected password to be password123, got %s", loadedCfg.Servers["test"].Password)
 	}
-}
-
-func contains(s, substr string) bool {
-	return (len(s) >= len(substr)) && (s[:len(substr)] == substr || contains(s[1:], substr))
 }

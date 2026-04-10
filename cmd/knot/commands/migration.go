@@ -6,7 +6,10 @@ import (
 	"knot/pkg/crypto"
 	"os"
 
+	"strings"
+
 	"github.com/BurntSushi/toml"
+	"github.com/peterh/liner"
 	"github.com/spf13/cobra"
 )
 
@@ -14,6 +17,19 @@ var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export configurations in plaintext (decrypted)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(os.Stderr, "WARNING: This will output plaintext credentials to stdout!")
+		fmt.Fprint(os.Stderr, "Continue? (y/N): ")
+
+		line := liner.NewLiner()
+		defer line.Close()
+		resp, err := line.Prompt("")
+		if err != nil {
+			return err
+		}
+		if strings.ToLower(resp) != "y" {
+			return nil
+		}
+
 		provider, err := crypto.NewProvider()
 		if err != nil {
 			return err
@@ -60,7 +76,17 @@ var importCmd = &cobra.Command{
 			return err
 		}
 
+		line := liner.NewLiner()
+		defer line.Close()
+
 		for alias, srv := range importedCfg.Servers {
+			if _, exists := currentCfg.Servers[alias]; exists {
+				fmt.Printf("Alias '%s' already exists. Overwrite? (y/N): ", alias)
+				resp, _ := line.Prompt("")
+				if strings.ToLower(resp) != "y" {
+					continue
+				}
+			}
 			currentCfg.Servers[alias] = srv
 		}
 
