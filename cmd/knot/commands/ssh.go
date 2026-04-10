@@ -7,8 +7,6 @@ import (
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
