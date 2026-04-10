@@ -37,7 +37,7 @@ func (c *Client) SendRequest(payload []byte) ([]byte, error) {
 	defer conn.Close()
 
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := protocol.WriteMessage(conn, protocol.TypeReq, payload); err != nil {
+	if err := protocol.WriteMessage(conn, protocol.TypeReq, 0, payload); err != nil {
 		return nil, err
 	}
 
@@ -58,5 +58,10 @@ func (c *Client) Signal(signal string) error {
 	}
 	defer conn.Close()
 
-	return protocol.WriteMessage(conn, protocol.TypeSignal, []byte(signal))
+	var subType uint8
+	if signal == "stop" {
+		subType = protocol.SignalStop
+	}
+
+	return protocol.WriteMessage(conn, protocol.TypeSignal, subType, []byte(signal))
 }

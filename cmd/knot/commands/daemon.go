@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	"os"
 	"os/exec"
@@ -41,7 +42,12 @@ var daemonStartCmd = &cobra.Command{
 			return backgroundCmd.Process.Release()
 		}
 
-		d, err := daemon.NewDaemon()
+		provider, err := crypto.NewProvider()
+		if err != nil {
+			return err
+		}
+
+		d, err := daemon.NewDaemon(provider)
 		if err != nil {
 			return err
 		}

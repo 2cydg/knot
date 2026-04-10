@@ -20,6 +20,33 @@ const (
 	TypeSignal uint8 = 0x04
 )
 
+// SubTypes for TypeData (using Reserved field)
+const (
+	DataStdin  uint8 = 0x01
+	DataStdout uint8 = 0x02
+	DataStderr uint8 = 0x03
+)
+
+// SignalResize signals a terminal window resize.
+const (
+	SignalStop   uint8 = 0x01
+	SignalResize uint8 = 0x02
+)
+
+// SSHRequest defines the payload for an SSH session request.
+type SSHRequest struct {
+	Alias string `json:"alias"`
+	Term  string `json:"term"`
+	Rows  int    `json:"rows"`
+	Cols  int    `json:"cols"`
+}
+
+// ResizePayload defines the payload for a terminal resize signal.
+type ResizePayload struct {
+	Rows int `json:"rows"`
+	Cols int `json:"cols"`
+}
+
 const MaxPayloadSize = 10 * 1024 * 1024 // 10MB
 
 // Header represents the Knot protocol header.
@@ -101,17 +128,18 @@ func ReadMessage(r io.Reader) (*Message, error) {
 	}, nil
 }
 
-// WriteMessage writes a full message to a writer.
-func WriteMessage(w io.Writer, msgType uint8, payload []byte) error {
+// WriteMessage writes a full message to a writer with a reserved byte for sub-types.
+func WriteMessage(w io.Writer, msgType uint8, reserved uint8, payload []byte) error {
 	if len(payload) > MaxPayloadSize {
 		return fmt.Errorf("payload too large to write: %d > %d", len(payload), MaxPayloadSize)
 	}
 
 	header := Header{
-		Magic:   Magic,
-		Version: Version1,
-		Type:    msgType,
-		Length:  uint32(len(payload)),
+		Magic:    Magic,
+		Version:  Version1,
+		Type:     msgType,
+		Reserved: reserved,
+		Length:   uint32(len(payload)),
 	}
 
 	if _, err := w.Write(header.Encode()); err != nil {

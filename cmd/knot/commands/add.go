@@ -30,6 +30,33 @@ var addCmd = &cobra.Command{
 			return err
 		}
 
+		hostFlag, _ := cmd.Flags().GetString("host")
+		portFlag, _ := cmd.Flags().GetInt("port")
+		userFlag, _ := cmd.Flags().GetString("user")
+		passFlag, _ := cmd.Flags().GetString("password")
+		keyFlag, _ := cmd.Flags().GetString("key")
+
+		if hostFlag != "" && userFlag != "" {
+			// Non-interactive mode
+			if alias == "" {
+				return fmt.Errorf("alias is required in non-interactive mode")
+			}
+			cfg.Servers[alias] = config.ServerConfig{
+				Alias:          alias,
+				Host:           hostFlag,
+				Port:           portFlag,
+				User:           userFlag,
+				Password:       passFlag,
+				PrivateKeyPath: keyFlag,
+			}
+			if err := cfg.Save(provider); err != nil {
+				return err
+			}
+			fmt.Printf("Server '%s' added successfully.\n", alias)
+			return nil
+		}
+
+		// Interactive mode
 		line := liner.NewLiner()
 		defer line.Close()
 		line.SetCtrlCAborts(true)
@@ -113,5 +140,10 @@ var addCmd = &cobra.Command{
 }
 
 func init() {
+	addCmd.Flags().StringP("host", "H", "", "Server host")
+	addCmd.Flags().IntP("port", "P", 22, "Server port")
+	addCmd.Flags().StringP("user", "u", "", "Server user")
+	addCmd.Flags().StringP("password", "p", "", "Server password")
+	addCmd.Flags().StringP("key", "k", "", "Private key path")
 	rootCmd.AddCommand(addCmd)
 }
