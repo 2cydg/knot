@@ -36,14 +36,27 @@ func (c *Client) SendRequest(payload []byte) ([]byte, error) {
 	}
 	defer conn.Close()
 
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if err := protocol.WriteMessage(conn, protocol.TypeReq, payload); err != nil {
 		return nil, err
 	}
 
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	msg, err := protocol.ReadMessage(conn)
 	if err != nil {
 		return nil, err
 	}
 
 	return msg.Payload, nil
+}
+
+// Signal sends a signal to the daemon.
+func (c *Client) Signal(signal string) error {
+	conn, err := c.Connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	return protocol.WriteMessage(conn, protocol.TypeSignal, []byte(signal))
 }
