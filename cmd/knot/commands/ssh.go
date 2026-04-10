@@ -80,19 +80,7 @@ var sshCmd = &cobra.Command{
 		}
 
 		// Handle resize
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGWINCH)
-		go func() {
-			for range sigCh {
-				c, r, err := term.GetSize(fd)
-				if err == nil {
-					resizePayload, err := json.Marshal(protocol.ResizePayload{Rows: r, Cols: c})
-					if err == nil {
-						_ = protocol.WriteMessage(conn, protocol.TypeSignal, protocol.SignalResize, resizePayload)
-					}
-				}
-			}
-		}()
+		setupResizeHandler(conn, fd)
 
 		// Proxy I/O
 		errCh := make(chan error, 1)
