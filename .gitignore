@@ -15,8 +15,8 @@
 # vendor/
 
 # Project specific
-knot
-doc/
+/knot
+/doc/
 
 # IDE
 .vscode/
