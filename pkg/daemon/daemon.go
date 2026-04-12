@@ -229,7 +229,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, err := d.pool.GetClient(srv, confirmCallback)
+	client, err := d.pool.GetClient(srv, cfg, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

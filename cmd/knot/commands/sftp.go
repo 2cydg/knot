@@ -34,7 +34,7 @@ var sftpCmd = &cobra.Command{
 		}
 
 		pool := sshpool.NewPool()
-		sshClient, err := pool.GetClient(srv, func(prompt string) bool {
+		sshClient, err := pool.GetClient(srv, cfg, func(prompt string) bool {
 			fmt.Printf("\n%s ", prompt)
 			var response string
 			fmt.Scanln(&response)

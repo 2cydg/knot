@@ -19,19 +19,31 @@ const (
 	AuthMethodPassword = "password"
 	AuthMethodKey      = "key"
 	AuthMethodAgent    = "agent"
+
+	ProxyTypeNone   = ""
+	ProxyTypeSOCKS5 = "socks5"
+	ProxyTypeHTTP   = "http"
 )
 
+type ProxyConfig struct {
+	Type     string `toml:"type,omitempty"`
+	Host     string `toml:"host,omitempty"`
+	Port     int    `toml:"port,omitempty"`
+	Username string `toml:"username,omitempty"`
+	Password string `toml:"password,omitempty"`
+}
+
 type ServerConfig struct {
-	Alias          string `toml:"alias"`
-	Host           string `toml:"host"`
-	Port           int    `toml:"port"`
-	User           string `toml:"user"`
-	AuthMethod     string `toml:"auth_method,omitempty"`
-	Password       string `toml:"password,omitempty"`
-	PrivateKeyPath string `toml:"private_key_path,omitempty"`
-	KnownHostsPath string `toml:"known_hosts_path,omitempty"`
-	Proxy          string `toml:"proxy,omitempty"`
-	JumpHost       string `toml:"jump_host,omitempty"`
+	Alias          string      `toml:"alias"`
+	Host           string      `toml:"host"`
+	Port           int         `toml:"port"`
+	User           string      `toml:"user"`
+	AuthMethod     string      `toml:"auth_method,omitempty"`
+	Password       string      `toml:"password,omitempty"`
+	PrivateKeyPath string      `toml:"private_key_path,omitempty"`
+	KnownHostsPath string      `toml:"known_hosts_path,omitempty"`
+	Proxy          ProxyConfig `toml:"proxy,omitempty"`
+	JumpHost       string      `toml:"jump_host,omitempty"`
 }
 
 type Config struct {
@@ -74,12 +86,24 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 
 	// Decrypt sensitive fields
 	for alias, srv := range cfg.Servers {
+		modified := false
 		if strings.HasPrefix(srv.Password, encPrefix) {
 			decrypted, err := decryptField(srv.Password[len(encPrefix):], cryptoProvider)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decrypt password for %s: %w", alias, err)
 			}
 			srv.Password = string(decrypted)
+			modified = true
+		}
+		if srv.Proxy.Password != "" && strings.HasPrefix(srv.Proxy.Password, encPrefix) {
+			decrypted, err := decryptField(srv.Proxy.Password[len(encPrefix):], cryptoProvider)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt proxy password for %s: %w", alias, err)
+			}
+			srv.Proxy.Password = string(decrypted)
+			modified = true
+		}
+		if modified {
 			cfg.Servers[alias] = srv
 		}
 	}
@@ -114,6 +138,13 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 				return fmt.Errorf("failed to encrypt password for %s: %w", alias, err)
 			}
 			srvCopy.Password = encPrefix + encrypted
+		}
+		if srvCopy.Proxy.Password != "" && !strings.HasPrefix(srvCopy.Proxy.Password, encPrefix) {
+			encrypted, err := encryptField([]byte(srvCopy.Proxy.Password), cryptoProvider)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt proxy password for %s: %w", alias, err)
+			}
+			srvCopy.Proxy.Password = encPrefix + encrypted
 		}
 		cfgToSave.Servers[alias] = srvCopy
 	}

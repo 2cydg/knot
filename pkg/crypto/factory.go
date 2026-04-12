@@ -11,7 +11,7 @@ func NewProvider() (Provider, error) {
 	case "linux":
 		return NewLinuxProvider()
 	case "windows":
-		return nil, fmt.Errorf("windows DPAPI provider not yet implemented")
+		return NewWindowsProvider()
 	case "darwin":
 		return nil, fmt.Errorf("macos keychain provider not yet implemented")
 	default:

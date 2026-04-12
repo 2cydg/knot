@@ -152,7 +152,6 @@ var addCmd = &cobra.Command{
 				}
 			case "3":
 				authMethod = config.AuthMethodAgent
-				fmt.Println("Note: SSH Agent support is not yet fully implemented.")
 			default:
 				fmt.Println("Invalid choice, please select 1, 2, or 3.")
 				continue
@@ -160,10 +159,30 @@ var addCmd = &cobra.Command{
 			break
 		}
 
-		var proxy, jumpHost string
+		var proxy config.ProxyConfig
+		var jumpHost string
 		adv, err := line.Prompt("Configure advanced options (Proxy, Jump Host)? (y/N): ")
 		if err == nil && strings.ToLower(adv) == "y" {
-			proxy, _ = line.Prompt("Proxy (optional): ")
+			fmt.Println("Configure Proxy:")
+			fmt.Println("0) None")
+			fmt.Println("1) SOCKS5")
+			fmt.Println("2) HTTP")
+			pChoice, _ := line.Prompt("Proxy Type (0-2, default 0): ")
+			switch pChoice {
+			case "1":
+				proxy.Type = config.ProxyTypeSOCKS5
+			case "2":
+				proxy.Type = config.ProxyTypeHTTP
+			}
+
+			if proxy.Type != "" {
+				proxy.Host, _ = line.Prompt("Proxy Host: ")
+				pPortStr, _ := line.Prompt("Proxy Port: ")
+				proxy.Port, _ = strconv.Atoi(pPortStr)
+				proxy.Username, _ = line.Prompt("Proxy Username (optional): ")
+				proxy.Password, _ = line.PasswordPrompt("Proxy Password (optional): ")
+			}
+
 			jumpHost, _ = line.Prompt("Jump Host (optional): ")
 		}
 

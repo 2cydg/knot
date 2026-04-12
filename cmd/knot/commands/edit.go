@@ -97,11 +97,13 @@ var editCmd = &cobra.Command{
 			switch choice {
 			case "1":
 				srv.AuthMethod = config.AuthMethodPassword
-				password, err := line.PasswordPrompt("New Password (leave empty to keep current): ")
+				password, err := line.PasswordPrompt("New Password (leave empty to keep current, use '[none]' to clear): ")
 				if err != nil {
 					return err
 				}
-				if password != "" {
+				if password == "[none]" {
+					srv.Password = ""
+				} else if password != "" {
 					srv.Password = password
 				}
 				srv.PrivateKeyPath = "" // Clear other auth types
@@ -119,7 +121,6 @@ var editCmd = &cobra.Command{
 				srv.AuthMethod = config.AuthMethodAgent
 				srv.Password = ""
 				srv.PrivateKeyPath = ""
-				fmt.Println("Note: SSH Agent support is not yet fully implemented.")
 			default:
 				fmt.Println("Invalid choice, please select 1, 2, or 3.")
 				continue
@@ -130,10 +131,44 @@ var editCmd = &cobra.Command{
 		// Advanced options
 		adv, err := line.Prompt("Edit advanced options (Proxy, Jump Host)? (y/N): ")
 		if err == nil && strings.ToLower(adv) == "y" {
-			proxy, _ := line.Prompt(fmt.Sprintf("Proxy [%s]: ", srv.Proxy))
-			if proxy != "" {
-				srv.Proxy = proxy
+			fmt.Printf("Current Proxy Type: %s\n", srv.Proxy.Type)
+			fmt.Println("Choose proxy type (leave empty to keep current, 0 to disable):")
+			fmt.Println("0) None/Disable")
+			fmt.Println("1) SOCKS5")
+			fmt.Println("2) HTTP")
+			pChoice, _ := line.Prompt("Proxy Type (0-2): ")
+			switch pChoice {
+			case "0":
+				srv.Proxy = config.ProxyConfig{}
+			case "1":
+				if srv.Proxy.Type != config.ProxyTypeSOCKS5 {
+					srv.Proxy = config.ProxyConfig{Type: config.ProxyTypeSOCKS5}
+				}
+			case "2":
+				if srv.Proxy.Type != config.ProxyTypeHTTP {
+					srv.Proxy = config.ProxyConfig{Type: config.ProxyTypeHTTP}
+				}
 			}
+
+			if srv.Proxy.Type != "" {
+				pHost, _ := line.Prompt(fmt.Sprintf("Proxy Host [%s]: ", srv.Proxy.Host))
+				if pHost != "" {
+					srv.Proxy.Host = pHost
+				}
+				pPortStr, _ := line.Prompt(fmt.Sprintf("Proxy Port [%d]: ", srv.Proxy.Port))
+				if pPortStr != "" {
+					srv.Proxy.Port, _ = strconv.Atoi(pPortStr)
+				}
+				pUser, _ := line.Prompt(fmt.Sprintf("Proxy Username [%s]: ", srv.Proxy.Username))
+				if pUser != "" {
+					srv.Proxy.Username = pUser
+				}
+				pPass, _ := line.PasswordPrompt("Proxy Password (leave empty to keep current): ")
+				if pPass != "" {
+					srv.Proxy.Password = pPass
+				}
+			}
+
 			jump, _ := line.Prompt(fmt.Sprintf("Jump Host [%s]: ", srv.JumpHost))
 			if jump != "" {
 				srv.JumpHost = jump
