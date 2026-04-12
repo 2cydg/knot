@@ -15,6 +15,10 @@ import (
 const (
 	configFileName = "config.toml"
 	encPrefix      = "ENC:"
+
+	AuthMethodPassword = "password"
+	AuthMethodKey      = "key"
+	AuthMethodAgent    = "agent"
 )
 
 type ServerConfig struct {
@@ -22,21 +26,32 @@ type ServerConfig struct {
 	Host           string `toml:"host"`
 	Port           int    `toml:"port"`
 	User           string `toml:"user"`
+	AuthMethod     string `toml:"auth_method,omitempty"`
 	Password       string `toml:"password,omitempty"`
 	PrivateKeyPath string `toml:"private_key_path,omitempty"`
 	KnownHostsPath string `toml:"known_hosts_path,omitempty"`
+	Proxy          string `toml:"proxy,omitempty"`
+	JumpHost       string `toml:"jump_host,omitempty"`
 }
 
 type Config struct {
 	Servers map[string]ServerConfig `toml:"servers"`
 }
 
-func GetConfigPath() (string, error) {
+func GetConfigDir() (string, error) {
 	usr, err := user.Current()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(usr.HomeDir, ".config", "knot", configFileName), nil
+	return filepath.Join(usr.HomeDir, ".config", "knot"), nil
+}
+
+func GetConfigPath() (string, error) {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, configFileName), nil
 }
 
 func Load(cryptoProvider crypto.Provider) (*Config, error) {
@@ -44,7 +59,10 @@ func Load(cryptoProvider crypto.Provider) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LoadFromPath(configPath, cryptoProvider)
+}
 
+func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return &Config{Servers: make(map[string]ServerConfig)}, nil
 	}
@@ -74,7 +92,10 @@ func (c *Config) Save(cryptoProvider crypto.Provider) error {
 	if err != nil {
 		return err
 	}
+	return c.SaveToPath(configPath, cryptoProvider)
+}
 
+func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) error {
 	configDir := filepath.Dir(configPath)
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return err

@@ -6,6 +6,8 @@ import (
 	"knot/pkg/daemon"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -29,17 +31,39 @@ var daemonStartCmd = &cobra.Command{
 
 			// Prepare command to run in background
 			backgroundCmd := exec.Command(executable, "daemon", "start", "--foreground")
-			backgroundCmd.Stdout = nil
-			backgroundCmd.Stderr = nil
+			
+			// Redirect output to a log file in background mode
+			home, _ := os.UserHomeDir()
+			logPath := filepath.Join(home, ".config/knot/daemon.log")
+			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if err == nil {
+				backgroundCmd.Stdout = logFile
+				backgroundCmd.Stderr = logFile
+			} else {
+				backgroundCmd.Stdout = nil
+				backgroundCmd.Stderr = nil
+			}
 			backgroundCmd.Stdin = nil
 
 			if err := backgroundCmd.Start(); err != nil {
 				return fmt.Errorf("failed to start daemon in background: %w", err)
 			}
 
-			fmt.Printf("Daemon started in background (PID: %d)\n", backgroundCmd.Process.Pid)
-			// Release the process so it continues to run after this one exits
-			return backgroundCmd.Process.Release()
+			// Wait a bit to see if the process exits immediately
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- backgroundCmd.Wait()
+			}()
+
+			select {
+			case err := <-errCh:
+				return fmt.Errorf("daemon failed to start: %v (check %s for details)", err, logPath)
+			case <-time.After(500 * time.Millisecond):
+				// Assume it started successfully
+				fmt.Printf("Daemon started in background (PID: %d)\n", backgroundCmd.Process.Pid)
+				fmt.Printf("Logs available at: %s\n", logPath)
+				return backgroundCmd.Process.Release()
+			}
 		}
 
 		provider, err := crypto.NewProvider()

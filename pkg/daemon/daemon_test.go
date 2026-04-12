@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"knot/internal/protocol"
+	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"os"
 	"testing"
@@ -61,6 +62,11 @@ func TestDaemonClient(t *testing.T) {
 }
 
 func TestSSHRequest(t *testing.T) {
+	keyPath := os.ExpandEnv("$HOME/.ssh/id_rsa_knot")
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		t.Skip("SSH test key not found, skipping")
+	}
+
 	tmpFile, err := os.CreateTemp("", "knot_test_*.sock")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
@@ -70,13 +76,42 @@ func TestSSHRequest(t *testing.T) {
 	os.Remove(tmpPath)
 	defer os.Remove(tmpPath)
 
+	cfgFile, err := os.CreateTemp("", "knot_config_*.toml")
+	if err != nil {
+		t.Fatalf("failed to create temp config: %v", err)
+	}
+	cfgPath := cfgFile.Name()
+	cfgFile.Close()
+	defer os.Remove(cfgPath)
+
 	provider, _ := crypto.NewProvider()
+	
+	user := os.Getenv("USER")
+	if user == "" {
+		user = "clax"
+	}
+	// Prepare config
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{
+			"local": {
+				Alias: "local",
+				Host:  "127.0.0.1",
+				Port:  22,
+				User:  user,
+			},
+		},
+	}
+	if err := cfg.SaveToPath(cfgPath, provider); err != nil {
+		t.Fatalf("failed to save temp config: %v", err)
+	}
+
 	d, err := NewDaemon(provider)
 	if err != nil {
 		t.Fatalf("failed to create daemon: %v", err)
 	}
 	d.socketPath = tmpPath
 	d.pidPath = tmpPath + ".pid"
+	d.configPath = cfgPath
 
 	go d.Start()
 	time.Sleep(100 * time.Millisecond)

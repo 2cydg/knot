@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"knot/internal/protocol"
 	"knot/pkg/config"
@@ -11,9 +12,12 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -24,6 +28,7 @@ const MaxConcurrentConnections = 100
 type Daemon struct {
 	socketPath string
 	pidPath    string
+	configPath string
 	listener   net.Listener
 	stopCh     chan struct{}
 	sem        chan struct{}
@@ -39,6 +44,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 	}
 	socketPath := filepath.Join(home, ".config/knot/knot.sock")
 	pidPath := socketPath + ".pid"
+	configPath := filepath.Join(home, ".config/knot/config.toml")
 
 	// Create directory if not exists
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
@@ -48,6 +54,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 	return &Daemon{
 		socketPath: socketPath,
 		pidPath:    pidPath,
+		configPath: configPath,
 		stopCh:     make(chan struct{}),
 		sem:        make(chan struct{}, MaxConcurrentConnections),
 		pool:       sshpool.NewPool(),
@@ -57,28 +64,58 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 
 // Start starts the daemon and listens for UDS connections.
 func (d *Daemon) Start() error {
-	// Check if already running
-	if _, err := os.Stat(d.pidPath); err == nil {
-		return fmt.Errorf("daemon already running (PID file exists at %s)", d.pidPath)
+	// 1. Check if already running (with liveness check)
+	if data, err := os.ReadFile(d.pidPath); err == nil {
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		if pid > 0 {
+			process, err := os.FindProcess(pid)
+			if err == nil {
+				// On Unix, FindProcess always succeeds. Use signal 0 to check liveness.
+				if err := process.Signal(syscall.Signal(0)); err == nil {
+					return fmt.Errorf("daemon already running (PID: %d)", pid)
+				}
+			}
+		}
+		// Stale PID file, remove it
+		_ = os.Remove(d.pidPath)
 	}
 
-	// Clean up existing socket
+	// 2. Clean up existing socket
 	if _, err := os.Stat(d.socketPath); err == nil {
+		// Try to connect to see if it's alive
+		conn, err := net.Dial("unix", d.socketPath)
+		if err == nil {
+			conn.Close()
+			return fmt.Errorf("another process is already listening on %s", d.socketPath)
+		}
+		// Stale socket, remove it
 		if err := os.Remove(d.socketPath); err != nil {
-			return err
+			return fmt.Errorf("failed to remove stale socket: %w", err)
 		}
 	}
 
+	// 3. Write new PID file
 	if err := os.WriteFile(d.pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
 		return err
 	}
 	defer os.Remove(d.pidPath)
 
+	// 4. Listen
 	l, err := net.Listen("unix", d.socketPath)
 	if err != nil {
 		return err
 	}
 	d.listener = l
+	defer os.Remove(d.socketPath)
+
+	// 5. Signal handling for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("Received signal %v, stopping daemon...", sig)
+		d.Stop()
+	}()
 
 	fmt.Printf("Daemon listening on %s (PID: %d)\n", d.socketPath, os.Getpid())
 
@@ -89,6 +126,9 @@ func (d *Daemon) Start() error {
 			case <-d.stopCh:
 				return nil
 			default:
+				if errors.Is(err, net.ErrClosed) {
+					return nil
+				}
 				return fmt.Errorf("accept error: %w", err)
 			}
 		}
@@ -159,7 +199,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// 1. Load config
-	cfg, err := config.Load(d.crypto)
+	cfg, err := config.LoadFromPath(d.configPath, d.crypto)
 	if err != nil {
 		sendError("failed to load config: " + err.Error())
 		return
@@ -171,8 +211,25 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return
 	}
 
-	// 2. Get client
-	client, err := d.pool.GetClient(srv)
+	// 2. Get client with interactive confirmation callback
+	confirmCallback := func(prompt string) bool {
+		// Send confirmation request to CLI
+		if err := protocol.WriteMessage(conn, protocol.TypeHostKeyConfirm, 0, []byte(prompt)); err != nil {
+			log.Printf("Failed to send confirmation request: %v", err)
+			return false
+		}
+
+		// Wait for response from CLI
+		msg, err := protocol.ReadMessage(conn)
+		if err != nil {
+			log.Printf("Failed to read confirmation response: %v", err)
+			return false
+		}
+
+		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
+	}
+
+	client, err := d.pool.GetClient(srv, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

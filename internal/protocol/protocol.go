@@ -17,6 +17,7 @@ const (
 	TypeResp   uint8 = 0x02
 	TypeData   uint8 = 0x03
 	TypeSignal uint8 = 0x04
+	TypeHostKeyConfirm uint8 = 0x05
 )
 
 // SubTypes for TypeData (using Reserved field)

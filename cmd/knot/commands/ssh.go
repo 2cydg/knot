@@ -58,13 +58,26 @@ var sshCmd = &cobra.Command{
 			return fmt.Errorf("failed to send request: %w", err)
 		}
 
-		// Wait for response
-		msg, err := protocol.ReadMessage(conn)
-		if err != nil {
-			return fmt.Errorf("failed to read response: %w", err)
-		}
+		// Wait for response (handling interactive host key confirmation)
+		for {
+			msg, err := protocol.ReadMessage(conn)
+			if err != nil {
+				return fmt.Errorf("failed to read response: %w", err)
+			}
 
-		if string(msg.Payload) != "ok" {
+			if msg.Header.Type == protocol.TypeHostKeyConfirm {
+				fmt.Printf("\n%s ", string(msg.Payload))
+				var response string
+				fmt.Scanln(&response)
+				if err := protocol.WriteMessage(conn, protocol.TypeHostKeyConfirm, 0, []byte(response)); err != nil {
+					return fmt.Errorf("failed to send confirmation response: %w", err)
+				}
+				continue
+			}
+
+			if string(msg.Payload) == "ok" {
+				break
+			}
 			return fmt.Errorf("daemon error: %s", string(msg.Payload))
 		}
 

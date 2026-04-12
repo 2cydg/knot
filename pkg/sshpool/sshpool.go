@@ -3,6 +3,7 @@ package sshpool
 import (
 	"fmt"
 	"knot/pkg/config"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -35,7 +36,7 @@ func NewPool() *Pool {
 }
 
 // GetClient returns a cached ssh.Client for the given server config, or dials a new one.
-func (p *Pool) GetClient(srv config.ServerConfig) (*ssh.Client, error) {
+func (p *Pool) GetClient(srv config.ServerConfig, confirmCallback func(string) bool) (*ssh.Client, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -52,7 +53,7 @@ func (p *Pool) GetClient(srv config.ServerConfig) (*ssh.Client, error) {
 	}
 
 	// Dial a new connection.
-	client, err := dial(srv)
+	client, err := dial(srv, confirmCallback)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func (p *Pool) autoCleanup() {
 	}
 }
 
-func dial(srv config.ServerConfig) (*ssh.Client, error) {
+func dial(srv config.ServerConfig, confirmCallback func(string) bool) (*ssh.Client, error) {
 	authMethods := []ssh.AuthMethod{}
 
 	// 1. Try private key if provided
@@ -119,22 +120,72 @@ func dial(srv config.ServerConfig) (*ssh.Client, error) {
 	// 3. Host Key Verification
 	khPath := srv.KnownHostsPath
 	if khPath == "" {
-		home, _ := os.UserHomeDir()
-		khPath = filepath.Join(home, ".ssh", "known_hosts")
+		dir, err := config.GetConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get config directory: %w", err)
+		}
+		khPath = filepath.Join(dir, "known_hosts")
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(khPath), 0700); err != nil {
+		return nil, fmt.Errorf("failed to create directory for known_hosts: %w", err)
+	}
+
+	// If known_hosts doesn't exist, create it (empty)
+	if _, err := os.Stat(khPath); os.IsNotExist(err) {
+		if err := os.WriteFile(khPath, []byte{}, 0600); err != nil {
+			return nil, fmt.Errorf("failed to create empty known_hosts: %w", err)
+		}
 	}
 
 	var hostKeyCallback ssh.HostKeyCallback
 	if srv.Host == "127.0.0.1" || srv.Host == "localhost" {
-		// Only allow insecure for localhost
 		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-	} else if _, err := os.Stat(khPath); err == nil {
-		callback, err := knownhosts.New(khPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load known_hosts: %w", err)
-		}
-		hostKeyCallback = callback
 	} else {
-		return nil, fmt.Errorf("known_hosts file not found at %s. host verification is mandatory", khPath)
+		hostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			khCallback, err := knownhosts.New(khPath)
+			if err != nil {
+				return fmt.Errorf("failed to load known_hosts: %w", err)
+			}
+
+			err = khCallback(hostname, remote, key)
+			if err != nil {
+				// Try to assert as KeyError
+				if kErr, ok := err.(*knownhosts.KeyError); ok {
+					if len(kErr.Want) == 0 {
+						// Host unknown
+						if confirmCallback != nil {
+							fingerprint := ssh.FingerprintSHA256(key)
+							prompt := fmt.Sprintf("The authenticity of host '%s (%s)' can't be established.\n%s key fingerprint is %s.\nAre you sure you want to continue connecting (yes/no)?", hostname, remote.String(), key.Type(), fingerprint)
+							if confirmCallback(prompt) {
+								// Add to known_hosts
+								f, fErr := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY, 0600)
+								if fErr != nil {
+									return fmt.Errorf("failed to open known_hosts for writing: %w", fErr)
+								}
+								defer f.Close()
+								
+								line := knownhosts.Line([]string{hostname}, key)
+								if _, fErr := f.WriteString(line + "\n"); fErr != nil {
+									return fmt.Errorf("failed to write to known_hosts: %w", fErr)
+								}
+								return nil
+							}
+							return fmt.Errorf("host key verification failed (user rejected)")
+						}
+					} else {
+						// Host key mismatch (security risk!)
+						return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
+							"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n" +
+							"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
+							"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!")
+					}
+				}
+				return err
+			}
+			return nil
+		}
 	}
 
 	clientConfig := &ssh.ClientConfig{

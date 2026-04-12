@@ -21,3 +21,6 @@
 # IDE
 .vscode/
 .idea/
+
+# AI
+.claude/

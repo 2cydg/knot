@@ -34,7 +34,12 @@ var sftpCmd = &cobra.Command{
 		}
 
 		pool := sshpool.NewPool()
-		sshClient, err := pool.GetClient(srv)
+		sshClient, err := pool.GetClient(srv, func(prompt string) bool {
+			fmt.Printf("\n%s ", prompt)
+			var response string
+			fmt.Scanln(&response)
+			return response == "yes" || response == "y"
+		})
 		if err != nil {
 			return fmt.Errorf("failed to connect: %w", err)
 		}
