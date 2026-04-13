@@ -520,6 +520,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			if err != nil {
 				return
 			}
+			d.pool.Touch(req.Alias)
 			switch msg.Header.Type {
 			case protocol.TypeData:
 				if msg.Header.Reserved == protocol.DataStdin {
@@ -727,6 +728,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 			if err != nil {
 				return
 			}
+			d.pool.Touch(alias)
 			if msg.Header.Type == protocol.TypeData {
 				if _, err := stdin.Write(msg.Payload); err != nil {
 					return

@@ -186,78 +186,139 @@ var addCmd = &cobra.Command{
 
 		var proxy config.ProxyConfig
 		var jumpHosts []string
-		adv, err := line.Prompt("Configure advanced options (Proxy, Jump Host)? (y/N): ")
-		if err == nil && strings.ToLower(adv) == "y" {
-			fmt.Println("Configure Proxy:")
-			fmt.Println("0) None")
-			fmt.Println("1) SOCKS5")
-			fmt.Println("2) HTTP")
-			pChoice, _ := line.Prompt("Proxy Type (0-2, default 0): ")
-			switch pChoice {
-			case "1":
-				proxy.Type = config.ProxyTypeSOCKS5
-			case "2":
-				proxy.Type = config.ProxyTypeHTTP
+
+		for {
+			fmt.Println("\nAdvanced Options:")
+			fmt.Println("1) Configure Proxy")
+			fmt.Println("2) Configure Jump Host(s)")
+			fmt.Println("0) Finish/Done")
+			choice, err := line.Prompt("Selection (0-2): ")
+			if err != nil {
+				return err
+			}
+			if choice == "" || choice == "0" {
+				break
 			}
 
-			if proxy.Type != "" {
-				proxy.Host, _ = line.Prompt("Proxy Host: ")
-				pPortStr, _ := line.Prompt("Proxy Port: ")
-				proxy.Port, _ = strconv.Atoi(pPortStr)
-				proxy.Username, _ = line.Prompt("Proxy Username (optional): ")
-				proxy.Password, _ = line.PasswordPrompt("Proxy Password (optional): ")
-			}
-
-			// Interactive Jump Host selection
-			var aliases []string
-			for a := range cfg.Servers {
-				aliases = append(aliases, a)
-			}
-			sort.Strings(aliases)
-
-			if len(aliases) > 0 {
-				fmt.Println("Select Jump Host(s) - enter comma-separated aliases or numbers:")
-				fmt.Println("0) None")
-				for i, a := range aliases {
-					fmt.Printf("%d) %s\n", i+1, a)
+			if choice == "1" {
+				if len(jumpHosts) > 0 {
+					fmt.Print("Configuring Proxy will clear existing Jump Host(s). Continue? (y/N): ")
+					resp, err := line.Prompt("")
+					if err != nil {
+						return err
+					}
+					if strings.ToLower(resp) != "y" {
+						continue
+					}
+					jumpHosts = nil
 				}
+
+				fmt.Println("\nConfigure Proxy:")
+				fmt.Println("1) SOCKS5")
+				fmt.Println("2) HTTP")
+				fmt.Println("0) Cancel/None")
+				pChoice, err := line.Prompt("Proxy Type (0-2): ")
+				if err != nil {
+					return err
+				}
+				if pChoice == "0" || pChoice == "" {
+					proxy = config.ProxyConfig{}
+					continue
+				}
+
+				var newProxy config.ProxyConfig
+				switch pChoice {
+				case "1":
+					newProxy.Type = config.ProxyTypeSOCKS5
+				case "2":
+					newProxy.Type = config.ProxyTypeHTTP
+				default:
+					fmt.Println("Invalid choice.")
+					continue
+				}
+
+				newProxy.Host, err = line.Prompt("Proxy Host: ")
+				if err != nil {
+					return err
+				}
+				pPortStr, err := line.Prompt("Proxy Port: ")
+				if err != nil {
+					return err
+				}
+				newProxy.Port, _ = strconv.Atoi(pPortStr)
+				newProxy.Username, err = line.Prompt("Proxy Username (optional): ")
+				if err != nil {
+					return err
+				}
+				newProxy.Password, err = line.PasswordPrompt("Proxy Password (optional): ")
+				if err != nil {
+					return err
+				}
+				proxy = newProxy
+			} else if choice == "2" {
+				if proxy.Type != "" {
+					fmt.Print("Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
+					resp, err := line.Prompt("")
+					if err != nil {
+						return err
+					}
+					if strings.ToLower(resp) != "y" {
+						continue
+					}
+					proxy = config.ProxyConfig{}
+				}
+
+				// Iterative Jump Host selection
 				for {
-					choice, _ := line.Prompt("Select Jump Host(s) (e.g., '1,2' or 'jh1,jh2'): ")
-					if choice == "" || choice == "0" {
-						break
-					}
-					parts := strings.Split(choice, ",")
-					var selectedHosts []string
-					valid := true
-					for _, p := range parts {
-						p = strings.TrimSpace(p)
-						if p == "" {
-							continue
+					var available []string
+					for a := range cfg.Servers {
+						// Exclude already selected jump hosts and the current alias
+						isSelected := false
+						for _, selected := range jumpHosts {
+							if a == selected {
+								isSelected = true
+								break
+							}
 						}
-						idx, err := strconv.Atoi(p)
-						if err == nil && idx > 0 && idx <= len(aliases) {
-							selectedHosts = append(selectedHosts, aliases[idx-1])
-						} else if _, ok := cfg.Servers[p]; ok {
-							selectedHosts = append(selectedHosts, p)
-						} else {
-							fmt.Printf("Invalid selection: %s\n", p)
-							valid = false
-							break
+						if !isSelected && a != alias {
+							available = append(available, a)
 						}
 					}
-					if valid && len(selectedHosts) > 0 {
-						if err := cfg.HasCycle(alias, selectedHosts); err != nil {
-							fmt.Printf("Invalid jump host(s): %v\n", err)
+					sort.Strings(available)
+
+					if len(available) == 0 {
+						fmt.Println("No more servers available to select.")
+						break
+					}
+
+					fmt.Println("\nSelect Jump Host (current chain: " + strings.Join(jumpHosts, " -> ") + "):")
+					fmt.Println("0) Done/Finish Selection")
+					for i, a := range available {
+						fmt.Printf("%d) %s\n", i+1, a)
+					}
+
+					jhChoice, err := line.Prompt(fmt.Sprintf("Selection (0-%d): ", len(available)))
+					if err != nil {
+						return err
+					}
+					if jhChoice == "" || jhChoice == "0" {
+						break
+					}
+
+					idx, err := strconv.Atoi(jhChoice)
+					if err == nil && idx > 0 && idx <= len(available) {
+						selected := available[idx-1]
+						// Check for cycles
+						tempChain := append(jumpHosts, selected)
+						if err := cfg.HasCycle(alias, tempChain); err != nil {
+							fmt.Printf("Invalid selection: %v\n", err)
 							continue
 						}
-						jumpHosts = selectedHosts
-						break
-					} else if valid && len(selectedHosts) == 0 {
-						break
+						jumpHosts = tempChain
+					} else {
+						fmt.Println("Invalid selection.")
 					}
 				}
-			} else {
-				fmt.Println("No existing servers to use as jump hosts.")
 			}
 		}
 

@@ -168,12 +168,11 @@ func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {
 	}
 
 	visited := make(map[string]bool)
-	visited[startAlias] = true
 
-	var check func(string) error
-	check = func(alias string) error {
+	var check func(string, []string) error
+	check = func(alias string, chain []string) error {
 		if visited[alias] {
-			return fmt.Errorf("cycle detected: %s forms a loop", alias)
+			return fmt.Errorf("cycle detected: %s", strings.Join(append(chain, alias), " -> "))
 		}
 		visited[alias] = true
 		defer func() { visited[alias] = false }()
@@ -184,15 +183,18 @@ func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {
 		}
 
 		for _, jh := range srv.JumpHost {
-			if err := check(jh); err != nil {
+			if err := check(jh, append(chain, alias)); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
+	// For any server we check, we mark startAlias as visited so it can't be hit
+	visited[startAlias] = true
+
 	for _, jh := range jumpHostAliases {
-		if err := check(jh); err != nil {
+		if err := check(jh, []string{startAlias}); err != nil {
 			return err
 		}
 	}

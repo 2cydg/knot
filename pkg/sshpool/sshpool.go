@@ -62,34 +62,47 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 
 	// Handle Jump Hosts chain
 	var jumpClient *ssh.Client
-	for _, jhAlias := range srv.JumpHost {
+	var privateJumpRoot *ssh.Client // Root of the chain that needs manual cleanup on error
+	var finalErr error
+
+	defer func() {
+		if finalErr != nil && privateJumpRoot != nil {
+			privateJumpRoot.Close()
+		}
+	}()
+
+	for i, jhAlias := range srv.JumpHost {
 		jhSrv, ok := cfg.Servers[jhAlias]
 		if !ok {
-			return nil, fmt.Errorf("jump host %s not found in config", jhAlias)
+			finalErr = fmt.Errorf("jump host %s not found in config", jhAlias)
+			return nil, finalErr
 		}
-		// Dial intermediate jump host using the current jumpClient
-		client, err := dial(jhSrv, jumpClient, confirmCallback)
-		if err != nil {
-			if jumpClient != nil {
-				jumpClient.Close()
+
+		var client *ssh.Client
+		var err error
+		if i == 0 && cfg != nil {
+			// First hop: leverage pool for multiplexing and recursive jump hosts
+			client, err = p.GetClient(jhSrv, cfg, confirmCallback)
+		} else {
+			// Subsequent hops: dial through the current chain
+			client, err = dial(jhSrv, jumpClient, confirmCallback)
+			if err == nil && privateJumpRoot == nil {
+				privateJumpRoot = client
 			}
-			return nil, fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
+		}
+
+		if err != nil {
+			finalErr = fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
+			return nil, finalErr
 		}
 		jumpClient = client
-		// We don't cache intermediate jump hosts in the pool to avoid 
-		// conflicts with their standalone configurations.
-		// They will be closed when the main client or the chain fails.
-		defer func() {
-			if err != nil && jumpClient != nil {
-				jumpClient.Close()
-			}
-		}()
 	}
 
 	// Dial the final connection.
 	client, err := dial(srv, jumpClient, confirmCallback)
 	if err != nil {
-		return nil, err
+		finalErr = err
+		return nil, finalErr
 	}
 
 	// Cache the new connection
@@ -152,6 +165,15 @@ func (p *Pool) IsAlive(alias string, client *ssh.Client) bool {
 	defer p.mu.Unlock()
 	entry, ok := p.entries[alias]
 	return ok && entry.client == client
+}
+
+// Touch updates the last access time of a client in the pool.
+func (p *Pool) Touch(alias string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if entry, ok := p.entries[alias]; ok {
+		entry.lastAccess = time.Now()
+	}
 }
 
 // CloseAll closes all active SSH clients in the pool.
