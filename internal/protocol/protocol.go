@@ -32,6 +32,7 @@ const (
 	TypeSFTPReq uint8 = 0x06
 	TypeSessionListReq uint8 = 0x07
 	TypeCWDUpdate uint8 = 0x08
+	TypeDisconnect uint8 = 0x09
 )
 
 // SubTypes for TypeData (using Reserved field)

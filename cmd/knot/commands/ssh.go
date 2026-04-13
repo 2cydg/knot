@@ -15,9 +15,11 @@ import (
 )
 
 var sshCmd = &cobra.Command{
-	Use:   "ssh [alias]",
-	Short: "Connect to a server via SSH",
-	Args:  cobra.ExactArgs(1),
+	Use:           "ssh [alias]",
+	Short:         "Connect to a server via SSH",
+	Args:          cobra.ExactArgs(1),
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 		if len(alias) > 255 {
@@ -136,6 +138,12 @@ var sshCmd = &cobra.Command{
 					return
 				}
 				switch msg.Header.Type {
+				case protocol.TypeDisconnect:
+					outMu.Lock()
+					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
+					outMu.Unlock()
+					errCh <- nil // Signal normal exit, allowing defers to run
+					return
 				case protocol.TypeData:
 					func() {
 						outMu.Lock()

@@ -24,9 +24,10 @@ type clientEntry struct {
 
 // Pool manages a pool of SSH clients for connection multiplexing.
 type Pool struct {
-	entries     map[string]*clientEntry
-	mu          sync.Mutex
-	idleTimeout time.Duration
+	entries            map[string]*clientEntry
+	mu                 sync.Mutex
+	idleTimeout        time.Duration
+	DisconnectCallback func(string)
 }
 
 // NewPool creates a new Pool instance.
@@ -87,7 +88,58 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	}
 	p.mu.Unlock()
 
+	// Start active keep-alive
+	go p.keepAliveLoop(srv.Alias, client)
+
 	return client, nil
+}
+
+func (p *Pool) keepAliveLoop(alias string, client *ssh.Client) {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	// Immediate detection via Wait()
+	done := make(chan struct{})
+	go func() {
+		client.Wait()
+		close(done)
+	}()
+
+	for {
+		select {
+		case <-ticker.C:
+			// Send a global request as a keep-alive heartbeat.
+			_, _, err := client.SendRequest("keepalive@knot", true, nil)
+			if err != nil {
+				p.triggerDisconnect(alias, client)
+				return
+			}
+		case <-done:
+			p.triggerDisconnect(alias, client)
+			return
+		}
+	}
+}
+
+func (p *Pool) triggerDisconnect(alias string, client *ssh.Client) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if entry, ok := p.entries[alias]; ok && entry.client == client {
+		entry.client.Close()
+		delete(p.entries, alias)
+		// Trigger disconnect callback if set
+		if p.DisconnectCallback != nil {
+			go p.DisconnectCallback(alias)
+		}
+	}
+}
+
+// IsAlive checks if a client for the given alias is still alive and in the pool.
+func (p *Pool) IsAlive(alias string, client *ssh.Client) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.entries[alias]
+	return ok && entry.client == client
 }
 
 // CloseAll closes all active SSH clients in the pool.

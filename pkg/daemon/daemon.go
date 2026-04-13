@@ -28,12 +28,13 @@ const MaxConcurrentConnections = 100
 
 // Session represents an active SSH session.
 type Session struct {
-	ID         string `json:"id"`
-	Alias      string `json:"alias"`
-	CurrentDir string `json:"current_dir"`
-	ConnID     int    `json:"conn_id"` // Reference to the UDS connection ID
-	followers  []net.Conn              // UDS connections following this session
-	mu         sync.Mutex
+	ID          string `json:"id"`
+	Alias       string `json:"alias"`
+	CurrentDir  string `json:"current_dir"`
+	ConnID      int    `json:"conn_id"`     // Reference to the UDS connection ID
+	primaryConn net.Conn                // Main connection for this session
+	followers   []net.Conn              // UDS connections following this session
+	mu          sync.Mutex
 }
 
 // SessionManager tracks active sessions in the daemon.
@@ -50,14 +51,15 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
-func (sm *SessionManager) Add(alias string) *Session {
+func (sm *SessionManager) Add(alias string, conn net.Conn) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	id := strconv.Itoa(sm.nextID)
 	sm.nextID++
 	s := &Session{
-		ID:    id,
-		Alias: alias,
+		ID:          id,
+		Alias:       alias,
+		primaryConn: conn,
 	}
 	sm.sessions[id] = s
 	return s
@@ -185,7 +187,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		return nil, err
 	}
 
-	return &Daemon{
+	d := &Daemon{
 		socketPath: socketPath,
 		pidPath:    pidPath,
 		configPath: configPath,
@@ -194,7 +196,27 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		pool:       sshpool.NewPool(),
 		crypto:     provider,
 		sm:         NewSessionManager(),
-	}, nil
+	}
+
+	d.pool.DisconnectCallback = func(alias string) {
+		log.Printf("SSH client for %s disconnected. Notifying sessions.", alias)
+		sessions := d.sm.ListByAlias(alias)
+		for _, s := range sessions {
+			s.mu.Lock()
+			conns := make([]net.Conn, 0, len(s.followers)+1)
+			if s.primaryConn != nil {
+				conns = append(conns, s.primaryConn)
+			}
+			conns = append(conns, s.followers...)
+			s.mu.Unlock()
+
+			for _, conn := range conns {
+				protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
+			}
+		}
+	}
+
+	return d, nil
 }
 
 // Start starts the daemon and listens for UDS connections.
@@ -433,7 +455,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// Register session in SessionManager
-	s := d.sm.Add(req.Alias)
+	s := d.sm.Add(req.Alias, conn)
 	defer d.sm.Remove(s.ID)
 
 	// Send success response with session ID
@@ -528,6 +550,11 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	case <-done:
 	case <-ctx.Done():
 	case <-d.stopCh:
+	}
+
+	// Final check: if client is no longer in the pool, the connection was lost
+	if !d.pool.IsAlive(req.Alias, client) {
+		protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
 	}
 }
 
@@ -719,6 +746,11 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 	case <-done:
 	case <-ctx.Done():
 	case <-d.stopCh:
+	}
+
+	// Final check: if client is no longer in the pool, the connection was lost
+	if !d.pool.IsAlive(alias, client) {
+		protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
 	}
 }
 

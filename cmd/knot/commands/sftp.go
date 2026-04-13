@@ -43,6 +43,13 @@ func (k *knotSFTPConn) start() {
 				}
 
 				switch msg.Header.Type {
+				case protocol.TypeDisconnect:
+					fmt.Printf("\r\n[knot] %s\r\n", string(msg.Payload))
+					select {
+					case k.errCh <- fmt.Errorf("disconnected"):
+					case <-k.closed:
+					}
+					return
 				case protocol.TypeData:
 					data := make([]byte, len(msg.Payload))
 					copy(data, msg.Payload)
@@ -112,9 +119,11 @@ func (k *knotSFTPConn) Close() error {
 }
 
 var sftpCmd = &cobra.Command{
-	Use:   "sftp [alias]",
-	Short: "Interactive SFTP shell",
-	Args:  cobra.ExactArgs(1),
+	Use:           "sftp [alias]",
+	Short:         "Interactive SFTP shell",
+	Args:          cobra.ExactArgs(1),
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 		if len(alias) > 255 {
@@ -240,7 +249,11 @@ var sftpCmd = &cobra.Command{
 		}
 		defer sftpClient.Close()
 
-		return knotsftp.RunREPL(sftpClient, alias, initialDir, cwdCh)
+		err = knotsftp.RunREPL(sftpClient, alias, initialDir, cwdCh)
+		if err != nil && err.Error() == "disconnected" {
+			return nil
+		}
+		return err
 	},
 }
 
