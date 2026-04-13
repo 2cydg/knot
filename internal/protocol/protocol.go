@@ -1,0 +1,188 @@
+package protocol
+
+import (
+	"fmt"
+	"io"
+	"sync"
+)
+
+// Magic bytes for the Knot protocol: "KN" (0x4B, 0x4E)
+var Magic = [2]byte{0x4B, 0x4E}
+
+const (
+	Version1 uint8 = 0x01
+)
+
+var (
+	// Default buffer size for messages (32KB + HeaderSize)
+	defaultBufferSize = 32*1024 + HeaderSize
+	msgPool           = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, defaultBufferSize)
+		},
+	}
+)
+
+const (
+	TypeReq    uint8 = 0x01
+	TypeResp   uint8 = 0x02
+	TypeData   uint8 = 0x03
+	TypeSignal uint8 = 0x04
+	TypeHostKeyConfirm uint8 = 0x05
+	TypeSFTPReq uint8 = 0x06
+	TypeSessionListReq uint8 = 0x07
+	TypeCWDUpdate uint8 = 0x08
+)
+
+// SubTypes for TypeData (using Reserved field)
+const (
+	DataStdin  uint8 = 0x01
+	DataStdout uint8 = 0x02
+	DataStderr uint8 = 0x03
+)
+
+// SignalResize signals a terminal window resize.
+const (
+	SignalStop   uint8 = 0x01
+	SignalResize uint8 = 0x02
+)
+
+// SSHRequest defines the payload for an SSH session request.
+type SSHRequest struct {
+	Alias string `json:"alias"`
+	Term  string `json:"term"`
+	Rows  int    `json:"rows"`
+	Cols  int    `json:"cols"`
+}
+
+// ResizePayload defines the payload for a terminal resize signal.
+type ResizePayload struct {
+	Rows int `json:"rows"`
+	Cols int `json:"cols"`
+}
+
+const MaxPayloadSize = 10 * 1024 * 1024 // 10MB
+
+// Header represents the Knot protocol header.
+// Structure: Magic(2) | Version(1) | Type(1) | Subtype(1) | Length(3)
+// Total Header Size: 8 bytes
+type Header struct {
+	Magic    [2]byte
+	Version  uint8
+	Type     uint8
+	Reserved uint8 // Now correctly mapped as Subtype/Reserved
+	Length   uint32 // Using 3 bytes for length in wire format
+}
+
+const HeaderSize = 8
+
+// EncodeTo serializes the header into an existing byte slice.
+func (h *Header) EncodeTo(buf []byte) {
+	copy(buf[0:2], h.Magic[:])
+	buf[2] = h.Version
+	buf[3] = h.Type
+	buf[4] = h.Reserved
+	// Using 3 bytes for length: buf[5:8]
+	buf[5] = byte(h.Length >> 16)
+	buf[6] = byte(h.Length >> 8)
+	buf[7] = byte(h.Length)
+}
+
+// Encode serializes the header into a byte slice.
+func (h *Header) Encode() []byte {
+	buf := make([]byte, HeaderSize)
+	h.EncodeTo(buf)
+	return buf
+}
+
+// DecodeHeader deserializes the header from a reader.
+func DecodeHeader(r io.Reader) (*Header, error) {
+	buf := make([]byte, HeaderSize)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+
+	if buf[0] != Magic[0] || buf[1] != Magic[1] {
+		return nil, fmt.Errorf("invalid magic bytes: 0x%02X 0x%02X", buf[0], buf[1])
+	}
+
+	version := buf[2]
+	if version != Version1 {
+		return nil, fmt.Errorf("unsupported protocol version: %d", version)
+	}
+
+	h := &Header{
+		Magic:    [2]byte{buf[0], buf[1]},
+		Version:  version,
+		Type:     buf[3],
+		Reserved: buf[4],
+		// buf[5:8] is length (24-bit)
+		Length: uint32(buf[5])<<16 | uint32(buf[6])<<8 | uint32(buf[7]),
+	}
+	return h, nil
+}
+
+// Message represents a full protocol message.
+type Message struct {
+	Header  Header
+	Payload []byte
+}
+
+// ReadMessage reads a full message from a reader.
+func ReadMessage(r io.Reader) (*Message, error) {
+	header, err := DecodeHeader(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if header.Length > MaxPayloadSize {
+		return nil, fmt.Errorf("payload too large: %d > %d", header.Length, MaxPayloadSize)
+	}
+
+	payload := make([]byte, header.Length)
+	if header.Length > 0 {
+		if _, err := io.ReadFull(r, payload); err != nil {
+			return nil, err
+		}
+	}
+
+	return &Message{
+		Header:  *header,
+		Payload: payload,
+	}, nil
+}
+
+// WriteMessage writes a full message to a writer with a reserved byte for sub-types.
+// It combines header and payload into a single write to ensure atomicity and reduce system calls.
+func WriteMessage(w io.Writer, msgType uint8, reserved uint8, payload []byte) error {
+	payloadLen := len(payload)
+	if payloadLen > MaxPayloadSize {
+		return fmt.Errorf("payload too large to write: %d > %d", payloadLen, MaxPayloadSize)
+	}
+
+	header := Header{
+		Magic:    Magic,
+		Version:  Version1,
+		Type:     msgType,
+		Reserved: reserved,
+		Length:   uint32(payloadLen),
+	}
+
+	totalLen := HeaderSize + payloadLen
+	var fullMsg []byte
+	if totalLen <= defaultBufferSize {
+		fullMsg = msgPool.Get().([]byte)
+		defer msgPool.Put(fullMsg)
+		fullMsg = fullMsg[:totalLen]
+	} else {
+		fullMsg = make([]byte, totalLen)
+	}
+
+	header.EncodeTo(fullMsg[0:HeaderSize])
+	if payloadLen > 0 {
+		copy(fullMsg[HeaderSize:], payload)
+	}
+
+	_, err := w.Write(fullMsg)
+	return err
+}
