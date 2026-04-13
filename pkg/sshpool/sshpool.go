@@ -60,21 +60,33 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	}
 	p.mu.Unlock()
 
-	// Handle Jump Host
+	// Handle Jump Hosts chain
 	var jumpClient *ssh.Client
-	if srv.JumpHost != "" && cfg != nil {
-		jumpSrv, ok := cfg.Servers[srv.JumpHost]
+	for _, jhAlias := range srv.JumpHost {
+		jhSrv, ok := cfg.Servers[jhAlias]
 		if !ok {
-			return nil, fmt.Errorf("jump host %s not found in config", srv.JumpHost)
+			return nil, fmt.Errorf("jump host %s not found in config", jhAlias)
 		}
-		var err error
-		jumpClient, err = p.GetClient(jumpSrv, cfg, confirmCallback)
+		// Dial intermediate jump host using the current jumpClient
+		client, err := dial(jhSrv, jumpClient, confirmCallback)
 		if err != nil {
-			return nil, fmt.Errorf("failed to connect to jump host %s: %w", srv.JumpHost, err)
+			if jumpClient != nil {
+				jumpClient.Close()
+			}
+			return nil, fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
 		}
+		jumpClient = client
+		// We don't cache intermediate jump hosts in the pool to avoid 
+		// conflicts with their standalone configurations.
+		// They will be closed when the main client or the chain fails.
+		defer func() {
+			if err != nil && jumpClient != nil {
+				jumpClient.Close()
+			}
+		}()
 	}
 
-	// Dial a new connection.
+	// Dial the final connection.
 	client, err := dial(srv, jumpClient, confirmCallback)
 	if err != nil {
 		return nil, err

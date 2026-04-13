@@ -43,7 +43,7 @@ type ServerConfig struct {
 	PrivateKeyPath string      `toml:"private_key_path,omitempty"`
 	KnownHostsPath string      `toml:"known_hosts_path,omitempty"`
 	Proxy          ProxyConfig `toml:"proxy,omitempty"`
-	JumpHost       string      `toml:"jump_host,omitempty"`
+	JumpHost       []string    `toml:"jump_host,omitempty"`
 }
 
 type Config struct {
@@ -162,29 +162,39 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 	return nil
 }
 
-func (c *Config) HasCycle(startAlias, jumpHostAlias string) error {
-	if jumpHostAlias == "" {
+func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {
+	if len(jumpHostAliases) == 0 {
 		return nil
-	}
-	if startAlias == jumpHostAlias {
-		return fmt.Errorf("a server cannot be its own jump host")
 	}
 
 	visited := make(map[string]bool)
 	visited[startAlias] = true
-	current := jumpHostAlias
 
-	for current != "" {
-		if visited[current] {
-			return fmt.Errorf("cycle detected: %s forms a loop", current)
+	var check func(string) error
+	check = func(alias string) error {
+		if visited[alias] {
+			return fmt.Errorf("cycle detected: %s forms a loop", alias)
 		}
-		visited[current] = true
-		srv, ok := c.Servers[current]
+		visited[alias] = true
+		defer func() { visited[alias] = false }()
+
+		srv, ok := c.Servers[alias]
 		if !ok {
-			// Jump host not found, but it's not a cycle in terms of graph traversal (it's a dangling reference)
-			break
+			return nil
 		}
-		current = srv.JumpHost
+
+		for _, jh := range srv.JumpHost {
+			if err := check(jh); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, jh := range jumpHostAliases {
+		if err := check(jh); err != nil {
+			return err
+		}
 	}
 	return nil
 }

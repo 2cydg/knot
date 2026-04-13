@@ -60,35 +60,40 @@ func TestConfigLoadSave(t *testing.T) {
 func TestHasCycle(t *testing.T) {
 	cfg := &Config{
 		Servers: map[string]ServerConfig{
-			"A": {Alias: "A", JumpHost: "B"},
-			"B": {Alias: "B", JumpHost: "C"},
-			"C": {Alias: "C", JumpHost: ""},
-			"D": {Alias: "D", JumpHost: "A"},
+			"A": {Alias: "A", JumpHost: []string{"B"}},
+			"B": {Alias: "B", JumpHost: []string{"C"}},
+			"C": {Alias: "C", JumpHost: []string{}},
+			"D": {Alias: "D", JumpHost: []string{"A"}},
 		},
 	}
 
 	// No cycle
-	if err := cfg.HasCycle("E", "A"); err != nil {
+	if err := cfg.HasCycle("E", []string{"A"}); err != nil {
 		t.Errorf("expected no cycle for E -> A -> B -> C, got %v", err)
 	}
 
 	// Self cycle
-	if err := cfg.HasCycle("A", "A"); err == nil {
+	if err := cfg.HasCycle("A", []string{"A"}); err == nil {
 		t.Error("expected error for self cycle A -> A")
 	}
 
 	// Direct cycle
-	if err := cfg.HasCycle("C", "A"); err == nil {
+	if err := cfg.HasCycle("C", []string{"A"}); err == nil {
 		t.Error("expected error for cycle C -> A -> B -> C")
 	}
 
 	// Indirect cycle
-	if err := cfg.HasCycle("B", "D"); err == nil {
+	if err := cfg.HasCycle("B", []string{"D"}); err == nil {
 		t.Error("expected error for cycle B -> D -> A -> B")
 	}
 
+	// Multi-jump cycle
+	if err := cfg.HasCycle("X", []string{"A", "B", "X"}); err == nil {
+		t.Error("expected error for multi-jump cycle X -> A, B, X")
+	}
+
 	// Non-existent jump host (should not be a cycle)
-	if err := cfg.HasCycle("X", "Y"); err != nil {
+	if err := cfg.HasCycle("X", []string{"Y"}); err != nil {
 		t.Errorf("expected no cycle for X -> Y (non-existent), got %v", err)
 	}
 }

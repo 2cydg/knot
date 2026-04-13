@@ -39,6 +39,7 @@ var addCmd = &cobra.Command{
 		khFlag, _ := cmd.Flags().GetString("known-hosts")
 
 		authFlag, _ := cmd.Flags().GetString("auth-method")
+		jhFlag, _ := cmd.Flags().GetString("jump-host")
 
 		if hostFlag != "" && userFlag != "" {
 			// Non-interactive mode
@@ -48,6 +49,18 @@ var addCmd = &cobra.Command{
 			if len(alias) > 255 {
 				return fmt.Errorf("alias too long (max 255 characters)")
 			}
+
+			var jumpHosts []string
+			if jhFlag != "" {
+				jumpHosts = strings.Split(jhFlag, ",")
+				for i, jh := range jumpHosts {
+					jumpHosts[i] = strings.TrimSpace(jh)
+				}
+				if err := cfg.HasCycle(alias, jumpHosts); err != nil {
+					return err
+				}
+			}
+
 			if authFlag == "" {
 				if keyFlag != "" {
 					authFlag = config.AuthMethodKey
@@ -64,6 +77,7 @@ var addCmd = &cobra.Command{
 				Password:       passFlag,
 				PrivateKeyPath: keyFlag,
 				KnownHostsPath: khFlag,
+				JumpHost:       jumpHosts,
 			}
 			if err := cfg.Save(provider); err != nil {
 				return err
@@ -171,7 +185,7 @@ var addCmd = &cobra.Command{
 		}
 
 		var proxy config.ProxyConfig
-		var jumpHost string
+		var jumpHosts []string
 		adv, err := line.Prompt("Configure advanced options (Proxy, Jump Host)? (y/N): ")
 		if err == nil && strings.ToLower(adv) == "y" {
 			fmt.Println("Configure Proxy:")
@@ -202,37 +216,45 @@ var addCmd = &cobra.Command{
 			sort.Strings(aliases)
 
 			if len(aliases) > 0 {
-				fmt.Println("Select Jump Host:")
+				fmt.Println("Select Jump Host(s) - enter comma-separated aliases or numbers:")
 				fmt.Println("0) None")
 				for i, a := range aliases {
 					fmt.Printf("%d) %s\n", i+1, a)
 				}
 				for {
-					choice, _ := line.Prompt(fmt.Sprintf("Select Jump Host (0-%d): ", len(aliases)))
+					choice, _ := line.Prompt("Select Jump Host(s) (e.g., '1,2' or 'jh1,jh2'): ")
 					if choice == "" || choice == "0" {
-						jumpHost = ""
 						break
 					}
-					idx, err := strconv.Atoi(choice)
-					if err == nil && idx > 0 && idx <= len(aliases) {
-						selected := aliases[idx-1]
-						if err := cfg.HasCycle(alias, selected); err != nil {
-							fmt.Printf("Invalid jump host: %v\n", err)
+					parts := strings.Split(choice, ",")
+					var selectedHosts []string
+					valid := true
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p == "" {
 							continue
 						}
-						jumpHost = selected
-						break
+						idx, err := strconv.Atoi(p)
+						if err == nil && idx > 0 && idx <= len(aliases) {
+							selectedHosts = append(selectedHosts, aliases[idx-1])
+						} else if _, ok := cfg.Servers[p]; ok {
+							selectedHosts = append(selectedHosts, p)
+						} else {
+							fmt.Printf("Invalid selection: %s\n", p)
+							valid = false
+							break
+						}
 					}
-					// Check if input is a literal alias
-					if _, ok := cfg.Servers[choice]; ok {
-						if err := cfg.HasCycle(alias, choice); err != nil {
-							fmt.Printf("Invalid jump host: %v\n", err)
+					if valid && len(selectedHosts) > 0 {
+						if err := cfg.HasCycle(alias, selectedHosts); err != nil {
+							fmt.Printf("Invalid jump host(s): %v\n", err)
 							continue
 						}
-						jumpHost = choice
+						jumpHosts = selectedHosts
+						break
+					} else if valid && len(selectedHosts) == 0 {
 						break
 					}
-					fmt.Println("Invalid selection.")
 				}
 			} else {
 				fmt.Println("No existing servers to use as jump hosts.")
@@ -248,7 +270,7 @@ var addCmd = &cobra.Command{
 			Password:       password,
 			PrivateKeyPath: keyPath,
 			Proxy:          proxy,
-			JumpHost:       jumpHost,
+			JumpHost:       jumpHosts,
 		}
 
 		if err := cfg.Save(provider); err != nil {
@@ -268,5 +290,6 @@ func init() {
 	addCmd.Flags().StringP("key", "k", "", "Private key path")
 	addCmd.Flags().String("auth-method", "", "Authentication method (password, key, agent)")
 	addCmd.Flags().String("known-hosts", "", "Known hosts file path")
+	addCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
 	rootCmd.AddCommand(addCmd)
 }

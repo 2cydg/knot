@@ -147,44 +147,55 @@ var editCmd = &cobra.Command{
 			sort.Strings(aliases)
 
 			if len(aliases) > 0 {
-				fmt.Printf("Select Jump Host [Current: %s]:\n", srv.JumpHost)
+				fmt.Printf("Select Jump Host(s) [Current: %s]:\n", strings.Join(srv.JumpHost, ","))
+				fmt.Println("Select Jump Host(s) - enter comma-separated aliases or numbers:")
 				fmt.Println("0) None/Clear")
 				for i, a := range aliases {
 					fmt.Printf("%d) %s\n", i+1, a)
 				}
 				for {
-					choice, _ := line.Prompt(fmt.Sprintf("Select Jump Host (0-%d, leave empty to keep current): ", len(aliases)))
+					choice, _ := line.Prompt("Select Jump Host(s) (e.g., '1,2' or 'jh1,jh2', leave empty to keep current): ")
 					if choice == "" {
 						break
 					}
 					if choice == "0" {
-						srv.JumpHost = ""
+						srv.JumpHost = []string{}
 						break
 					}
-					idx, err := strconv.Atoi(choice)
-					if err == nil && idx > 0 && idx <= len(aliases) {
-						selected := aliases[idx-1]
-						if err := cfg.HasCycle(alias, selected); err != nil {
-							fmt.Printf("Invalid jump host: %v\n", err)
+					parts := strings.Split(choice, ",")
+					var selectedHosts []string
+					valid := true
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p == "" {
 							continue
 						}
-						srv.JumpHost = selected
+						idx, err := strconv.Atoi(p)
+						if err == nil && idx > 0 && idx <= len(aliases) {
+							selectedHosts = append(selectedHosts, aliases[idx-1])
+						} else if _, ok := cfg.Servers[p]; ok {
+							if p == alias {
+								fmt.Printf("Invalid selection: %s (cannot be its own jump host)\n", p)
+								valid = false
+								break
+							}
+							selectedHosts = append(selectedHosts, p)
+						} else {
+							fmt.Printf("Invalid selection: %s\n", p)
+							valid = false
+							break
+						}
+					}
+					if valid && len(selectedHosts) > 0 {
+						if err := cfg.HasCycle(alias, selectedHosts); err != nil {
+							fmt.Printf("Invalid jump host(s): %v\n", err)
+							continue
+						}
+						srv.JumpHost = selectedHosts
+						break
+					} else if valid && len(selectedHosts) == 0 {
 						break
 					}
-					// Check if input is a literal alias
-					if _, ok := cfg.Servers[choice]; ok {
-						if choice == alias {
-							fmt.Println("A server cannot be its own jump host.")
-							continue
-						}
-						if err := cfg.HasCycle(alias, choice); err != nil {
-							fmt.Printf("Invalid jump host: %v\n", err)
-							continue
-						}
-						srv.JumpHost = choice
-						break
-					}
-					fmt.Println("Invalid selection.")
 				}
 			} else {
 				fmt.Println("No other servers available to use as jump hosts.")
