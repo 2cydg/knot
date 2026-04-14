@@ -1,9 +1,12 @@
 package sshpool
 
 import (
+	"bufio"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"knot/pkg/config"
+	"knot/internal/protocol"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,6 +23,7 @@ import (
 type clientEntry struct {
 	client     *ssh.Client
 	lastAccess time.Time
+	refCount   int
 }
 
 // Pool manages a pool of SSH clients for connection multiplexing.
@@ -28,13 +32,18 @@ type Pool struct {
 	mu                 sync.Mutex
 	idleTimeout        time.Duration
 	DisconnectCallback func(string)
+	ctx                context.Context
+	cancel             context.CancelFunc
 }
 
 // NewPool creates a new Pool instance.
 func NewPool() *Pool {
+	ctx, cancel := context.WithCancel(context.Background())
 	p := &Pool{
 		entries:     make(map[string]*clientEntry),
 		idleTimeout: 30 * time.Minute,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	go p.autoCleanup()
 	return p
@@ -110,6 +119,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	p.entries[srv.Alias] = &clientEntry{
 		client:     client,
 		lastAccess: time.Now(),
+		refCount:   0,
 	}
 	p.mu.Unlock()
 
@@ -130,17 +140,27 @@ func (p *Pool) keepAliveLoop(alias string, client *ssh.Client) {
 		close(done)
 	}()
 
+	failCount := 0
+	const maxFailures = 3
+
 	for {
 		select {
 		case <-ticker.C:
 			// Send a global request as a keep-alive heartbeat.
 			_, _, err := client.SendRequest("keepalive@knot", true, nil)
 			if err != nil {
-				p.triggerDisconnect(alias, client)
-				return
+				failCount++
+				if failCount >= maxFailures {
+					p.triggerDisconnect(alias, client)
+					return
+				}
+			} else {
+				failCount = 0
 			}
 		case <-done:
 			p.triggerDisconnect(alias, client)
+			return
+		case <-p.ctx.Done():
 			return
 		}
 	}
@@ -176,8 +196,51 @@ func (p *Pool) Touch(alias string) {
 	}
 }
 
+// IncRef increments the reference count for a cached client.
+func (p *Pool) IncRef(alias string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if entry, ok := p.entries[alias]; ok {
+		entry.refCount++
+	}
+}
+
+// DecRef decrements the reference count for a cached client.
+func (p *Pool) DecRef(alias string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if entry, ok := p.entries[alias]; ok {
+		if entry.refCount > 0 {
+			entry.refCount--
+		}
+	}
+}
+
+// GetStats returns statistics for all active SSH clients in the pool.
+func (p *Pool) GetStats() []protocol.PoolEntryStat {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	stats := make([]protocol.PoolEntryStat, 0, len(p.entries))
+	now := time.Now()
+	for alias, entry := range p.entries {
+		host, _, err := net.SplitHostPort(entry.client.RemoteAddr().String())
+		if err != nil {
+			host = entry.client.RemoteAddr().String()
+		}
+		stats = append(stats, protocol.PoolEntryStat{
+			Alias:    alias,
+			Host:     host,
+			IdleTime: now.Sub(entry.lastAccess).Round(time.Second).String(),
+			RefCount: entry.refCount,
+		})
+	}
+	return stats
+}
+
 // CloseAll closes all active SSH clients in the pool.
 func (p *Pool) CloseAll() {
+	p.cancel()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, entry := range p.entries {
@@ -190,16 +253,21 @@ func (p *Pool) autoCleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		p.mu.Lock()
-		now := time.Now()
-		for alias, entry := range p.entries {
-			if now.Sub(entry.lastAccess) > p.idleTimeout {
-				entry.client.Close()
-				delete(p.entries, alias)
+	for {
+		select {
+		case <-ticker.C:
+			p.mu.Lock()
+			now := time.Now()
+			for alias, entry := range p.entries {
+				if entry.refCount == 0 && now.Sub(entry.lastAccess) > p.idleTimeout {
+					entry.client.Close()
+					delete(p.entries, alias)
+				}
 			}
+			p.mu.Unlock()
+		case <-p.ctx.Done():
+			return
 		}
-		p.mu.Unlock()
 	}
 }
 
@@ -360,7 +428,19 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 		conn.Close()
 		return nil, err
 	}
-	return ssh.NewClient(ncc, chans, reqs), nil
+
+	// Ensure ncc is closed if we fail before NewClient takes ownership.
+	// Although NewClient currently doesn't fail, this is defensive.
+	success := false
+	defer func() {
+		if !success {
+			ncc.Close()
+		}
+	}()
+
+	client := ssh.NewClient(ncc, chans, reqs)
+	success = true
+	return client, nil
 }
 
 func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer) (net.Conn, error) {
@@ -381,19 +461,12 @@ func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer)
 		return nil, fmt.Errorf("failed to send CONNECT request to HTTP proxy: %w", err)
 	}
 
-	// Read response line by line to prevent chunked transfer or injection attacks
-	var statusLine string
-	for {
-		buf := make([]byte, 1)
-		_, err := conn.Read(buf)
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("failed to read response from HTTP proxy: %w", err)
-		}
-		statusLine += string(buf)
-		if strings.HasSuffix(statusLine, "\n") {
-			break
-		}
+	// Read response using bufio.Reader for efficiency
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read response from HTTP proxy: %w", err)
 	}
 	
 	statusLine = strings.TrimSpace(statusLine)
@@ -404,24 +477,29 @@ func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer)
 
 	// Consume remaining headers until empty line
 	for {
-		var line string
-		for {
-			buf := make([]byte, 1)
-			_, err := conn.Read(buf)
-			if err != nil {
-				conn.Close()
-				return nil, fmt.Errorf("failed to read headers from HTTP proxy: %w", err)
-			}
-			line += string(buf)
-			if strings.HasSuffix(line, "\n") {
-				break
-			}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to read headers from HTTP proxy: %w", err)
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "\r\n" || line == "\n" {
 			break
 		}
 	}
 
+	// After headers, if we have leftover in bufio.Reader, we need to wrap the connection
+	// because bufio.Reader might have buffered data from the SSH stream.
+	if reader.Buffered() > 0 {
+		return &bufferedConn{Conn: conn, reader: reader}, nil
+	}
 	return conn, nil
+}
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(b []byte) (int, error) {
+	return c.reader.Read(b)
 }

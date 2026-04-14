@@ -33,6 +33,8 @@ const (
 	TypeSessionListReq uint8 = 0x07
 	TypeCWDUpdate uint8 = 0x08
 	TypeDisconnect uint8 = 0x09
+	TypeStatusReq uint8 = 0x0A
+	TypeStatusResp uint8 = 0x0B
 )
 
 // SubTypes for TypeData (using Reserved field)
@@ -60,6 +62,24 @@ type SSHRequest struct {
 type ResizePayload struct {
 	Rows int `json:"rows"`
 	Cols int `json:"cols"`
+}
+
+// StatusResponse defines the payload for a status response message.
+type StatusResponse struct {
+	DaemonPID      int             `json:"daemon_pid"`
+	Uptime         string          `json:"uptime"`
+	UDSPath        string          `json:"uds_path"`
+	MemoryUsage    uint64          `json:"memory_usage_bytes"`
+	PoolStats      []PoolEntryStat `json:"pool_stats"`
+	ActiveSessions int             `json:"active_sessions"`
+}
+
+// PoolEntryStat defines the statistics for a single SSH pool entry.
+type PoolEntryStat struct {
+	Alias    string `json:"alias"`
+	Host     string `json:"host"`
+	IdleTime string `json:"idle_time"`
+	RefCount int    `json:"ref_count"`
 }
 
 const MaxPayloadSize = 10 * 1024 * 1024 // 10MB

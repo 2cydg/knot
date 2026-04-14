@@ -6,20 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"knot/pkg/sshpool"
-	"log"
 	"net"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -91,26 +93,29 @@ func (sm *SessionManager) UpdateDir(id string, dir string) {
 	copy(followers, s.followers)
 	s.mu.Unlock()
 
-	log.Printf("Session %s CWD updated to: %s. Notifying %d followers.", id, dir, len(followers))
+	logger.Info("Session CWD updated", "id", id, "dir", dir, "followers", len(followers))
 
 	var failedConns []net.Conn
 	for _, conn := range followers {
 		if err := protocol.WriteMessage(conn, protocol.TypeCWDUpdate, 0, []byte(dir)); err != nil {
-			log.Printf("Failed to notify follower for session %s: %v. Removing follower.", id, err)
+			logger.Error("Failed to notify follower", "id", id, "error", err)
 			failedConns = append(failedConns, conn)
 		}
 	}
 
 	if len(failedConns) > 0 {
 		s.mu.Lock()
-		for _, failed := range failedConns {
-			for i, f := range s.followers {
-				if f == failed {
-					s.followers = append(s.followers[:i], s.followers[i+1:]...)
-					break
-				}
+		newFollowers := make([]net.Conn, 0, len(s.followers))
+		failedMap := make(map[net.Conn]bool)
+		for _, f := range failedConns {
+			failedMap[f] = true
+		}
+		for _, f := range s.followers {
+			if !failedMap[f] {
+				newFollowers = append(newFollowers, f)
 			}
 		}
+		s.followers = newFollowers
 		s.mu.Unlock()
 	}
 }
@@ -123,27 +128,29 @@ func (sm *SessionManager) AddFollower(sessionID string, conn net.Conn) {
 	if ok {
 		s.mu.Lock()
 		s.followers = append(s.followers, conn)
-		log.Printf("Added follower to session %s. Total followers: %d", sessionID, len(s.followers))
+		logger.Info("Added follower to session", "id", sessionID, "total_followers", len(s.followers))
 		s.mu.Unlock()
 	} else {
-		log.Printf("Failed to add follower: session %s not found", sessionID)
+		logger.Warn("Failed to add follower: session not found", "id", sessionID)
 	}
 }
 
 func (sm *SessionManager) RemoveFollower(sessionID string, conn net.Conn) {
-	sm.mu.RLock()
+	sm.mu.Lock()
 	s, ok := sm.sessions[sessionID]
-	sm.mu.RUnlock()
+	if !ok {
+		sm.mu.Unlock()
+		return
+	}
+	sm.mu.Unlock()
 
-	if ok {
-		s.mu.Lock()
-		for i, f := range s.followers {
-			if f == conn {
-				s.followers = append(s.followers[:i], s.followers[i+1:]...)
-				break
-			}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, f := range s.followers {
+		if f == conn {
+			s.followers = append(s.followers[:i], s.followers[i+1:]...)
+			break
 		}
-		s.mu.Unlock()
 	}
 }
 
@@ -159,6 +166,16 @@ func (sm *SessionManager) ListByAlias(alias string) []*Session {
 	return res
 }
 
+func (sm *SessionManager) ListAll() []*Session {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	var res []*Session
+	for _, s := range sm.sessions {
+		res = append(res, s)
+	}
+	return res
+}
+
 // Daemon handles the background process and UDS communication.
 type Daemon struct {
 	socketPath string
@@ -170,6 +187,8 @@ type Daemon struct {
 	pool       *sshpool.Pool
 	crypto     crypto.Provider
 	sm         *SessionManager
+	startTime  time.Time
+	stopOnce   sync.Once
 }
 
 // NewDaemon creates a new Daemon instance.
@@ -196,10 +215,11 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		pool:       sshpool.NewPool(),
 		crypto:     provider,
 		sm:         NewSessionManager(),
+		startTime:  time.Now(),
 	}
 
 	d.pool.DisconnectCallback = func(alias string) {
-		log.Printf("SSH client for %s disconnected. Notifying sessions.", alias)
+		logger.Info("SSH client disconnected. Notifying sessions.", "alias", alias)
 		sessions := d.sm.ListByAlias(alias)
 		for _, s := range sessions {
 			s.mu.Lock()
@@ -270,11 +290,11 @@ func (d *Daemon) Start() error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		log.Printf("Received signal %v, stopping daemon...", sig)
+		logger.Info("Received signal, stopping daemon...", "signal", sig)
 		d.Stop()
 	}()
 
-	fmt.Printf("Daemon listening on %s (PID: %d)\n", d.socketPath, os.Getpid())
+	logger.Info("Daemon started", "socket", d.socketPath, "pid", os.Getpid())
 
 	for {
 		conn, err := l.Accept()
@@ -296,17 +316,39 @@ func (d *Daemon) Start() error {
 
 // Stop stops the daemon and removes the socket file.
 func (d *Daemon) Stop() error {
-	close(d.stopCh)
-	if d.listener != nil {
-		d.listener.Close()
-	}
-	if d.pool != nil {
-		d.pool.CloseAll()
-	}
-	if _, err := os.Stat(d.socketPath); err == nil {
-		return os.Remove(d.socketPath)
-	}
-	return nil
+	var err error
+	d.stopOnce.Do(func() {
+		close(d.stopCh)
+		if d.listener != nil {
+			d.listener.Close()
+		}
+
+		// Notify all active sessions about the shutdown
+		if d.sm != nil {
+			sessions := d.sm.ListAll()
+			for _, s := range sessions {
+				s.mu.Lock()
+				conns := make([]net.Conn, 0, len(s.followers)+1)
+				if s.primaryConn != nil {
+					conns = append(conns, s.primaryConn)
+				}
+				conns = append(conns, s.followers...)
+				s.mu.Unlock()
+
+				for _, conn := range conns {
+					protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("Daemon is shutting down"))
+				}
+			}
+		}
+
+		if d.pool != nil {
+			d.pool.CloseAll()
+		}
+		if _, statErr := os.Stat(d.socketPath); statErr == nil {
+			err = os.Remove(d.socketPath)
+		}
+	})
+	return err
 }
 
 func isValidAlias(alias string) bool {
@@ -326,7 +368,7 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 	defer func() {
 		<-d.sem
 		if r := recover(); r != nil {
-			log.Printf("Connection handler panic: %v", r)
+			logger.Error("Connection handler panic", "recover", r)
 		}
 		conn.Close()
 	}()
@@ -343,7 +385,7 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 			var req protocol.SSHRequest
 			if err := json.Unmarshal(msg.Payload, &req); err == nil && req.Alias != "" {
 				if !isValidAlias(req.Alias) {
-					log.Printf("SSH Request: invalid alias format")
+					logger.Warn("SSH Request: invalid alias format", "alias", req.Alias)
 					return
 				}
 				d.handleSSHRequest(conn, &req)
@@ -351,13 +393,13 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 			}
 			// Default echo for other requests
 			if err := protocol.WriteMessage(conn, protocol.TypeResp, 0, msg.Payload); err != nil {
-				log.Printf("Failed to write response: %v", err)
+				logger.Error("Failed to write response", "error", err)
 				return
 			}
 		case protocol.TypeSFTPReq:
 			alias := string(msg.Payload)
 			if !isValidAlias(alias) {
-				log.Printf("SFTP Request: invalid alias format")
+				logger.Warn("SFTP Request: invalid alias format", "alias", alias)
 				return
 			}
 			if alias != "" {
@@ -367,10 +409,12 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		case protocol.TypeSessionListReq:
 			alias := string(msg.Payload)
 			if alias != "" && !isValidAlias(alias) {
-				log.Printf("SessionList Request: invalid alias format")
+				logger.Warn("SessionList Request: invalid alias format", "alias", alias)
 				return
 			}
 			d.handleSessionListRequest(conn, alias)
+		case protocol.TypeStatusReq:
+			d.handleStatusRequest(conn)
 		case protocol.TypeSignal:
 			if msg.Header.Reserved == protocol.SignalStop || string(msg.Payload) == "stop" {
 				go d.Stop()
@@ -384,7 +428,7 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 
 func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	sendError := func(errMsg string) {
-		log.Printf("SSH Request Error: %s", errMsg)
+		logger.Error("SSH Request Error", "alias", req.Alias, "error", errMsg)
 		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: "+errMsg))
 	}
 
@@ -405,14 +449,14 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	confirmCallback := func(prompt string) bool {
 		// Send confirmation request to CLI
 		if err := protocol.WriteMessage(conn, protocol.TypeHostKeyConfirm, 0, []byte(prompt)); err != nil {
-			log.Printf("Failed to send confirmation request: %v", err)
+			logger.Error("Failed to send confirmation request", "alias", req.Alias, "error", err)
 			return false
 		}
 
 		// Wait for response from CLI
 		msg, err := protocol.ReadMessage(conn)
 		if err != nil {
-			log.Printf("Failed to read confirmation response: %v", err)
+			logger.Error("Failed to read confirmation response", "alias", req.Alias, "error", err)
 			return false
 		}
 
@@ -468,7 +512,11 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 
 	// Register session in SessionManager
 	s := d.sm.Add(req.Alias, conn)
-	defer d.sm.Remove(s.ID)
+	d.pool.IncRef(req.Alias)
+	defer func() {
+		d.sm.Remove(s.ID)
+		d.pool.DecRef(req.Alias)
+	}()
 
 	// Send success response with session ID
 	if err := protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("ok:"+s.ID)); err != nil {
@@ -537,7 +585,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			case protocol.TypeData:
 				if msg.Header.Reserved == protocol.DataStdin {
 					if _, err := stdin.Write(msg.Payload); err != nil {
-						log.Printf("Failed to write to stdin: %v", err)
+						logger.Error("Failed to write to stdin", "alias", req.Alias, "error", err)
 						return
 					}
 				}
@@ -547,7 +595,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 					if err := json.Unmarshal(msg.Payload, &payload); err == nil {
 						session.WindowChange(payload.Rows, payload.Cols)
 					} else {
-						log.Printf("Failed to unmarshal resize payload: %v", err)
+						logger.Error("Failed to unmarshal resize payload", "error", err)
 					}
 				}
 			}
@@ -567,6 +615,11 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	case <-d.stopCh:
 	}
 
+	// Trigger cancellation and close session to break blocking reads
+	cancel()
+	session.Close()
+	wg.Wait()
+
 	// Final check: if client is no longer in the pool, the connection was lost
 	if !d.pool.IsAlive(req.Alias, client) {
 		protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
@@ -583,18 +636,39 @@ func (d *Daemon) handleSessionListRequest(conn net.Conn, alias string) {
 	protocol.WriteMessage(conn, protocol.TypeResp, 0, data)
 }
 
-func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
-	sendError := func(errMsg string) {
-		log.Printf("SFTP Request Error: %s", errMsg)
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: "+errMsg))
+func (d *Daemon) handleStatusRequest(conn net.Conn) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	stats := protocol.StatusResponse{
+		DaemonPID:      os.Getpid(),
+		Uptime:         time.Since(d.startTime).Round(time.Second).String(),
+		UDSPath:        d.socketPath,
+		MemoryUsage:    m.Alloc,
+		PoolStats:      d.pool.GetStats(),
+		ActiveSessions: len(d.sm.sessions),
 	}
 
+	data, err := json.Marshal(stats)
+	if err != nil {
+		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: marshal status failed"))
+		return
+	}
+	protocol.WriteMessage(conn, protocol.TypeStatusResp, 0, data)
+}
+
+func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 	// Parse alias and optional sessionID (format: "alias[:sessionID]")
 	parts := strings.SplitN(payload, ":", 2)
 	alias := parts[0]
 	var followSessionID string
 	if len(parts) > 1 {
 		followSessionID = parts[1]
+	}
+
+	sendError := func(errMsg string) {
+		logger.Error("SFTP Request Error", "alias", alias, "error", errMsg)
+		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: "+errMsg))
 	}
 
 	// 1. Load config
@@ -614,14 +688,14 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 	confirmCallback := func(prompt string) bool {
 		// Send confirmation request to CLI
 		if err := protocol.WriteMessage(conn, protocol.TypeHostKeyConfirm, 0, []byte(prompt)); err != nil {
-			log.Printf("Failed to send confirmation request: %v", err)
+			logger.Error("Failed to send confirmation request", "alias", alias, "error", err)
 			return false
 		}
 
 		// Wait for response from CLI
 		msg, err := protocol.ReadMessage(conn)
 		if err != nil {
-			log.Printf("Failed to read confirmation response: %v", err)
+			logger.Error("Failed to read confirmation response", "alias", alias, "error", err)
 			return false
 		}
 
@@ -633,6 +707,9 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 		sendError("failed to connect to server: " + err.Error())
 		return
 	}
+
+	d.pool.IncRef(alias)
+	defer d.pool.DecRef(alias)
 
 	// 3. Create session
 	session, err := client.NewSession()
@@ -763,6 +840,11 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 	case <-ctx.Done():
 	case <-d.stopCh:
 	}
+
+	// Trigger cancellation and close session to break blocking reads
+	cancel()
+	session.Close()
+	wg.Wait()
 
 	// Final check: if client is no longer in the pool, the connection was lost
 	if !d.pool.IsAlive(alias, client) {

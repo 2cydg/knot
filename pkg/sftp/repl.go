@@ -121,7 +121,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 			if len(args) > 2 {
 				localPath = args[2]
 			}
-			if err := Download(client, remotePath, localPath); err != nil {
+			if err := Download(client, remotePath, localPath, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				fmt.Println("Download complete.")
@@ -136,10 +136,36 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 			if len(args) > 2 {
 				remotePath = resolvePath(cwd, args[2])
 			}
-			if err := Upload(client, localPath, remotePath); err != nil {
+			if err := Upload(client, localPath, remotePath, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				fmt.Println("Upload complete.")
+			}
+		case "mget":
+			if len(args) < 2 {
+				fmt.Println("Usage: mget <remote_pattern> [local_dir]")
+				continue
+			}
+			remotePattern := resolvePath(cwd, args[1])
+			localDir := "."
+			if len(args) > 2 {
+				localDir = args[2]
+			}
+			if err := MGet(client, remotePattern, localDir, false); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+		case "mput":
+			if len(args) < 2 {
+				fmt.Println("Usage: mput <local_pattern> [remote_dir]")
+				continue
+			}
+			localPattern := args[1]
+			remoteDir := cwd
+			if len(args) > 2 {
+				remoteDir = resolvePath(cwd, args[2])
+			}
+			if err := MPut(client, localPattern, remoteDir, false); err != nil {
+				fmt.Printf("Error: %v\n", err)
 			}
 		case "rm":
 			if len(args) < 2 {
@@ -186,8 +212,10 @@ func printHelp() {
 	fmt.Println("  ls [path]          List directory contents")
 	fmt.Println("  cd <path>          Change remote directory")
 	fmt.Println("  pwd                Print remote working directory")
-	fmt.Println("  get <remote> [loc] Download file")
-	fmt.Println("  put <local> [rem]  Upload file")
+	fmt.Println("  get <rem> [loc]    Download file")
+	fmt.Println("  put <loc> [rem]    Upload file")
+	fmt.Println("  mget <pat> [dir]   Multi-download files (wildcards supported)")
+	fmt.Println("  mput <pat> [dir]   Multi-upload files (wildcards supported)")
 	fmt.Println("  rm <path>          Remove remote file")
 	fmt.Println("  mkdir <path>       Create remote directory")
 	fmt.Println("  rmdir <path>       Remove remote directory")

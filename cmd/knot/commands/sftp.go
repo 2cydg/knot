@@ -6,7 +6,7 @@ import (
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
 	knotsftp "knot/pkg/sftp"
-	"log"
+	"knot/internal/logger"
 	"net"
 	"strings"
 	"sync"
@@ -75,7 +75,7 @@ func (k *knotSFTPConn) start() {
 				case protocol.TypeSignal:
 					continue
 				default:
-					log.Printf("unexpected message type: %d", msg.Header.Type)
+					logger.Warn("unexpected message type", "type", msg.Header.Type)
 				}
 			}
 		}()
