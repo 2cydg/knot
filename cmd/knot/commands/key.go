@@ -344,11 +344,23 @@ func ValidateAndPrepareKey(alias string, keyBytes []byte, passphrase string) (*c
 	case ed25519.PrivateKey:
 		keyType = "ED25519"
 		bits = 256
+	case *ed25519.PrivateKey:
+		keyType = "ED25519"
+		bits = 256
 	default:
 		// Try via ssh.PublicKey if possible
 		signer, err := ssh.NewSignerFromKey(rawKey)
 		if err == nil {
-			keyType = signer.PublicKey().Type()
+			pub := signer.PublicKey()
+			keyType = pub.Type()
+			// Some SSH public keys can provide bits via underlying crypto key
+			if sk, ok := pub.(interface{ CryptoPublicKey() interface{} }); ok {
+				if rk, ok := sk.CryptoPublicKey().(*rsa.PublicKey); ok {
+					bits = rk.N.BitLen()
+				} else if ek, ok := sk.CryptoPublicKey().(*ecdsa.PublicKey); ok {
+					bits = ek.Curve.Params().BitSize
+				}
+			}
 		} else {
 			keyType = "Unknown"
 		}
