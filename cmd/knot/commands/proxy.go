@@ -329,5 +329,6 @@ func init() {
 	proxyCmd.AddCommand(proxyAddCmd)
 	proxyCmd.AddCommand(proxyRemoveCmd)
 	proxyCmd.AddCommand(proxyEditCmd)
+	proxyCmd.GroupID = advancedGroup.ID
 	rootCmd.AddCommand(proxyCmd)
 }

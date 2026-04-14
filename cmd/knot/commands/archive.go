@@ -162,6 +162,8 @@ var importCmd = &cobra.Command{
 }
 
 func init() {
+	exportCmd.GroupID = basicGroup.ID
+	importCmd.GroupID = basicGroup.ID
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(importCmd)
 }

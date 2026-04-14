@@ -73,5 +73,6 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
+	statusCmd.GroupID = basicGroup.ID
 	rootCmd.AddCommand(statusCmd)
 }

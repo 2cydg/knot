@@ -117,6 +117,8 @@ func init() {
 	daemonStartCmd.Flags().BoolP("foreground", "f", false, "Run daemon in foreground")
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
+	daemonCmd.GroupID = advancedGroup.ID
+	stopCmd.GroupID = advancedGroup.ID
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(stopCmd)
 }

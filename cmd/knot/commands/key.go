@@ -432,5 +432,6 @@ func init() {
 	keyCmd.AddCommand(keyAddCmd)
 	keyCmd.AddCommand(keyRemoveCmd)
 	keyCmd.AddCommand(keyEditCmd)
+	keyCmd.GroupID = advancedGroup.ID
 	rootCmd.AddCommand(keyCmd)
 }

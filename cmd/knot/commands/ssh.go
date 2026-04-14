@@ -31,9 +31,9 @@ var sshCmd = &cobra.Command{
 			return err
 		}
 
-		conn, err := client.Connect()
+		conn, err := client.ConnectWithAutoStart()
 		if err != nil {
-			return fmt.Errorf("failed to connect to daemon: %w (is it running? 'knot daemon start')", err)
+			return fmt.Errorf("failed to connect to daemon: %w", err)
 		}
 		defer conn.Close()
 
@@ -163,5 +163,6 @@ var sshCmd = &cobra.Command{
 }
 
 func init() {
+	sshCmd.GroupID = basicGroup.ID
 	rootCmd.AddCommand(sshCmd)
 }

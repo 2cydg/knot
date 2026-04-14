@@ -404,5 +404,6 @@ func init() {
 	addCmd.Flags().String("known-hosts", "", "Known hosts file path")
 	addCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
 	addCmd.Flags().String("proxy", "", "Proxy alias")
+	addCmd.GroupID = basicGroup.ID
 	rootCmd.AddCommand(addCmd)
 }

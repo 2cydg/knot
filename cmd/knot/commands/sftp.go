@@ -136,9 +136,9 @@ var sftpCmd = &cobra.Command{
 			return err
 		}
 
-		conn, err := client.Connect()
+		conn, err := client.ConnectWithAutoStart()
 		if err != nil {
-			return fmt.Errorf("failed to connect to daemon: %w (is it running? use 'knot daemon start')", err)
+			return fmt.Errorf("failed to connect to daemon: %w", err)
 		}
 		defer conn.Close()
 
@@ -259,5 +259,6 @@ var sftpCmd = &cobra.Command{
 
 func init() {
 	sftpCmd.Flags().BoolP("follow", "f", false, "Follow an active SSH session directory")
+	sftpCmd.GroupID = basicGroup.ID
 	rootCmd.AddCommand(sftpCmd)
 }
