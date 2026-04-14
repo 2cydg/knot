@@ -78,7 +78,7 @@ func Download(client *sftp.Client, remotePath, localPath string, overwrite bool)
 	}
 	defer remoteFile.Close()
 
-	localFile, err := os.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	localFile, err := os.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create/open local file: %w", err)
 	}

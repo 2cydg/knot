@@ -470,7 +470,8 @@ func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer)
 	}
 	
 	statusLine = strings.TrimSpace(statusLine)
-	if !strings.HasPrefix(statusLine, "HTTP/") || !strings.Contains(statusLine, " 200 ") {
+	parts := strings.SplitN(statusLine, " ", 3)
+	if len(parts) < 2 || parts[1] != "200" || !strings.HasPrefix(parts[0], "HTTP/") {
 		conn.Close()
 		return nil, fmt.Errorf("HTTP proxy connection failed: %s", statusLine)
 	}

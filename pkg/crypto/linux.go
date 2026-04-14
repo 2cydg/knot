@@ -7,9 +7,12 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"knot/internal/logger"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -24,7 +27,8 @@ const (
 )
 
 type linuxProvider struct {
-	key []byte
+	key         []byte
+	fallbackKey []byte
 }
 
 func NewLinuxProvider() (Provider, error) {
@@ -38,12 +42,27 @@ func NewLinuxProvider() (Provider, error) {
 		return nil, fmt.Errorf("failed to get salt: %w", err)
 	}
 
-	key := pbkdf2.Key([]byte(machineID), salt, iterations, 32, sha256.New)
-	return &linuxProvider{key: key}, nil
+	fallbackKey := pbkdf2.Key([]byte(machineID), salt, iterations, 32, sha256.New)
+
+	// Try secret-service
+	ssKey, err := getSecretServiceKey()
+	if err != nil {
+		logger.Warn("Secret Service unavailable, falling back to machine-id key", "error", err)
+	}
+
+	return &linuxProvider{
+		key:         ssKey,
+		fallbackKey: fallbackKey,
+	}, nil
 }
 
 func (p *linuxProvider) Encrypt(plaintext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(p.key)
+	key := p.key
+	if key == nil {
+		key = p.fallbackKey
+	}
+
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +82,21 @@ func (p *linuxProvider) Encrypt(plaintext []byte) ([]byte, error) {
 }
 
 func (p *linuxProvider) Decrypt(ciphertext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(p.key)
+	// Try main key first (Secret Service if available, or Machine ID)
+	key := p.key
+	if key != nil {
+		plaintext, err := p.decryptWithKey(ciphertext, key)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	// Fallback to machine-id key
+	return p.decryptWithKey(ciphertext, p.fallbackKey)
+}
+
+func (p *linuxProvider) decryptWithKey(ciphertext []byte, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +118,34 @@ func (p *linuxProvider) Decrypt(ciphertext []byte) ([]byte, error) {
 	}
 
 	return plaintext, nil
+}
+
+func getSecretServiceKey() ([]byte, error) {
+	// Try to get key from secret-tool
+	cmd := exec.Command("secret-tool", "lookup", "service", "knot", "account", "knot-master-key")
+	out, err := cmd.Output()
+	if err == nil {
+		return base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	}
+
+	// If not found, we don't automatically create it here to avoid forcing GUI dependency
+	// unless we are sure we are in a GUI session.
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" {
+		// Only try to create if secret-tool exists
+		if _, err := exec.LookPath("secret-tool"); err == nil {
+			key := make([]byte, 32)
+			if _, err := io.ReadFull(rand.Reader, key); err == nil {
+				keyStr := base64.StdEncoding.EncodeToString(key)
+				storeCmd := exec.Command("secret-tool", "store", "--label=Knot Master Key", "service", "knot", "account", "knot-master-key")
+				storeCmd.Stdin = strings.NewReader(keyStr)
+				if err := storeCmd.Run(); err == nil {
+					return key, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("secret-service not available")
 }
 
 func getMachineID() (string, error) {

@@ -272,7 +272,7 @@ func (d *Daemon) Start() error {
 	}
 
 	// 3. Write new PID file
-	if err := os.WriteFile(d.pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+	if err := os.WriteFile(d.pidPath, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		return err
 	}
 	defer os.Remove(d.pidPath)
@@ -281,6 +281,10 @@ func (d *Daemon) Start() error {
 	l, err := net.Listen("unix", d.socketPath)
 	if err != nil {
 		return err
+	}
+	if err := os.Chmod(d.socketPath, 0600); err != nil {
+		l.Close()
+		return fmt.Errorf("failed to set socket permissions: %w", err)
 	}
 	d.listener = l
 	defer os.Remove(d.socketPath)
@@ -470,6 +474,15 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// 3. Create session
+	if req.Rows <= 0 || req.Rows > 10000 || req.Cols <= 0 || req.Cols > 10000 {
+		sendError("invalid terminal dimensions")
+		return
+	}
+	if len(req.Term) > 64 || len(req.Term) == 0 {
+		sendError("invalid terminal type")
+		return
+	}
+
 	session, err := client.NewSession()
 	if err != nil {
 		sendError("failed to create session: " + err.Error())
@@ -664,6 +677,12 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 	var followSessionID string
 	if len(parts) > 1 {
 		followSessionID = parts[1]
+		if followSessionID != "" {
+			if _, err := strconv.Atoi(followSessionID); err != nil {
+				protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: invalid session ID format"))
+				return
+			}
+		}
 	}
 
 	sendError := func(errMsg string) {

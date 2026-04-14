@@ -13,7 +13,7 @@ func NewProvider() (Provider, error) {
 	case "windows":
 		return NewWindowsProvider()
 	case "darwin":
-		return nil, fmt.Errorf("macos keychain provider not yet implemented")
+		return NewDarwinProvider()
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
