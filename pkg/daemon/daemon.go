@@ -309,6 +309,18 @@ func (d *Daemon) Stop() error {
 	return nil
 }
 
+func isValidAlias(alias string) bool {
+	if len(alias) > 255 {
+		return false
+	}
+	for _, r := range alias {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
 func (d *Daemon) handleConnection(conn net.Conn) {
 	d.sem <- struct{}{}
 	defer func() {
@@ -330,8 +342,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		case protocol.TypeReq:
 			var req protocol.SSHRequest
 			if err := json.Unmarshal(msg.Payload, &req); err == nil && req.Alias != "" {
-				if len(req.Alias) > 255 {
-					log.Printf("SSH Request: alias too long")
+				if !isValidAlias(req.Alias) {
+					log.Printf("SSH Request: invalid alias format")
 					return
 				}
 				d.handleSSHRequest(conn, &req)
@@ -344,8 +356,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 			}
 		case protocol.TypeSFTPReq:
 			alias := string(msg.Payload)
-			if len(alias) > 255 {
-				log.Printf("SFTP Request: alias too long")
+			if !isValidAlias(alias) {
+				log.Printf("SFTP Request: invalid alias format")
 				return
 			}
 			if alias != "" {
@@ -354,8 +366,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 			}
 		case protocol.TypeSessionListReq:
 			alias := string(msg.Payload)
-			if len(alias) > 255 {
-				log.Printf("SessionList Request: alias too long")
+			if alias != "" && !isValidAlias(alias) {
+				log.Printf("SessionList Request: invalid alias format")
 				return
 			}
 			d.handleSessionListRequest(conn, alias)
@@ -534,6 +546,8 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 					var payload protocol.ResizePayload
 					if err := json.Unmarshal(msg.Payload, &payload); err == nil {
 						session.WindowChange(payload.Rows, payload.Cols)
+					} else {
+						log.Printf("Failed to unmarshal resize payload: %v", err)
 					}
 				}
 			}

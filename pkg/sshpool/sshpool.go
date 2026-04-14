@@ -390,20 +390,46 @@ func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer)
 		return nil, fmt.Errorf("failed to send CONNECT request to HTTP proxy: %w", err)
 	}
 
-	// Read response (basic implementation)
-	// NOTE: This basic implementation does not handle HTTP chunked transfer encoding
-	// for the CONNECT response, which is rare but possible in some proxies.
-	resp := make([]byte, 1024)
-	n, err := conn.Read(resp)
-	if err != nil {
+	// Read response line by line to prevent chunked transfer or injection attacks
+	var statusLine string
+	for {
+		buf := make([]byte, 1)
+		_, err := conn.Read(buf)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to read response from HTTP proxy: %w", err)
+		}
+		statusLine += string(buf)
+		if strings.HasSuffix(statusLine, "\n") {
+			break
+		}
+	}
+	
+	statusLine = strings.TrimSpace(statusLine)
+	if !strings.HasPrefix(statusLine, "HTTP/") || !strings.Contains(statusLine, " 200 ") {
 		conn.Close()
-		return nil, fmt.Errorf("failed to read response from HTTP proxy: %w", err)
+		return nil, fmt.Errorf("HTTP proxy connection failed: %s", statusLine)
 	}
 
-	respStr := string(resp[:n])
-	if !strings.Contains(respStr, "200 Connection established") && !strings.Contains(respStr, "200 OK") {
-		conn.Close()
-		return nil, fmt.Errorf("HTTP proxy connection failed: %s", respStr)
+	// Consume remaining headers until empty line
+	for {
+		var line string
+		for {
+			buf := make([]byte, 1)
+			_, err := conn.Read(buf)
+			if err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("failed to read headers from HTTP proxy: %w", err)
+			}
+			line += string(buf)
+			if strings.HasSuffix(line, "\n") {
+				break
+			}
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			break
+		}
 	}
 
 	return conn, nil
