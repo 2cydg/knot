@@ -356,16 +356,44 @@ func ValidateAndPrepareKey(alias string, keyBytes []byte, passphrase string) (*c
 
 	// Convert back to PEM (decrypted)
 	var pemBlock *pem.Block
-	if rsaKey, ok := rawKey.(*rsa.PrivateKey); ok {
+	switch k := rawKey.(type) {
+	case *rsa.PrivateKey:
 		pemBlock = &pem.Block{
 			Type:  "RSA PRIVATE KEY",
-			Bytes: x509.MarshalPKCS1PrivateKey(rsaKey),
+			Bytes: x509.MarshalPKCS1PrivateKey(k),
 		}
-	} else {
+	case *ecdsa.PrivateKey:
+		b, err := x509.MarshalECPrivateKey(k)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal ECDSA private key: %w", err)
+		}
+		pemBlock = &pem.Block{
+			Type:  "EC PRIVATE KEY",
+			Bytes: b,
+		}
+	case ed25519.PrivateKey:
+		b, err := x509.MarshalPKCS8PrivateKey(k)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal Ed25519 private key: %w", err)
+		}
+		pemBlock = &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: b,
+		}
+	case *ed25519.PrivateKey:
+		b, err := x509.MarshalPKCS8PrivateKey(*k)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal Ed25519 private key pointer: %w", err)
+		}
+		pemBlock = &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: b,
+		}
+	default:
 		// Generic PKCS8 for others
 		b, err := x509.MarshalPKCS8PrivateKey(rawKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal private key: %w", err)
+			return nil, fmt.Errorf("failed to marshal private key (%T): %w", rawKey, err)
 		}
 		pemBlock = &pem.Block{
 			Type:  "PRIVATE KEY",
