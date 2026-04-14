@@ -82,7 +82,41 @@ var editCmd = &cobra.Command{
 				srv.KeyAlias = ""
 			case "2":
 				if len(cfg.Keys) == 0 {
-					fmt.Println("No keys configured. Please add a key using 'knot key add' first.")
+					fmt.Print("No keys configured. Add one now? (Y/n): ")
+					resp, _ := line.Prompt("")
+					if resp != "" && strings.ToLower(resp) != "y" {
+						fmt.Println("No keys available. Please add a key using 'knot key add' first.")
+					} else {
+						// Add key on the fly
+						kb, pass, err := PromptForKey(line)
+						if err != nil {
+							return err
+						}
+						
+						var kAlias string
+						for {
+							kAlias, err = line.Prompt("New Key Alias: ")
+							if err != nil {
+								return err
+							}
+							kAlias = strings.TrimSpace(kAlias)
+							if kAlias != "" {
+								break
+							}
+						}
+
+						kConfig, err := ValidateAndPrepareKey(kAlias, kb, pass)
+						if err != nil {
+							return err
+						}
+						cfg.Keys[kAlias] = *kConfig
+						if err := cfg.Save(provider); err != nil {
+							return err
+						}
+						srv.KeyAlias = kAlias
+						srv.AuthMethod = config.AuthMethodKey
+						fmt.Printf("Key '%s' added and selected.\n", srv.KeyAlias)
+					}
 				} else {
 					srv.AuthMethod = config.AuthMethodKey
 					fmt.Println("Available keys:")
@@ -146,7 +180,22 @@ var editCmd = &cobra.Command{
 				}
 
 				if len(cfg.Proxies) == 0 {
-					fmt.Println("No proxies configured. Please add a proxy using 'knot proxy add' first.")
+					fmt.Print("No proxies configured. Add one now? (Y/n): ")
+					resp, _ := line.Prompt("")
+					if resp == "" || strings.ToLower(resp) == "y" {
+						p, err := PromptForProxy(line, cfg, "")
+						if err != nil {
+							return err
+						}
+						if p != nil {
+							cfg.Proxies[p.Alias] = *p
+							if err := cfg.Save(provider); err != nil {
+								return err
+							}
+							srv.ProxyAlias = p.Alias
+							fmt.Printf("Proxy '%s' added and selected.\n", srv.ProxyAlias)
+						}
+					}
 				} else {
 					fmt.Println("Available proxies:")
 					var pAliases []string

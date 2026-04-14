@@ -171,26 +171,60 @@ var addCmd = &cobra.Command{
 			case "2":
 				authMethod = config.AuthMethodKey
 				if len(cfg.Keys) == 0 {
-					fmt.Println("No keys configured. Please add a key using 'knot key add' first.")
-					return fmt.Errorf("no keys available")
-				}
-				fmt.Println("Available keys:")
-				var keyAliases []string
-				for k := range cfg.Keys {
-					keyAliases = append(keyAliases, k)
-				}
-				sort.Strings(keyAliases)
-				for i, k := range keyAliases {
-					fmt.Printf("%d) %s\n", i+1, k)
-				}
-				for {
-					kChoice, _ := line.Prompt(fmt.Sprintf("Select key (1-%d): ", len(keyAliases)))
-					idx, err := strconv.Atoi(kChoice)
-					if err == nil && idx > 0 && idx <= len(keyAliases) {
-						keyAlias = keyAliases[idx-1]
-						break
+					fmt.Print("No keys configured. Add one now? (Y/n): ")
+					resp, _ := line.Prompt("")
+					if resp != "" && strings.ToLower(resp) != "y" {
+						fmt.Println("No keys available. Please add a key using 'knot key add' first.")
+						return fmt.Errorf("no keys available")
 					}
-					fmt.Println("Invalid selection.")
+					
+					// Add key on the fly
+					kb, pass, err := PromptForKey(line)
+					if err != nil {
+						return err
+					}
+					
+					var kAlias string
+					for {
+						kAlias, err = line.Prompt("New Key Alias: ")
+						if err != nil {
+							return err
+						}
+						kAlias = strings.TrimSpace(kAlias)
+						if kAlias != "" {
+							break
+						}
+					}
+
+					kConfig, err := ValidateAndPrepareKey(kAlias, kb, pass)
+					if err != nil {
+						return err
+					}
+					cfg.Keys[kAlias] = *kConfig
+					if err := cfg.Save(provider); err != nil {
+						return err
+					}
+					keyAlias = kAlias
+					fmt.Printf("Key '%s' added and selected.\n", keyAlias)
+				} else {
+					fmt.Println("Available keys:")
+					var keyAliases []string
+					for k := range cfg.Keys {
+						keyAliases = append(keyAliases, k)
+					}
+					sort.Strings(keyAliases)
+					for i, k := range keyAliases {
+						fmt.Printf("%d) %s\n", i+1, k)
+					}
+					for {
+						kChoice, _ := line.Prompt(fmt.Sprintf("Select key (1-%d): ", len(keyAliases)))
+						idx, err := strconv.Atoi(kChoice)
+						if err == nil && idx > 0 && idx <= len(keyAliases) {
+							keyAlias = keyAliases[idx-1]
+							break
+						}
+						fmt.Println("Invalid selection.")
+					}
 				}
 			case "3":
 				authMethod = config.AuthMethodAgent
@@ -231,32 +265,46 @@ var addCmd = &cobra.Command{
 				}
 
 				if len(cfg.Proxies) == 0 {
-					fmt.Println("No proxies configured. Please add a proxy using 'knot proxy add' first.")
-					continue
-				}
-
-				fmt.Println("Available proxies:")
-				var pAliases []string
-				for p := range cfg.Proxies {
-					pAliases = append(pAliases, p)
-				}
-				sort.Strings(pAliases)
-				fmt.Println("0) None/Clear Proxy")
-				for i, p := range pAliases {
-					fmt.Printf("%d) %s\n", i+1, p)
-				}
-				for {
-					pChoice, _ := line.Prompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
-					if pChoice == "0" || pChoice == "" {
-						proxyAlias = ""
-						break
+					fmt.Print("No proxies configured. Add one now? (Y/n): ")
+					resp, _ := line.Prompt("")
+					if resp == "" || strings.ToLower(resp) == "y" {
+						p, err := PromptForProxy(line, cfg, "")
+						if err != nil {
+							return err
+						}
+						if p != nil {
+							cfg.Proxies[p.Alias] = *p
+							if err := cfg.Save(provider); err != nil {
+								return err
+							}
+							proxyAlias = p.Alias
+							fmt.Printf("Proxy '%s' added and selected.\n", proxyAlias)
+						}
 					}
-					idx, err := strconv.Atoi(pChoice)
-					if err == nil && idx > 0 && idx <= len(pAliases) {
-						proxyAlias = pAliases[idx-1]
-						break
+				} else {
+					fmt.Println("Available proxies:")
+					var pAliases []string
+					for p := range cfg.Proxies {
+						pAliases = append(pAliases, p)
 					}
-					fmt.Println("Invalid selection.")
+					sort.Strings(pAliases)
+					fmt.Println("0) None/Clear Proxy")
+					for i, p := range pAliases {
+						fmt.Printf("%d) %s\n", i+1, p)
+					}
+					for {
+						pChoice, _ := line.Prompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+						if pChoice == "0" || pChoice == "" {
+							proxyAlias = ""
+							break
+						}
+						idx, err := strconv.Atoi(pChoice)
+						if err == nil && idx > 0 && idx <= len(pAliases) {
+							proxyAlias = pAliases[idx-1]
+							break
+						}
+						fmt.Println("Invalid selection.")
+					}
 				}
 			} else if choice == "2" {
 				if proxyAlias != "" {

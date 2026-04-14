@@ -60,7 +60,7 @@ var keyListCmd = &cobra.Command{
 	},
 }
 
-func promptForKey(line *liner.State) ([]byte, string, error) {
+func PromptForKey(line *liner.State) ([]byte, string, error) {
 	fmt.Println("Enter private key file path or paste content (Ctrl+D to finish pasting):")
 	var keyBytes []byte
 	var input string
@@ -155,7 +155,7 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 			if alias == "" {
 				return fmt.Errorf("alias is required in non-interactive mode")
 			}
-			kConfig, err := validateAndPrepareKey(alias, keyBytes, passphraseFlag)
+			kConfig, err := ValidateAndPrepareKey(alias, keyBytes, passphraseFlag)
 			if err != nil {
 				return err
 			}
@@ -194,12 +194,12 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 			}
 		}
 
-		kb, pass, err := promptForKey(line)
+		kb, pass, err := PromptForKey(line)
 		if err != nil {
 			return err
 		}
 
-		kConfig, err := validateAndPrepareKey(alias, kb, pass)
+		kConfig, err := ValidateAndPrepareKey(alias, kb, pass)
 		if err != nil {
 			return err
 		}
@@ -298,12 +298,12 @@ var keyEditCmd = &cobra.Command{
 		defer line.Close()
 		line.SetCtrlCAborts(true)
 
-		kb, pass, err := promptForKey(line)
+		kb, pass, err := PromptForKey(line)
 		if err != nil {
 			return err
 		}
 
-		kConfig, err := validateAndPrepareKey(alias, kb, pass)
+		kConfig, err := ValidateAndPrepareKey(alias, kb, pass)
 		if err != nil {
 			return err
 		}
@@ -317,7 +317,7 @@ var keyEditCmd = &cobra.Command{
 	},
 }
 
-func validateAndPrepareKey(alias string, keyBytes []byte, passphrase string) (*config.KeyConfig, error) {
+func ValidateAndPrepareKey(alias string, keyBytes []byte, passphrase string) (*config.KeyConfig, error) {
 	var rawKey interface{}
 	var err error
 

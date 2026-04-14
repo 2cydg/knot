@@ -52,6 +52,78 @@ var proxyListCmd = &cobra.Command{
 	},
 }
 
+func PromptForProxy(line *liner.State, cfg *config.Config, alias string) (*config.ProxyConfig, error) {
+	if alias == "" {
+		for {
+			aliasStr, err := line.Prompt("Proxy Alias: ")
+			if err != nil {
+				return nil, err
+			}
+			aliasStr = strings.TrimSpace(aliasStr)
+			if aliasStr != "" {
+				alias = aliasStr
+				break
+			}
+		}
+	}
+
+	if _, exists := cfg.Proxies[alias]; exists {
+		fmt.Printf("Proxy alias '%s' already exists. Overwrite? (y/N): ", alias)
+		resp, _ := line.Prompt("")
+		if strings.ToLower(resp) != "y" {
+			return nil, nil
+		}
+	}
+
+	fmt.Println("Choose proxy type:")
+	fmt.Println("1) SOCKS5")
+	fmt.Println("2) HTTP")
+	var pType string
+	for {
+		choice, err := line.Prompt("Choice (1-2, default 1): ")
+		if err != nil {
+			return nil, err
+		}
+		if choice == "" || choice == "1" {
+			pType = config.ProxyTypeSOCKS5
+			break
+		} else if choice == "2" {
+			pType = config.ProxyTypeHTTP
+			break
+		}
+		fmt.Println("Invalid choice.")
+	}
+
+	host, err := line.Prompt("Proxy Host: ")
+	if err != nil {
+		return nil, err
+	}
+	
+	portStr, err := line.Prompt("Proxy Port: ")
+	if err != nil {
+		return nil, err
+	}
+	port, _ := strconv.Atoi(portStr)
+
+	username, err := line.Prompt("Proxy Username (optional): ")
+	if err != nil {
+		return nil, err
+	}
+	password, err := line.PasswordPrompt("Proxy Password (optional): ")
+	if err != nil {
+		return nil, err
+	}
+
+	return &config.ProxyConfig{
+		Alias:    alias,
+		Type:     pType,
+		Host:     host,
+		Port:     port,
+		Username: username,
+		Password: password,
+	}, nil
+}
+
 var proxyAddCmd = &cobra.Command{
 	Use:   "add [alias]",
 	Short: "Add a new proxy",
@@ -100,80 +172,20 @@ var proxyAddCmd = &cobra.Command{
 		defer line.Close()
 		line.SetCtrlCAborts(true)
 
-		if alias == "" {
-			for {
-				aliasStr, err := line.Prompt("Proxy Alias: ")
-				if err != nil {
-					return err
-				}
-				aliasStr = strings.TrimSpace(aliasStr)
-				if aliasStr != "" {
-					alias = aliasStr
-					break
-				}
-			}
-		}
-
-		if _, exists := cfg.Proxies[alias]; exists {
-			fmt.Printf("Proxy alias '%s' already exists. Overwrite? (y/N): ", alias)
-			resp, _ := line.Prompt("")
-			if strings.ToLower(resp) != "y" {
-				return nil
-			}
-		}
-
-		fmt.Println("Choose proxy type:")
-		fmt.Println("1) SOCKS5")
-		fmt.Println("2) HTTP")
-		var pType string
-		for {
-			choice, err := line.Prompt("Choice (1-2, default 1): ")
-			if err != nil {
-				return err
-			}
-			if choice == "" || choice == "1" {
-				pType = config.ProxyTypeSOCKS5
-				break
-			} else if choice == "2" {
-				pType = config.ProxyTypeHTTP
-				break
-			}
-			fmt.Println("Invalid choice.")
-		}
-
-		host, err := line.Prompt("Proxy Host: ")
+		p, err := PromptForProxy(line, cfg, alias)
 		if err != nil {
 			return err
 		}
-		
-		portStr, err := line.Prompt("Proxy Port: ")
-		if err != nil {
-			return err
-		}
-		port, _ := strconv.Atoi(portStr)
-
-		username, err := line.Prompt("Proxy Username (optional): ")
-		if err != nil {
-			return err
-		}
-		password, err := line.PasswordPrompt("Proxy Password (optional): ")
-		if err != nil {
-			return err
+		if p == nil {
+			return nil
 		}
 
-		cfg.Proxies[alias] = config.ProxyConfig{
-			Alias:    alias,
-			Type:     pType,
-			Host:     host,
-			Port:     port,
-			Username: username,
-			Password: password,
-		}
+		cfg.Proxies[p.Alias] = *p
 
 		if err := cfg.Save(provider); err != nil {
 			return err
 		}
-		fmt.Printf("Proxy '%s' added successfully.\n", alias)
+		fmt.Printf("Proxy '%s' added successfully.\n", p.Alias)
 		return nil
 	},
 }
