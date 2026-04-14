@@ -63,7 +63,7 @@ var editCmd = &cobra.Command{
 		fmt.Printf("Current Auth Method: %s\n", srv.AuthMethod)
 		fmt.Println("Choose new auth method (leave empty to keep current):")
 		fmt.Println("1) Password")
-		fmt.Println("2) Private Key")
+		fmt.Println("2) Private Key (managed)")
 		fmt.Println("3) SSH Agent")
 		choice, _ := line.Prompt("Selection (1-3): ")
 		if choice != "" {
@@ -79,18 +79,40 @@ var editCmd = &cobra.Command{
 				} else if password != "" {
 					srv.Password = password
 				}
-				srv.PrivateKeyPath = "" // Clear other auth types
+				srv.KeyAlias = ""
 			case "2":
-				srv.AuthMethod = config.AuthMethodKey
-				keyPath, _ := line.Prompt(fmt.Sprintf("Private Key Path [%s]: ", srv.PrivateKeyPath))
-				if keyPath != "" {
-					srv.PrivateKeyPath = keyPath
+				if len(cfg.Keys) == 0 {
+					fmt.Println("No keys configured. Please add a key using 'knot key add' first.")
+				} else {
+					srv.AuthMethod = config.AuthMethodKey
+					fmt.Println("Available keys:")
+					var keyAliases []string
+					for k := range cfg.Keys {
+						keyAliases = append(keyAliases, k)
+					}
+					sort.Strings(keyAliases)
+					fmt.Printf("0) Keep current [%s]\n", srv.KeyAlias)
+					for i, k := range keyAliases {
+						fmt.Printf("%d) %s\n", i+1, k)
+					}
+					for {
+						kChoice, _ := line.Prompt(fmt.Sprintf("Select key (0-%d): ", len(keyAliases)))
+						if kChoice == "" || kChoice == "0" {
+							break
+						}
+						idx, err := strconv.Atoi(kChoice)
+						if err == nil && idx > 0 && idx <= len(keyAliases) {
+							srv.KeyAlias = keyAliases[idx-1]
+							break
+						}
+						fmt.Println("Invalid selection.")
+					}
 				}
 				srv.Password = ""
 			case "3":
 				srv.AuthMethod = config.AuthMethodAgent
 				srv.Password = ""
-				srv.PrivateKeyPath = ""
+				srv.KeyAlias = ""
 			default:
 				fmt.Println("Invalid choice, please select 1, 2, or 3.")
 			}
@@ -123,65 +145,38 @@ var editCmd = &cobra.Command{
 					srv.JumpHost = nil
 				}
 
-				fmt.Printf("\nCurrent Proxy Type: %s\n", srv.Proxy.Type)
-				fmt.Println("Choose proxy type (0 to disable):")
-				fmt.Println("1) SOCKS5")
-				fmt.Println("2) HTTP")
-				fmt.Println("0) None/Disable")
-				pChoice, err := line.Prompt("Proxy Type (0-2): ")
-				if err != nil {
-					return err
-				}
-				if pChoice == "0" {
-					srv.Proxy = config.ProxyConfig{}
-					continue
-				}
-
-				if pChoice == "1" {
-					if srv.Proxy.Type != config.ProxyTypeSOCKS5 {
-						srv.Proxy = config.ProxyConfig{Type: config.ProxyTypeSOCKS5}
+				if len(cfg.Proxies) == 0 {
+					fmt.Println("No proxies configured. Please add a proxy using 'knot proxy add' first.")
+				} else {
+					fmt.Println("Available proxies:")
+					var pAliases []string
+					for p := range cfg.Proxies {
+						pAliases = append(pAliases, p)
 					}
-				} else if pChoice == "2" {
-					if srv.Proxy.Type != config.ProxyTypeHTTP {
-						srv.Proxy = config.ProxyConfig{Type: config.ProxyTypeHTTP}
+					sort.Strings(pAliases)
+					fmt.Printf("0) Clear Proxy (current: [%s])\n", srv.ProxyAlias)
+					for i, p := range pAliases {
+						fmt.Printf("%d) %s\n", i+1, p)
 					}
-				} else if pChoice != "" {
-					fmt.Println("Invalid choice.")
-					continue
-				}
-
-				if srv.Proxy.Type != "" {
-					pHost, err := line.Prompt(fmt.Sprintf("Proxy Host [%s]: ", srv.Proxy.Host))
-					if err != nil {
-						return err
-					}
-					if pHost != "" {
-						srv.Proxy.Host = pHost
-					}
-					pPortStr, err := line.Prompt(fmt.Sprintf("Proxy Port [%d]: ", srv.Proxy.Port))
-					if err != nil {
-						return err
-					}
-					if pPortStr != "" {
-						srv.Proxy.Port, _ = strconv.Atoi(pPortStr)
-					}
-					pUser, err := line.Prompt(fmt.Sprintf("Proxy Username [%s]: ", srv.Proxy.Username))
-					if err != nil {
-						return err
-					}
-					if pUser != "" {
-						srv.Proxy.Username = pUser
-					}
-					pPass, err := line.PasswordPrompt("Proxy Password (leave empty to keep current): ")
-					if err != nil {
-						return err
-					}
-					if pPass != "" {
-						srv.Proxy.Password = pPass
+					for {
+						pChoice, _ := line.Prompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+						if pChoice == "" {
+							break // keep current
+						}
+						if pChoice == "0" {
+							srv.ProxyAlias = ""
+							break
+						}
+						idx, err := strconv.Atoi(pChoice)
+						if err == nil && idx > 0 && idx <= len(pAliases) {
+							srv.ProxyAlias = pAliases[idx-1]
+							break
+						}
+						fmt.Println("Invalid selection.")
 					}
 				}
 			} else if choice == "2" {
-				if srv.Proxy.Type != "" {
+				if srv.ProxyAlias != "" {
 					fmt.Print("Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
 					resp, err := line.Prompt("")
 					if err != nil {
@@ -190,7 +185,7 @@ var editCmd = &cobra.Command{
 					if strings.ToLower(resp) != "y" {
 						continue
 					}
-					srv.Proxy = config.ProxyConfig{}
+					srv.ProxyAlias = ""
 				}
 
 				// Iterative Jump Host selection

@@ -67,6 +67,8 @@ func TestSSHRequest(t *testing.T) {
 		t.Skip("SSH test key not found, skipping")
 	}
 
+	keyContent, _ := os.ReadFile(keyPath)
+
 	tmpFile, err := os.CreateTemp("", "knot_test_*.sock")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
@@ -94,12 +96,21 @@ func TestSSHRequest(t *testing.T) {
 	cfg := &config.Config{
 		Servers: map[string]config.ServerConfig{
 			"local": {
-				Alias: "local",
-				Host:  "127.0.0.1",
-				Port:  22,
-				User:  user,
+				Alias:      "local",
+				Host:       "127.0.0.1",
+				Port:       22,
+				User:       user,
+				AuthMethod: config.AuthMethodKey,
+				KeyAlias:   "test-key",
 			},
 		},
+		Keys: map[string]config.KeyConfig{
+			"test-key": {
+				Alias:      "test-key",
+				PrivateKey: string(keyContent),
+			},
+		},
+		Proxies: make(map[string]config.ProxyConfig),
 	}
 	if err := cfg.SaveToPath(cfgPath, provider); err != nil {
 		t.Fatalf("failed to save temp config: %v", err)

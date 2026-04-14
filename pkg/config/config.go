@@ -26,6 +26,7 @@ const (
 )
 
 type ProxyConfig struct {
+	Alias    string `toml:"alias"`
 	Type     string `toml:"type,omitempty"`
 	Host     string `toml:"host,omitempty"`
 	Port     int    `toml:"port,omitempty"`
@@ -33,21 +34,30 @@ type ProxyConfig struct {
 	Password string `toml:"password,omitempty"`
 }
 
+type KeyConfig struct {
+	Alias      string `toml:"alias"`
+	Type       string `toml:"type"`
+	Length     int    `toml:"length"`
+	PrivateKey string `toml:"private_key"` // Encrypted
+}
+
 type ServerConfig struct {
-	Alias          string      `toml:"alias"`
-	Host           string      `toml:"host"`
-	Port           int         `toml:"port"`
-	User           string      `toml:"user"`
-	AuthMethod     string      `toml:"auth_method,omitempty"`
-	Password       string      `toml:"password,omitempty"`
-	PrivateKeyPath string      `toml:"private_key_path,omitempty"`
-	KnownHostsPath string      `toml:"known_hosts_path,omitempty"`
-	Proxy          ProxyConfig `toml:"proxy,omitempty"`
-	JumpHost       []string    `toml:"jump_host,omitempty"`
+	Alias          string   `toml:"alias"`
+	Host           string   `toml:"host"`
+	Port           int      `toml:"port"`
+	User           string   `toml:"user"`
+	AuthMethod     string   `toml:"auth_method,omitempty"`
+	Password       string   `toml:"password,omitempty"` // Encrypted
+	KeyAlias       string   `toml:"key_alias,omitempty"`
+	KnownHostsPath string   `toml:"known_hosts_path,omitempty"`
+	ProxyAlias     string   `toml:"proxy_alias,omitempty"`
+	JumpHost       []string `toml:"jump_host,omitempty"`
 }
 
 type Config struct {
 	Servers map[string]ServerConfig `toml:"servers"`
+	Proxies map[string]ProxyConfig  `toml:"proxies"`
+	Keys    map[string]KeyConfig    `toml:"keys"`
 }
 
 func GetConfigDir() (string, error) {
@@ -76,7 +86,11 @@ func Load(cryptoProvider crypto.Provider) (*Config, error) {
 
 func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return &Config{Servers: make(map[string]ServerConfig)}, nil
+		return &Config{
+			Servers: make(map[string]ServerConfig),
+			Proxies: make(map[string]ProxyConfig),
+			Keys:    make(map[string]KeyConfig),
+		}, nil
 	}
 
 	var cfg Config
@@ -84,27 +98,49 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
-	// Decrypt sensitive fields
+	if cfg.Servers == nil {
+		cfg.Servers = make(map[string]ServerConfig)
+	}
+	if cfg.Proxies == nil {
+		cfg.Proxies = make(map[string]ProxyConfig)
+	}
+	if cfg.Keys == nil {
+		cfg.Keys = make(map[string]KeyConfig)
+	}
+
+	// Decrypt sensitive fields in Servers
 	for alias, srv := range cfg.Servers {
-		modified := false
 		if strings.HasPrefix(srv.Password, encPrefix) {
 			decrypted, err := decryptField(srv.Password[len(encPrefix):], cryptoProvider)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt password for %s: %w", alias, err)
+				return nil, fmt.Errorf("failed to decrypt password for server %s: %w", alias, err)
 			}
 			srv.Password = string(decrypted)
-			modified = true
-		}
-		if srv.Proxy.Password != "" && strings.HasPrefix(srv.Proxy.Password, encPrefix) {
-			decrypted, err := decryptField(srv.Proxy.Password[len(encPrefix):], cryptoProvider)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt proxy password for %s: %w", alias, err)
-			}
-			srv.Proxy.Password = string(decrypted)
-			modified = true
-		}
-		if modified {
 			cfg.Servers[alias] = srv
+		}
+	}
+
+	// Decrypt sensitive fields in Proxies
+	for alias, proxy := range cfg.Proxies {
+		if strings.HasPrefix(proxy.Password, encPrefix) {
+			decrypted, err := decryptField(proxy.Password[len(encPrefix):], cryptoProvider)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt password for proxy %s: %w", alias, err)
+			}
+			proxy.Password = string(decrypted)
+			cfg.Proxies[alias] = proxy
+		}
+	}
+
+	// Decrypt sensitive fields in Keys
+	for alias, key := range cfg.Keys {
+		if strings.HasPrefix(key.PrivateKey, encPrefix) {
+			decrypted, err := decryptField(key.PrivateKey[len(encPrefix):], cryptoProvider)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt private key for key %s: %w", alias, err)
+			}
+			key.PrivateKey = string(decrypted)
+			cfg.Keys[alias] = key
 		}
 	}
 
@@ -128,6 +164,8 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 	// Create a copy to encrypt fields before saving
 	cfgToSave := Config{
 		Servers: make(map[string]ServerConfig),
+		Proxies: make(map[string]ProxyConfig),
+		Keys:    make(map[string]KeyConfig),
 	}
 
 	for alias, srv := range c.Servers {
@@ -135,18 +173,35 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		if srvCopy.Password != "" && !strings.HasPrefix(srvCopy.Password, encPrefix) {
 			encrypted, err := encryptField([]byte(srvCopy.Password), cryptoProvider)
 			if err != nil {
-				return fmt.Errorf("failed to encrypt password for %s: %w", alias, err)
+				return fmt.Errorf("failed to encrypt password for server %s: %w", alias, err)
 			}
 			srvCopy.Password = encPrefix + encrypted
 		}
-		if srvCopy.Proxy.Password != "" && !strings.HasPrefix(srvCopy.Proxy.Password, encPrefix) {
-			encrypted, err := encryptField([]byte(srvCopy.Proxy.Password), cryptoProvider)
-			if err != nil {
-				return fmt.Errorf("failed to encrypt proxy password for %s: %w", alias, err)
-			}
-			srvCopy.Proxy.Password = encPrefix + encrypted
-		}
 		cfgToSave.Servers[alias] = srvCopy
+	}
+
+	for alias, proxy := range c.Proxies {
+		proxyCopy := proxy
+		if proxyCopy.Password != "" && !strings.HasPrefix(proxyCopy.Password, encPrefix) {
+			encrypted, err := encryptField([]byte(proxyCopy.Password), cryptoProvider)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt password for proxy %s: %w", alias, err)
+			}
+			proxyCopy.Password = encPrefix + encrypted
+		}
+		cfgToSave.Proxies[alias] = proxyCopy
+	}
+
+	for alias, key := range c.Keys {
+		keyCopy := key
+		if keyCopy.PrivateKey != "" && !strings.HasPrefix(keyCopy.PrivateKey, encPrefix) {
+			encrypted, err := encryptField([]byte(keyCopy.PrivateKey), cryptoProvider)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt private key for key %s: %w", alias, err)
+			}
+			keyCopy.PrivateKey = encPrefix + encrypted
+		}
+		cfgToSave.Keys[alias] = keyCopy
 	}
 
 	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)

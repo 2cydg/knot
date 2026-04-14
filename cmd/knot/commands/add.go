@@ -35,8 +35,9 @@ var addCmd = &cobra.Command{
 		portFlag, _ := cmd.Flags().GetInt("port")
 		userFlag, _ := cmd.Flags().GetString("user")
 		passFlag, _ := cmd.Flags().GetString("password")
-		keyFlag, _ := cmd.Flags().GetString("key")
+		keyAliasFlag, _ := cmd.Flags().GetString("key")
 		khFlag, _ := cmd.Flags().GetString("known-hosts")
+		proxyAliasFlag, _ := cmd.Flags().GetString("proxy")
 
 		authFlag, _ := cmd.Flags().GetString("auth-method")
 		jhFlag, _ := cmd.Flags().GetString("jump-host")
@@ -62,7 +63,7 @@ var addCmd = &cobra.Command{
 			}
 
 			if authFlag == "" {
-				if keyFlag != "" {
+				if keyAliasFlag != "" {
 					authFlag = config.AuthMethodKey
 				} else {
 					authFlag = config.AuthMethodPassword
@@ -75,8 +76,9 @@ var addCmd = &cobra.Command{
 				User:           userFlag,
 				AuthMethod:     authFlag,
 				Password:       passFlag,
-				PrivateKeyPath: keyFlag,
+				KeyAlias:       keyAliasFlag,
 				KnownHostsPath: khFlag,
+				ProxyAlias:     proxyAliasFlag,
 				JumpHost:       jumpHosts,
 			}
 			if err := cfg.Save(provider); err != nil {
@@ -107,9 +109,6 @@ var addCmd = &cobra.Command{
 					break
 				}
 			}
-		}
-		if len(alias) > 255 {
-			return fmt.Errorf("alias too long (max 255 characters)")
 		}
 
 		if _, exists := cfg.Servers[alias]; exists {
@@ -151,9 +150,9 @@ var addCmd = &cobra.Command{
 		// Authentication method selection
 		fmt.Println("Choose authentication method:")
 		fmt.Println("1) Password")
-		fmt.Println("2) Private Key")
+		fmt.Println("2) Private Key (from managed keys)")
 		fmt.Println("3) SSH Agent")
-		var authMethod, password, keyPath string
+		var authMethod, password, keyAlias string
 		for {
 			choice, err := line.Prompt("Choice (1-3, default 1): ")
 			if err != nil {
@@ -171,9 +170,27 @@ var addCmd = &cobra.Command{
 				}
 			case "2":
 				authMethod = config.AuthMethodKey
-				keyPath, err = line.Prompt("Private Key Path: ")
-				if err != nil {
-					return err
+				if len(cfg.Keys) == 0 {
+					fmt.Println("No keys configured. Please add a key using 'knot key add' first.")
+					return fmt.Errorf("no keys available")
+				}
+				fmt.Println("Available keys:")
+				var keyAliases []string
+				for k := range cfg.Keys {
+					keyAliases = append(keyAliases, k)
+				}
+				sort.Strings(keyAliases)
+				for i, k := range keyAliases {
+					fmt.Printf("%d) %s\n", i+1, k)
+				}
+				for {
+					kChoice, _ := line.Prompt(fmt.Sprintf("Select key (1-%d): ", len(keyAliases)))
+					idx, err := strconv.Atoi(kChoice)
+					if err == nil && idx > 0 && idx <= len(keyAliases) {
+						keyAlias = keyAliases[idx-1]
+						break
+					}
+					fmt.Println("Invalid selection.")
 				}
 			case "3":
 				authMethod = config.AuthMethodAgent
@@ -184,12 +201,12 @@ var addCmd = &cobra.Command{
 			break
 		}
 
-		var proxy config.ProxyConfig
+		var proxyAlias string
 		var jumpHosts []string
 
 		for {
 			fmt.Println("\nAdvanced Options:")
-			fmt.Println("1) Configure Proxy")
+			fmt.Println("1) Configure Proxy (from managed proxies)")
 			fmt.Println("2) Configure Jump Host(s)")
 			fmt.Println("0) Finish/Done")
 			choice, err := line.Prompt("Selection (0-2): ")
@@ -213,50 +230,36 @@ var addCmd = &cobra.Command{
 					jumpHosts = nil
 				}
 
-				fmt.Println("\nConfigure Proxy:")
-				fmt.Println("1) SOCKS5")
-				fmt.Println("2) HTTP")
-				fmt.Println("0) Cancel/None")
-				pChoice, err := line.Prompt("Proxy Type (0-2): ")
-				if err != nil {
-					return err
-				}
-				if pChoice == "0" || pChoice == "" {
-					proxy = config.ProxyConfig{}
+				if len(cfg.Proxies) == 0 {
+					fmt.Println("No proxies configured. Please add a proxy using 'knot proxy add' first.")
 					continue
 				}
 
-				var newProxy config.ProxyConfig
-				switch pChoice {
-				case "1":
-					newProxy.Type = config.ProxyTypeSOCKS5
-				case "2":
-					newProxy.Type = config.ProxyTypeHTTP
-				default:
-					fmt.Println("Invalid choice.")
-					continue
+				fmt.Println("Available proxies:")
+				var pAliases []string
+				for p := range cfg.Proxies {
+					pAliases = append(pAliases, p)
 				}
-
-				newProxy.Host, err = line.Prompt("Proxy Host: ")
-				if err != nil {
-					return err
+				sort.Strings(pAliases)
+				fmt.Println("0) None/Clear Proxy")
+				for i, p := range pAliases {
+					fmt.Printf("%d) %s\n", i+1, p)
 				}
-				pPortStr, err := line.Prompt("Proxy Port: ")
-				if err != nil {
-					return err
+				for {
+					pChoice, _ := line.Prompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+					if pChoice == "0" || pChoice == "" {
+						proxyAlias = ""
+						break
+					}
+					idx, err := strconv.Atoi(pChoice)
+					if err == nil && idx > 0 && idx <= len(pAliases) {
+						proxyAlias = pAliases[idx-1]
+						break
+					}
+					fmt.Println("Invalid selection.")
 				}
-				newProxy.Port, _ = strconv.Atoi(pPortStr)
-				newProxy.Username, err = line.Prompt("Proxy Username (optional): ")
-				if err != nil {
-					return err
-				}
-				newProxy.Password, err = line.PasswordPrompt("Proxy Password (optional): ")
-				if err != nil {
-					return err
-				}
-				proxy = newProxy
 			} else if choice == "2" {
-				if proxy.Type != "" {
+				if proxyAlias != "" {
 					fmt.Print("Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
 					resp, err := line.Prompt("")
 					if err != nil {
@@ -265,7 +268,7 @@ var addCmd = &cobra.Command{
 					if strings.ToLower(resp) != "y" {
 						continue
 					}
-					proxy = config.ProxyConfig{}
+					proxyAlias = ""
 				}
 
 				// Iterative Jump Host selection
@@ -329,8 +332,8 @@ var addCmd = &cobra.Command{
 			User:           user,
 			AuthMethod:     authMethod,
 			Password:       password,
-			PrivateKeyPath: keyPath,
-			Proxy:          proxy,
+			KeyAlias:       keyAlias,
+			ProxyAlias:     proxyAlias,
 			JumpHost:       jumpHosts,
 		}
 
@@ -348,9 +351,10 @@ func init() {
 	addCmd.Flags().IntP("port", "P", 22, "Server port")
 	addCmd.Flags().StringP("user", "u", "", "Server user")
 	addCmd.Flags().StringP("password", "p", "", "Server password")
-	addCmd.Flags().StringP("key", "k", "", "Private key path")
+	addCmd.Flags().StringP("key", "k", "", "Key alias")
 	addCmd.Flags().String("auth-method", "", "Authentication method (password, key, agent)")
 	addCmd.Flags().String("known-hosts", "", "Known hosts file path")
 	addCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
+	addCmd.Flags().String("proxy", "", "Proxy alias")
 	rootCmd.AddCommand(addCmd)
 }

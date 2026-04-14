@@ -85,7 +85,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 			client, err = p.GetClient(jhSrv, cfg, confirmCallback)
 		} else {
 			// Subsequent hops: dial through the current chain
-			client, err = dial(jhSrv, jumpClient, confirmCallback)
+			client, err = dial(jhSrv, cfg, jumpClient, confirmCallback)
 			if err == nil && privateJumpRoot == nil {
 				privateJumpRoot = client
 			}
@@ -99,7 +99,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	}
 
 	// Dial the final connection.
-	client, err := dial(srv, jumpClient, confirmCallback)
+	client, err := dial(srv, cfg, jumpClient, confirmCallback)
 	if err != nil {
 		finalErr = err
 		return nil, finalErr
@@ -203,7 +203,7 @@ func (p *Pool) autoCleanup() {
 	}
 }
 
-func dial(srv config.ServerConfig, jumpClient *ssh.Client, confirmCallback func(string) bool) (*ssh.Client, error) {
+func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, confirmCallback func(string) bool) (*ssh.Client, error) {
 	authMethods := []ssh.AuthMethod{}
 
 	// Handle Authentication based on srv.AuthMethod
@@ -215,32 +215,18 @@ func dial(srv config.ServerConfig, jumpClient *ssh.Client, confirmCallback func(
 		}
 		authMethods = append(authMethods, agentAuth)
 	case config.AuthMethodKey:
-		if srv.PrivateKeyPath != "" {
-			key, err := os.ReadFile(srv.PrivateKeyPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read private key: %w", err)
+		if srv.KeyAlias != "" && cfg != nil {
+			keyCfg, ok := cfg.Keys[srv.KeyAlias]
+			if !ok {
+				return nil, fmt.Errorf("key %s not found in config", srv.KeyAlias)
 			}
-			signer, err := ssh.ParsePrivateKey(key)
+			signer, err := ssh.ParsePrivateKey([]byte(keyCfg.PrivateKey))
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse private key: %w", err)
+				return nil, fmt.Errorf("failed to parse private key %s: %w", srv.KeyAlias, err)
 			}
 			authMethods = append(authMethods, ssh.PublicKeys(signer))
 		}
 	case config.AuthMethodPassword:
-		if srv.Password != "" {
-			authMethods = append(authMethods, ssh.Password(srv.Password))
-		}
-	default:
-		// Fallback for older config or unspecified auth method
-		if srv.PrivateKeyPath != "" {
-			key, err := os.ReadFile(srv.PrivateKeyPath)
-			if err == nil {
-				signer, err := ssh.ParsePrivateKey(key)
-				if err == nil {
-					authMethods = append(authMethods, ssh.PublicKeys(signer))
-				}
-			}
-		}
 		if srv.Password != "" {
 			authMethods = append(authMethods, ssh.Password(srv.Password))
 		}
@@ -333,16 +319,21 @@ func dial(srv config.ServerConfig, jumpClient *ssh.Client, confirmCallback func(
 
 	if jumpClient != nil {
 		conn, err = jumpClient.Dial("tcp", addr)
-	} else if srv.Proxy.Type != "" {
-		proxyAddr := net.JoinHostPort(srv.Proxy.Host, strconv.Itoa(srv.Proxy.Port))
+	} else if srv.ProxyAlias != "" && cfg != nil {
+		proxyCfg, ok := cfg.Proxies[srv.ProxyAlias]
+		if !ok {
+			return nil, fmt.Errorf("proxy %s not found in config", srv.ProxyAlias)
+		}
+
+		proxyAddr := net.JoinHostPort(proxyCfg.Host, strconv.Itoa(proxyCfg.Port))
 		dialer := &net.Dialer{Timeout: 15 * time.Second}
-		switch srv.Proxy.Type {
+		switch proxyCfg.Type {
 		case config.ProxyTypeSOCKS5:
 			var auth *proxy.Auth
-			if srv.Proxy.Username != "" {
+			if proxyCfg.Username != "" {
 				auth = &proxy.Auth{
-					User:     srv.Proxy.Username,
-					Password: srv.Proxy.Password,
+					User:     proxyCfg.Username,
+					Password: proxyCfg.Password,
 				}
 			}
 			socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, dialer)
@@ -351,9 +342,9 @@ func dial(srv config.ServerConfig, jumpClient *ssh.Client, confirmCallback func(
 			}
 			conn, err = socksDialer.Dial("tcp", addr)
 		case config.ProxyTypeHTTP:
-			conn, err = dialHTTPProxy(proxyAddr, addr, srv.Proxy.Username, srv.Proxy.Password, dialer)
+			conn, err = dialHTTPProxy(proxyAddr, addr, proxyCfg.Username, proxyCfg.Password, dialer)
 		default:
-			return nil, fmt.Errorf("unsupported proxy type: %s", srv.Proxy.Type)
+			return nil, fmt.Errorf("unsupported proxy type: %s", proxyCfg.Type)
 		}
 	} else {
 		dialer := &net.Dialer{Timeout: 15 * time.Second}

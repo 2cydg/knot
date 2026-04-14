@@ -13,21 +13,38 @@ func TestSSHConnection(t *testing.T) {
 		t.Skip("SSH test key not found, skipping")
 	}
 
+	keyContent, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("failed to read test key: %v", err)
+	}
+
+	cfg := &config.Config{
+		Servers: make(map[string]config.ServerConfig),
+		Keys: map[string]config.KeyConfig{
+			"test-key": {
+				Alias:      "test-key",
+				PrivateKey: string(keyContent),
+			},
+		},
+	}
+
 	srv := config.ServerConfig{
-		Alias:          "test-local",
-		Host:           "127.0.0.1",
-		Port:           54263,
-		User:           os.Getenv("USER"),
-		PrivateKeyPath: keyPath,
+		Alias:      "test-local",
+		Host:       "127.0.0.1",
+		Port:       54263,
+		User:       os.Getenv("USER"),
+		AuthMethod: config.AuthMethodKey,
+		KeyAlias:   "test-key",
 	}
 	if srv.User == "" {
 		srv.User = "clax"
 	}
+	cfg.Servers[srv.Alias] = srv
 
 	pool := NewPool()
 	defer pool.CloseAll()
 
-	client, err := pool.GetClient(srv, nil, func(prompt string) bool { return true })
+	client, err := pool.GetClient(srv, cfg, func(prompt string) bool { return true })
 	if err != nil {
 		t.Fatalf("failed to get client: %v", err)
 	}
