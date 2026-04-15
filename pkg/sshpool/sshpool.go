@@ -24,6 +24,7 @@ type clientEntry struct {
 	client     *ssh.Client
 	lastAccess time.Time
 	refCount   int
+	remoteHost string
 }
 
 // Pool manages a pool of SSH clients for connection multiplexing.
@@ -134,6 +135,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		client:     client,
 		lastAccess: time.Now(),
 		refCount:   0,
+		remoteHost: srv.Host,
 	}
 	p.mu.Unlock()
 
@@ -245,13 +247,9 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	stats := make([]protocol.PoolEntryStat, 0, len(p.entries))
 	now := time.Now()
 	for alias, entry := range p.entries {
-		host, _, err := net.SplitHostPort(entry.client.RemoteAddr().String())
-		if err != nil {
-			host = entry.client.RemoteAddr().String()
-		}
 		stats = append(stats, protocol.PoolEntryStat{
 			Alias:    alias,
-			Host:     host,
+			Host:     entry.remoteHost,
 			IdleTime: now.Sub(entry.lastAccess).Round(time.Second).String(),
 			RefCount: entry.refCount,
 		})

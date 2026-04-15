@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
@@ -606,7 +607,11 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			case protocol.TypeData:
 				if msg.Header.Reserved == protocol.DataStdin {
 					if _, err := stdin.Write(msg.Payload); err != nil {
-						logger.Error("Failed to write to stdin", "alias", req.Alias, "error", err)
+						if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "closed pipe") {
+							logger.Debug("Stdin pipe closed", "alias", req.Alias)
+						} else {
+							logger.Error("Failed to write to stdin", "alias", req.Alias, "error", err)
+						}
 						return
 					}
 				}
@@ -648,36 +653,57 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 }
 
 func (d *Daemon) setupAgentForwarding(ctx context.Context, req *protocol.SSHRequest, client *ssh.Client, session *ssh.Session) error {
-	agentConn, err := sshpool.DialAgent(req.SSHAuthSock)
-	if err != nil {
-		return fmt.Errorf("connect to agent: %w", err)
-	}
+	logger.Debug("Initializing agent forwarding support", "alias", req.Alias, "local_socket", req.SSHAuthSock)
 
-	// Ensure connection is closed on error if we haven't started the cleanup goroutine yet
-	success := false
-	defer func() {
-		if !success {
-			agentConn.Close()
-		}
-	}()
-
-	agentClient := agent.NewClient(agentConn)
-	if err := agent.ForwardToAgent(client, agentClient); err != nil {
-		return fmt.Errorf("register agent forwarding on client: %w", err)
-	}
-
+	// Request agent forwarding on the session first
 	if err := agent.RequestAgentForwarding(session); err != nil {
 		return fmt.Errorf("request agent forwarding on session: %w", err)
 	}
 
-	success = true
-	// Keep the agent connection open as long as the session is alive
+	// Handle incoming agent forwarding channel requests
+	channels := client.HandleChannelOpen("auth-agent@openssh.com")
+	
 	go func() {
-		<-ctx.Done()
-		agentConn.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Debug("Agent forwarding context cancelled", "alias", req.Alias)
+				return
+			case newCh, ok := <-channels:
+				if !ok {
+					logger.Debug("Agent forwarding channel listener closed", "alias", req.Alias)
+					return
+				}
+				
+				go func(newCh ssh.NewChannel) {
+					logger.Info("Received agent forwarding channel request from server", "alias", req.Alias)
+					
+					agentConn, err := sshpool.DialAgent(req.SSHAuthSock)
+					if err != nil {
+						logger.Error("Failed to connect to local agent", "error", err, "path", req.SSHAuthSock)
+						newCh.Reject(ssh.ConnectionFailed, "could not open agent connection: "+err.Error())
+						return
+					}
+					defer agentConn.Close()
+
+					ch, reqs, err := newCh.Accept()
+					if err != nil {
+						logger.Error("Failed to accept agent channel", "error", err)
+						return
+					}
+					go ssh.DiscardRequests(reqs)
+
+					agentClient := agent.NewClient(agentConn)
+					if err := agent.ServeAgent(agentClient, ch); err != nil && err != io.EOF {
+						logger.Error("Agent server error during session", "error", err)
+					}
+					logger.Info("Agent forwarding channel closed", "alias", req.Alias)
+				}(newCh)
+			}
+		}
 	}()
 
-	logger.Info("Agent forwarding enabled", "alias", req.Alias)
+	logger.Info("Agent forwarding initialized and listening for requests", "alias", req.Alias)
 	return nil
 }
 
