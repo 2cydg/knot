@@ -5,7 +5,6 @@ import (
 )
 
 func TestParseOSC7(t *testing.T) {
-	d := &Daemon{}
 	tests := []struct {
 		name     string
 		input    []byte
@@ -64,7 +63,7 @@ func TestParseOSC7(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path, found := d.parseOSC7(tt.input)
+			path, found := parseOSC7(tt.input)
 			if found != tt.found {
 				t.Errorf("found = %v, want %v", found, tt.found)
 			}
