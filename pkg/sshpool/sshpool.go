@@ -32,6 +32,7 @@ type Pool struct {
 	entries            map[string]*clientEntry
 	mu                 sync.Mutex
 	idleTimeout        time.Duration
+	ConnectCallback    func(string, *ssh.Client)
 	DisconnectCallback func(string)
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -142,6 +143,10 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	// Start active keep-alive
 	go p.keepAliveLoop(srv.Alias, client, cfg)
 
+	if p.ConnectCallback != nil {
+		go p.ConnectCallback(srv.Alias, client)
+	}
+
 	return client, nil
 }
 
@@ -237,6 +242,17 @@ func (p *Pool) DecRef(alias string) {
 			entry.refCount--
 		}
 	}
+}
+
+// GetClientForAlias returns an active client for the given alias if it exists in the pool.
+func (p *Pool) GetClientForAlias(alias string) (*ssh.Client, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.entries[alias]
+	if ok {
+		return entry.client, true
+	}
+	return nil, false
 }
 
 // GetStats returns statistics for all active SSH clients in the pool.

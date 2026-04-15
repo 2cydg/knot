@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
 	"net"
@@ -98,6 +99,57 @@ func (c *Client) SendRequest(payload []byte) ([]byte, error) {
 	}
 
 	return msg.Payload, nil
+}
+
+// SendForwardRequest sends a port forwarding request to the daemon.
+func (c *Client) SendForwardRequest(req protocol.ForwardRequest) error {
+	conn, err := c.ConnectWithAutoStart()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	if err := protocol.WriteMessage(conn, protocol.TypeForwardReq, 0, data); err != nil {
+		return err
+	}
+
+	msg, err := protocol.ReadMessage(conn)
+	if err != nil {
+		return err
+	}
+
+	if msg.Header.Reserved != 0 {
+		return fmt.Errorf("%s", string(msg.Payload))
+	}
+	return nil
+}
+
+// GetForwardList retrieves the list of port forwarding rules from the daemon.
+func (c *Client) GetForwardList(alias string) (*protocol.ForwardListResponse, error) {
+	conn, err := c.ConnectWithAutoStart()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if err := protocol.WriteMessage(conn, protocol.TypeForwardListReq, 0, []byte(alias)); err != nil {
+		return nil, err
+	}
+
+	msg, err := protocol.ReadMessage(conn)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp protocol.ForwardListResponse
+	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // Signal sends a signal to the daemon.

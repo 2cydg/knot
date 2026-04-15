@@ -35,6 +35,9 @@ const (
 	TypeDisconnect uint8 = 0x09
 	TypeStatusReq uint8 = 0x0A
 	TypeStatusResp uint8 = 0x0B
+	TypeForwardReq uint8 = 0x0C
+	TypeForwardListReq uint8 = 0x0D
+	TypeForwardListResp uint8 = 0x0E
 )
 
 // SubTypes for TypeData (using Reserved field)
@@ -82,6 +85,40 @@ type PoolEntryStat struct {
 	Host     string `json:"host"`
 	IdleTime string `json:"idle_time"`
 	RefCount int    `json:"ref_count"`
+}
+
+// ForwardProtocolConfig defines the configuration for a single port forward.
+type ForwardProtocolConfig struct {
+	Type       string `json:"type"`
+	LocalPort  int    `json:"local_port"`
+	RemoteAddr string `json:"remote_addr,omitempty"`
+	Enabled    bool   `json:"enabled"`
+}
+
+// ForwardRequest defines the payload for a port forwarding management request.
+type ForwardRequest struct {
+	Action string                `json:"action"` // add, remove, enable, disable
+	Alias  string                `json:"alias"`
+	Config ForwardProtocolConfig `json:"config"`
+	IsTemp bool                  `json:"is_temp"`
+}
+
+// ForwardStatus defines the status of a single port forward.
+type ForwardStatus struct {
+	Alias      string `json:"alias"`
+	Type       string `json:"type"`
+	LocalPort  int    `json:"local_port"`
+	RemoteAddr string `json:"remote_addr"`
+	Enabled    bool   `json:"enabled"`
+	IsTemp     bool   `json:"is_temp"`
+	Status     string `json:"status"` // active, inactive, error
+	Error      string `json:"error,omitempty"`
+}
+
+// ForwardListResponse defines the payload for a port forwarding list response.
+type ForwardListResponse struct {
+	Alias    string          `json:"alias"`
+	Forwards []ForwardStatus `json:"forwards"`
 }
 
 const MaxPayloadSize = 10 * 1024 * 1024 // 10MB

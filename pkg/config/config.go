@@ -41,17 +41,25 @@ type KeyConfig struct {
 	PrivateKey string `toml:"private_key"` // Encrypted
 }
 
+type ForwardConfig struct {
+	Type       string `toml:"type"`
+	LocalPort  int    `toml:"local_port"`
+	RemoteAddr string `toml:"remote_addr,omitempty"`
+	Enabled    bool   `toml:"enabled"`
+}
+
 type ServerConfig struct {
-	Alias          string   `toml:"alias"`
-	Host           string   `toml:"host"`
-	Port           int      `toml:"port"`
-	User           string   `toml:"user"`
-	AuthMethod     string   `toml:"auth_method,omitempty"`
-	Password       string   `toml:"password,omitempty"` // Encrypted
-	KeyAlias       string   `toml:"key_alias,omitempty"`
-	KnownHostsPath string   `toml:"known_hosts_path,omitempty"`
-	ProxyAlias     string   `toml:"proxy_alias,omitempty"`
-	JumpHost       []string `toml:"jump_host,omitempty"`
+	Alias          string          `toml:"alias"`
+	Host           string          `toml:"host"`
+	Port           int             `toml:"port"`
+	User           string          `toml:"user"`
+	AuthMethod     string          `toml:"auth_method,omitempty"`
+	Password       string          `toml:"password,omitempty"` // Encrypted
+	KeyAlias       string          `toml:"key_alias,omitempty"`
+	KnownHostsPath string          `toml:"known_hosts_path,omitempty"`
+	ProxyAlias     string          `toml:"proxy_alias,omitempty"`
+	JumpHost       []string        `toml:"jump_host,omitempty"`
+	Forwards       []ForwardConfig `toml:"forwards,omitempty"`
 }
 
 type SettingsConfig struct {
