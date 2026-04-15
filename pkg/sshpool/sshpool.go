@@ -49,9 +49,23 @@ func NewPool() *Pool {
 	return p
 }
 
+// SetIdleTimeout updates the idle timeout for connections in the pool.
+func (p *Pool) SetIdleTimeout(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.idleTimeout = d
+}
+
 // GetClient returns a cached ssh.Client for the given server config, or dials a new one.
 // If jump host is specified, it will recursively dial jump hosts first.
 func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, error) {
+	// Update pool-wide idle timeout from config if available
+	if cfg != nil && cfg.Settings.IdleTimeout != "" {
+		if d, err := time.ParseDuration(cfg.Settings.IdleTimeout); err == nil {
+			p.SetIdleTimeout(d)
+		}
+	}
+
 	// Try to get from cache first
 	p.mu.Lock()
 	if entry, ok := p.entries[srv.Alias]; ok {
@@ -124,13 +138,20 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	p.mu.Unlock()
 
 	// Start active keep-alive
-	go p.keepAliveLoop(srv.Alias, client)
+	go p.keepAliveLoop(srv.Alias, client, cfg)
 
 	return client, nil
 }
 
-func (p *Pool) keepAliveLoop(alias string, client *ssh.Client) {
-	ticker := time.NewTicker(20 * time.Second)
+func (p *Pool) keepAliveLoop(alias string, client *ssh.Client, cfg *config.Config) {
+	interval := 20 * time.Second
+	if cfg != nil && cfg.Settings.KeepaliveInterval != "" {
+		if d, err := time.ParseDuration(cfg.Settings.KeepaliveInterval); err == nil {
+			interval = d
+		}
+	}
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Immediate detection via Wait()

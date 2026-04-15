@@ -12,7 +12,7 @@ import (
 )
 
 func getAgentAuthMethod() (ssh.AuthMethod, error) {
-	socket := os.Getenv("SSH_AUTH_SOCK")
+	socket := GetAgentPath()
 	if socket == "" {
 		return nil, fmt.Errorf("SSH_AUTH_SOCK not set")
 	}
@@ -21,4 +21,12 @@ func getAgentAuthMethod() (ssh.AuthMethod, error) {
 		return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
 	}
 	return ssh.PublicKeysCallback(agent.NewClient(conn).Signers), nil
+}
+
+func GetAgentPath() string {
+	return os.Getenv("SSH_AUTH_SOCK")
+}
+
+func DialAgent(path string) (net.Conn, error) {
+	return net.Dial("unix", path)
 }

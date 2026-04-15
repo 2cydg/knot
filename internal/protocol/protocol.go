@@ -52,10 +52,12 @@ const (
 
 // SSHRequest defines the payload for an SSH session request.
 type SSHRequest struct {
-	Alias string `json:"alias"`
-	Term  string `json:"term"`
-	Rows  int    `json:"rows"`
-	Cols  int    `json:"cols"`
+	Alias        string `json:"alias"`
+	Term         string `json:"term"`
+	Rows         int    `json:"rows"`
+	Cols         int    `json:"cols"`
+	ForwardAgent bool   `json:"forward_agent"`
+	SSHAuthSock  string `json:"ssh_auth_sock,omitempty"`
 }
 
 // ResizePayload defines the payload for a terminal resize signal.

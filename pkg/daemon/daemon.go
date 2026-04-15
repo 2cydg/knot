@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 const MaxConcurrentConnections = 100
@@ -502,6 +503,16 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle Agent Forwarding
+	if req.ForwardAgent && req.SSHAuthSock != "" {
+		if err := d.setupAgentForwarding(ctx, req, client, session); err != nil {
+			logger.Warn("Failed to setup agent forwarding", "alias", req.Alias, "error", err)
+		}
+	}
+
 	stdin, err := session.StdinPipe()
 	if err != nil {
 		sendError("failed to get stdin pipe")
@@ -537,9 +548,6 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// 5. Proxy I/O
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	var wg sync.WaitGroup
 	wg.Add(3)
 
@@ -637,6 +645,40 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	if !d.pool.IsAlive(req.Alias, client) {
 		protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
 	}
+}
+
+func (d *Daemon) setupAgentForwarding(ctx context.Context, req *protocol.SSHRequest, client *ssh.Client, session *ssh.Session) error {
+	agentConn, err := sshpool.DialAgent(req.SSHAuthSock)
+	if err != nil {
+		return fmt.Errorf("connect to agent: %w", err)
+	}
+
+	// Ensure connection is closed on error if we haven't started the cleanup goroutine yet
+	success := false
+	defer func() {
+		if !success {
+			agentConn.Close()
+		}
+	}()
+
+	agentClient := agent.NewClient(agentConn)
+	if err := agent.ForwardToAgent(client, agentClient); err != nil {
+		return fmt.Errorf("register agent forwarding on client: %w", err)
+	}
+
+	if err := agent.RequestAgentForwarding(session); err != nil {
+		return fmt.Errorf("request agent forwarding on session: %w", err)
+	}
+
+	success = true
+	// Keep the agent connection open as long as the session is alive
+	go func() {
+		<-ctx.Done()
+		agentConn.Close()
+	}()
+
+	logger.Info("Agent forwarding enabled", "alias", req.Alias)
+	return nil
 }
 
 func (d *Daemon) handleSessionListRequest(conn net.Conn, alias string) {

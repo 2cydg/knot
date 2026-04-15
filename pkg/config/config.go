@@ -54,10 +54,25 @@ type ServerConfig struct {
 	JumpHost       []string `toml:"jump_host,omitempty"`
 }
 
+type SettingsConfig struct {
+	ForwardAgent      *bool  `toml:"forward_agent"`
+	IdleTimeout       string `toml:"idle_timeout"`
+	KeepaliveInterval string `toml:"keepalive_interval"`
+	LogLevel          string `toml:"log_level"`
+}
+
+func (s SettingsConfig) GetForwardAgent() bool {
+	if s.ForwardAgent == nil {
+		return true
+	}
+	return *s.ForwardAgent
+}
+
 type Config struct {
-	Servers map[string]ServerConfig `toml:"servers"`
-	Proxies map[string]ProxyConfig  `toml:"proxies"`
-	Keys    map[string]KeyConfig    `toml:"keys"`
+	Settings SettingsConfig          `toml:"settings"`
+	Servers  map[string]ServerConfig `toml:"servers"`
+	Proxies  map[string]ProxyConfig  `toml:"proxies"`
+	Keys     map[string]KeyConfig    `toml:"keys"`
 }
 
 func GetConfigDir() (string, error) {
@@ -86,7 +101,14 @@ func Load(cryptoProvider crypto.Provider) (*Config, error) {
 
 func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		defaultTrue := true
 		return &Config{
+			Settings: SettingsConfig{
+				ForwardAgent:      &defaultTrue,
+				IdleTimeout:       "30m",
+				KeepaliveInterval: "20s",
+				LogLevel:          "error",
+			},
 			Servers: make(map[string]ServerConfig),
 			Proxies: make(map[string]ProxyConfig),
 			Keys:    make(map[string]KeyConfig),
@@ -96,6 +118,17 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 	var cfg Config
 	if _, err := toml.DecodeFile(configPath, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
+	}
+
+	// Set defaults for missing settings
+	if cfg.Settings.IdleTimeout == "" {
+		cfg.Settings.IdleTimeout = "30m"
+	}
+	if cfg.Settings.KeepaliveInterval == "" {
+		cfg.Settings.KeepaliveInterval = "20s"
+	}
+	if cfg.Settings.LogLevel == "" {
+		cfg.Settings.LogLevel = "error"
 	}
 
 	if cfg.Servers == nil {
@@ -161,11 +194,18 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		return err
 	}
 
+	// Ensure Settings defaults are initialized before saving if they were nil
+	if c.Settings.ForwardAgent == nil {
+		defaultTrue := true
+		c.Settings.ForwardAgent = &defaultTrue
+	}
+
 	// Create a copy to encrypt fields before saving
 	cfgToSave := Config{
-		Servers: make(map[string]ServerConfig),
-		Proxies: make(map[string]ProxyConfig),
-		Keys:    make(map[string]KeyConfig),
+		Settings: c.Settings,
+		Servers:  make(map[string]ServerConfig),
+		Proxies:  make(map[string]ProxyConfig),
+		Keys:     make(map[string]KeyConfig),
 	}
 
 	for alias, srv := range c.Servers {

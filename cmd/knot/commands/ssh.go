@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"knot/internal/protocol"
+	"knot/pkg/config"
+	"knot/pkg/crypto"
 	"knot/pkg/daemon"
+	"knot/pkg/sshpool"
 	"os"
 	"strings"
 	"sync"
@@ -24,6 +27,16 @@ var sshCmd = &cobra.Command{
 		alias := args[0]
 		if len(alias) > 255 {
 			return fmt.Errorf("alias too long")
+		}
+
+		// Load config for global settings
+		provider, err := crypto.NewProvider()
+		if err != nil {
+			return err
+		}
+		cfg, err := config.Load(provider)
+		if err != nil {
+			return err
 		}
 
 		client, err := daemon.NewClient()
@@ -50,10 +63,12 @@ var sshCmd = &cobra.Command{
 		}
 
 		req := protocol.SSHRequest{
-			Alias: alias,
-			Term:  envTerm,
-			Rows:  rows,
-			Cols:  cols,
+			Alias:        alias,
+			Term:         envTerm,
+			Rows:         rows,
+			Cols:         cols,
+			ForwardAgent: cfg.Settings.GetForwardAgent(),
+			SSHAuthSock:  sshpool.GetAgentPath(),
 		}
 
 		payload, err := json.Marshal(req)

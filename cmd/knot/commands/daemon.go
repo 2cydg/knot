@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"knot/internal/logger"
+	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	"log/slog"
@@ -73,10 +74,23 @@ var daemonStartCmd = &cobra.Command{
 			return err
 		}
 
+		cfg, err := config.Load(provider)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+		}
+
 		// Initialize structured logger
 		home, _ := os.UserHomeDir()
 		logPath := filepath.Join(home, ".config/knot/daemon.log")
-		if err := logger.Setup(logPath, slog.LevelInfo, false); err != nil {
+		
+		logLevel := slog.LevelError
+		if cfg != nil && cfg.Settings.LogLevel != "" {
+			if err := logLevel.UnmarshalText([]byte(cfg.Settings.LogLevel)); err != nil {
+				logLevel = slog.LevelError
+			}
+		}
+
+		if err := logger.Setup(logPath, logLevel, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to setup structured logger: %v\n", err)
 		}
 
