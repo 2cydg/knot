@@ -44,7 +44,7 @@ func TestSSHConnection(t *testing.T) {
 	pool := NewPool()
 	defer pool.CloseAll()
 
-	client, _, err := pool.GetClient(srv, cfg, func(prompt string) bool { return true })
+	client, _, _, err := pool.GetClient(srv, cfg, func(prompt string) bool { return true })
 	if err != nil {
 		t.Fatalf("failed to get client: %v", err)
 	}

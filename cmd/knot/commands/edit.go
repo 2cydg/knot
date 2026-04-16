@@ -80,7 +80,7 @@ var editCmd = &cobra.Command{
 			switch choice {
 			case "1":
 				srv.AuthMethod = config.AuthMethodPassword
-				pass, err := line.ReadPassword("New Password (leave empty to keep current, use '[none]' to clear): ")
+				pass, err := line.ReadPassword("New Password (leave empty to keep current): ")
 				if err != nil {
 					return err
 				}
@@ -169,11 +169,11 @@ var editCmd = &cobra.Command{
 		// Tags editing (Optional)
 		existingTags := cfg.GetAllTags()
 		if len(existingTags) > 0 {
-		        fmt.Printf("\nExisting Tags: [%s]\n", strings.Join(existingTags, ", "))
+			fmt.Printf("Existing Tags: %s\n", strings.Join(existingTags, ", "))
 		}
-		line.SetPrompt("Tags (comma separated, optional): ")
+		line.SetPrompt("Tag: ")
 		if len(srv.Tags) > 0 {
-		        line.WriteStdin([]byte(strings.Join(srv.Tags, ",")))
+			line.WriteStdin([]byte(strings.Join(srv.Tags, ",")))
 		}
 		tagsStr, _ := line.Readline()
 

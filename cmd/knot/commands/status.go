@@ -6,6 +6,7 @@ import (
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -47,17 +48,34 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("failed to unmarshal status response: %w", err)
 		}
 
+		// Print Title
+		fmt.Println("Knot Daemon Status")
+		fmt.Println("--------------------------------------------------")
+
+		// Colorize Crypto Provider
+		cryptoDisplay := status.CryptoProvider
+		if strings.Contains(strings.ToLower(status.CryptoProvider), "fallback") {
+			// Yellow/Orange for fallback
+			cryptoDisplay = fmt.Sprintf("\033[33m%s\033[0m", status.CryptoProvider)
+		} else {
+			// Green for OS-native
+			cryptoDisplay = fmt.Sprintf("\033[32m%s\033[0m", status.CryptoProvider)
+		}
+
 		// Print Daemon Info
-		fmt.Printf("Knot Daemon: Running (PID: %d)\n", status.DaemonPID)
+		fmt.Printf("PID:         %d\n", status.DaemonPID)
+		fmt.Printf("Crypto:      %s\n", cryptoDisplay)
 		fmt.Printf("Uptime:      %s\n", status.Uptime)
 		fmt.Printf("Socket:      %s\n", status.UDSPath)
 		fmt.Printf("Memory:      %.2f MB\n", float64(status.MemoryUsage)/1024/1024)
-		fmt.Printf("Sessions:    %d\n", status.ActiveSessions)
-		fmt.Println()
+		fmt.Println("--------------------------------------------------")
 
 		// Print Connection Pool Info
+		fmt.Println("[Sessions]")
+		fmt.Printf("Active:      %d\n", status.ActiveSessions)
+		fmt.Println()
+
 		if len(status.PoolStats) > 0 {
-			fmt.Println("Active SSH Connections:")
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ALIAS\tREMOTE HOST\tSESSIONS\tIDLE")
 			for _, s := range status.PoolStats {

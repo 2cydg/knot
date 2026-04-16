@@ -39,6 +39,10 @@ type Pool struct {
 	cancel             context.CancelFunc
 }
 
+func getConnKey(srv config.ServerConfig) string {
+	return fmt.Sprintf("%s:%s@%s:%d", srv.Alias, srv.User, srv.Host, srv.Port)
+}
+
 // NewPool creates a new Pool instance.
 func NewPool() *Pool {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,7 +65,7 @@ func (p *Pool) SetIdleTimeout(d time.Duration) {
 
 // GetClient returns a cached ssh.Client for the given server config, or dials a new one.
 // If jump host is specified, it will recursively dial jump hosts first.
-func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, bool, error) {
+func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, string, bool, error) {
 	// Update pool-wide idle timeout from config if available
 	if cfg != nil && cfg.Settings.IdleTimeout != "" {
 		if d, err := time.ParseDuration(cfg.Settings.IdleTimeout); err == nil {
@@ -69,20 +73,22 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		}
 	}
 
+	key := getConnKey(srv)
+
 	// Try to get from cache first
 	p.mu.Lock()
-	if entry, ok := p.entries[srv.Alias]; ok {
+	if entry, ok := p.entries[key]; ok {
 		// Ping the server to check if the connection is still alive.
 		_, _, err := entry.client.SendRequest("keepalive@knot", true, nil)
 		if err == nil {
 			entry.lastAccess = time.Now()
 			client := entry.client
 			p.mu.Unlock()
-			return client, false, nil
+			return client, key, false, nil
 		}
 		// Connection is dead, close and remove it.
 		entry.client.Close()
-		delete(p.entries, srv.Alias)
+		delete(p.entries, key)
 	}
 	p.mu.Unlock()
 
@@ -101,14 +107,14 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		jhSrv, ok := cfg.Servers[jhAlias]
 		if !ok {
 			finalErr = fmt.Errorf("jump host %s not found in config", jhAlias)
-			return nil, false, finalErr
+			return nil, "", false, finalErr
 		}
 
 		var client *ssh.Client
 		var err error
 		if i == 0 && cfg != nil {
 			// First hop: leverage pool for multiplexing and recursive jump hosts
-			client, _, err = p.GetClient(jhSrv, cfg, confirmCallback)
+			client, _, _, err = p.GetClient(jhSrv, cfg, confirmCallback)
 		} else {
 			// Subsequent hops: dial through the current chain
 			client, err = dial(jhSrv, cfg, jumpClient, confirmCallback)
@@ -119,7 +125,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 
 		if err != nil {
 			finalErr = fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
-			return nil, false, finalErr
+			return nil, "", false, finalErr
 		}
 		jumpClient = client
 	}
@@ -128,12 +134,12 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	client, err := dial(srv, cfg, jumpClient, confirmCallback)
 	if err != nil {
 		finalErr = err
-		return nil, false, finalErr
+		return nil, "", false, finalErr
 	}
 
 	// Cache the new connection
 	p.mu.Lock()
-	p.entries[srv.Alias] = &clientEntry{
+	p.entries[key] = &clientEntry{
 		client:     client,
 		lastAccess: time.Now(),
 		refCount:   0,
@@ -142,16 +148,16 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	p.mu.Unlock()
 
 	// Start active keep-alive
-	go p.keepAliveLoop(srv.Alias, client, cfg)
+	go p.keepAliveLoop(key, client, cfg)
 
 	if p.ConnectCallback != nil {
-		go p.ConnectCallback(srv.Alias, client)
+		go p.ConnectCallback(key, client)
 	}
 
-	return client, true, nil
+	return client, key, true, nil
 }
 
-func (p *Pool) keepAliveLoop(alias string, client *ssh.Client, cfg *config.Config) {
+func (p *Pool) keepAliveLoop(key string, client *ssh.Client, cfg *config.Config) {
 	interval := 20 * time.Second
 	if cfg != nil && cfg.Settings.KeepaliveInterval != "" {
 		if d, err := time.ParseDuration(cfg.Settings.KeepaliveInterval); err == nil {
@@ -180,14 +186,14 @@ func (p *Pool) keepAliveLoop(alias string, client *ssh.Client, cfg *config.Confi
 			if err != nil {
 				failCount++
 				if failCount >= maxFailures {
-					p.triggerDisconnect(alias, client)
+					p.triggerDisconnect(key, client)
 					return
 				}
 			} else {
 				failCount = 0
 			}
 		case <-done:
-			p.triggerDisconnect(alias, client)
+			p.triggerDisconnect(key, client)
 			return
 		case <-p.ctx.Done():
 			return
@@ -195,63 +201,77 @@ func (p *Pool) keepAliveLoop(alias string, client *ssh.Client, cfg *config.Confi
 	}
 }
 
-func (p *Pool) triggerDisconnect(alias string, client *ssh.Client) {
+func (p *Pool) triggerDisconnect(key string, client *ssh.Client) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if entry, ok := p.entries[alias]; ok && entry.client == client {
+	if entry, ok := p.entries[key]; ok && entry.client == client {
 		entry.client.Close()
-		delete(p.entries, alias)
+		delete(p.entries, key)
 		// Trigger disconnect callback if set
 		if p.DisconnectCallback != nil {
-			go p.DisconnectCallback(alias)
+			go p.DisconnectCallback(key)
 		}
 	}
 }
 
-// IsAlive checks if a client for the given alias is still alive and in the pool.
-func (p *Pool) IsAlive(alias string, client *ssh.Client) bool {
+// IsAlive checks if a client for the given key is still alive and in the pool.
+func (p *Pool) IsAlive(key string, client *ssh.Client) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	entry, ok := p.entries[alias]
+	entry, ok := p.entries[key]
 	return ok && entry.client == client
 }
 
 // Touch updates the last access time of a client in the pool.
-func (p *Pool) Touch(alias string) {
+func (p *Pool) Touch(key string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if entry, ok := p.entries[alias]; ok {
+	if entry, ok := p.entries[key]; ok {
 		entry.lastAccess = time.Now()
 	}
 }
 
 // IncRef increments the reference count for a cached client.
-func (p *Pool) IncRef(alias string) {
+func (p *Pool) IncRef(key string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if entry, ok := p.entries[alias]; ok {
+	if entry, ok := p.entries[key]; ok {
 		entry.refCount++
 	}
 }
 
 // DecRef decrements the reference count for a cached client.
-func (p *Pool) DecRef(alias string) {
+func (p *Pool) DecRef(key string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if entry, ok := p.entries[alias]; ok {
+	if entry, ok := p.entries[key]; ok {
 		if entry.refCount > 0 {
 			entry.refCount--
 		}
 	}
 }
 
-// GetClientForAlias returns an active client for the given alias if it exists in the pool.
+// GetClientForKey returns an active client for the given key if it exists in the pool.
+func (p *Pool) GetClientForKey(key string) (*ssh.Client, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.entries[key]
+	if ok {
+		return entry.client, true
+	}
+	return nil, false
+}
+
+// GetClientForAlias returns the first active client found that matches the given alias.
 func (p *Pool) GetClientForAlias(alias string) (*ssh.Client, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	entry, ok := p.entries[alias]
-	if ok {
-		return entry.client, true
+	
+	prefix := alias + ":"
+	for key, entry := range p.entries {
+		if strings.HasPrefix(key, prefix) {
+			return entry.client, true
+		}
 	}
 	return nil, false
 }
@@ -263,9 +283,9 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 
 	stats := make([]protocol.PoolEntryStat, 0, len(p.entries))
 	now := time.Now()
-	for alias, entry := range p.entries {
+	for key, entry := range p.entries {
 		stats = append(stats, protocol.PoolEntryStat{
-			Alias:    alias,
+			Alias:    key,
 			Host:     entry.remoteHost,
 			IdleTime: now.Sub(entry.lastAccess).Round(time.Second).String(),
 			RefCount: entry.refCount,
@@ -273,6 +293,7 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	}
 	return stats
 }
+
 
 // CloseAll closes all active SSH clients in the pool and returns the count.
 func (p *Pool) CloseAll() int {

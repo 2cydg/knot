@@ -203,6 +203,7 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 				IdleTimeout:       "30m",
 				KeepaliveInterval: "20s",
 				LogLevel:          "error",
+				RecentLimit:       5,
 			},
 			Servers: make(map[string]ServerConfig),
 			Proxies: make(map[string]ProxyConfig),

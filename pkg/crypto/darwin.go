@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"knot/internal/logger"
 	"os/exec"
 	"strings"
 )
@@ -23,6 +24,7 @@ type darwinProvider struct {
 }
 
 func NewDarwinProvider() (Provider, error) {
+	logger.Debug("Initializing macOS Keychain crypto provider")
 	key, err := getOrCreateKeychainKey()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create keychain key: %w", err)
@@ -30,7 +32,12 @@ func NewDarwinProvider() (Provider, error) {
 	return &darwinProvider{key: key}, nil
 }
 
+func (p *darwinProvider) Name() string {
+	return "macOS Keychain"
+}
+
 func (p *darwinProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	logger.Debug("Encrypting data using AES-GCM (macOS Keychain key)")
 	block, err := aes.NewCipher(p.key)
 	if err != nil {
 		return nil, err
@@ -51,6 +58,7 @@ func (p *darwinProvider) Encrypt(plaintext []byte) ([]byte, error) {
 }
 
 func (p *darwinProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	logger.Debug("Decrypting data using AES-GCM (macOS Keychain key)")
 	block, err := aes.NewCipher(p.key)
 	if err != nil {
 		return nil, err
@@ -76,13 +84,16 @@ func (p *darwinProvider) Decrypt(ciphertext []byte) ([]byte, error) {
 }
 
 func getOrCreateKeychainKey() ([]byte, error) {
+	logger.Debug("Attempting to find existing key in macOS Keychain")
 	// Try to find the key
 	cmd := exec.Command("security", "find-generic-password", "-a", keychainAccount, "-s", keychainService, "-w")
 	out, err := cmd.Output()
 	if err == nil {
+		logger.Debug("Found existing key in macOS Keychain")
 		return base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
 	}
 
+	logger.Debug("No existing key found in Keychain, creating a new one")
 	// Key not found, create one
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
@@ -96,5 +107,6 @@ func getOrCreateKeychainKey() ([]byte, error) {
 		return nil, fmt.Errorf("failed to add key to keychain: %w", err)
 	}
 
+	logger.Debug("New key created and stored in macOS Keychain successfully")
 	return key, nil
 }

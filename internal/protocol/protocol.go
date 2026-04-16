@@ -80,6 +80,7 @@ type StatusResponse struct {
 	MemoryUsage    uint64          `json:"memory_usage_bytes"`
 	PoolStats      []PoolEntryStat `json:"pool_stats"`
 	ActiveSessions int             `json:"active_sessions"`
+	CryptoProvider string          `json:"crypto_provider"`
 }
 
 // PoolEntryStat defines the statistics for a single SSH pool entry.

@@ -269,8 +269,9 @@ var addCmd = &cobra.Command{
 		// Tags input (Optional)
 		existingTags := cfg.GetAllTags()
 		if len(existingTags) > 0 {
-		        fmt.Printf("\nExisting Tags: [%s]\n", strings.Join(existingTags, ", "))
+			fmt.Printf("Existing Tags: %s\n", strings.Join(existingTags, ", "))
 		}
+		line.SetPrompt("Tag: ")
 		tagsStr, _ := line.Readline()
 
 		var finalTags []string

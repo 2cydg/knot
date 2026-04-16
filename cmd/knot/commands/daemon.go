@@ -69,20 +69,14 @@ var daemonStartCmd = &cobra.Command{
 			}
 		}
 
-		provider, err := crypto.NewProvider()
-		if err != nil {
-			return err
-		}
-
-		cfg, err := config.Load(provider)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
-		}
-
-		// Initialize structured logger
+		// 1. Pre-load config to get log level
 		home, _ := os.UserHomeDir()
 		logPath := filepath.Join(home, ".config/knot/daemon.log")
 		
+		// Temporary load to get settings
+		tmpProvider, _ := crypto.NewProvider() // We don't care if this fails/fallbacks yet
+		cfg, _ := config.Load(tmpProvider)
+
 		logLevel := slog.LevelError
 		if cfg != nil && cfg.Settings.LogLevel != "" {
 			if err := logLevel.UnmarshalText([]byte(cfg.Settings.LogLevel)); err != nil {
@@ -90,8 +84,21 @@ var daemonStartCmd = &cobra.Command{
 			}
 		}
 
+		// 2. Setup logger first
 		if err := logger.Setup(logPath, logLevel, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to setup structured logger: %v\n", err)
+		}
+
+		// 3. Now initialize the real provider with full logging
+		provider, err := crypto.NewProvider()
+		if err != nil {
+			return err
+		}
+
+		// Re-load config with the real provider
+		cfg, err = config.Load(provider)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
 		}
 
 		d, err := daemon.NewDaemon(provider)

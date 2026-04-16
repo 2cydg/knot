@@ -2,12 +2,15 @@ package commands
 
 import (
 	"fmt"
+	"knot/internal/paths"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +18,73 @@ var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage global settings",
 	Long:  `View and modify global settings like forward_agent, idle_timeout, keepalive_interval, and log_level.`,
+}
+
+var configInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize or reset global configuration to defaults",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		provider, err := crypto.NewProvider()
+		if err != nil {
+			return err
+		}
+
+		configPath, err := paths.GetConfigPath()
+		if err != nil {
+			return err
+		}
+
+		exists := true
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			exists = false
+		}
+
+		cfg, err := config.Load(provider)
+		if err != nil {
+			return err
+		}
+
+		if exists {
+			// Interactive confirmation
+			line, err := readline.NewEx(&readline.Config{
+				Prompt:          "Configuration file already exists. Reset global settings to defaults? (y/N): ",
+				InterruptPrompt: "^C",
+				EOFPrompt:       "exit",
+			})
+			if err != nil {
+				return err
+			}
+			defer line.Close()
+
+			resp, _ := line.Readline()
+			if strings.ToLower(resp) != "y" {
+				fmt.Println("Initialization cancelled.")
+				return nil
+			}
+			fmt.Println("Resetting global settings (Servers/Proxies/Keys will be preserved)...")
+		}
+
+		// Set default settings
+		defaultTrue := true
+		cfg.Settings = config.SettingsConfig{
+			ForwardAgent:      &defaultTrue,
+			IdleTimeout:       "30m",
+			KeepaliveInterval: "20s",
+			LogLevel:          "error",
+			RecentLimit:       5,
+		}
+
+		if err := cfg.Save(provider); err != nil {
+			return err
+		}
+
+		if exists {
+			fmt.Printf("Global settings have been reset to defaults in %s\n", configPath)
+		} else {
+			fmt.Printf("Successfully initialized configuration file at %s\n", configPath)
+		}
+		return nil
+	},
 }
 
 var configListCmd = &cobra.Command{
@@ -126,6 +196,6 @@ var configSetCmd = &cobra.Command{
 
 func init() {
 	configCmd.GroupID = advancedGroup.ID
-	configCmd.AddCommand(configListCmd, configGetCmd, configSetCmd)
+	configCmd.AddCommand(configInitCmd, configListCmd, configGetCmd, configSetCmd)
 	rootCmd.AddCommand(configCmd)
 }

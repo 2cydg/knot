@@ -31,6 +31,7 @@ func (d *Daemon) handleStatusRequest(conn net.Conn) {
 		MemoryUsage:    m.Alloc,
 		PoolStats:      d.pool.GetStats(),
 		ActiveSessions: d.sm.Count(),
+		CryptoProvider: d.crypto.Name(),
 	}
 
 	data, err := json.Marshal(stats)
