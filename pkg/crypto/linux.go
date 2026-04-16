@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"knot/internal/logger"
 	"knot/internal/paths"
 	"os"
 	"os/exec"
@@ -45,10 +44,7 @@ func NewLinuxProvider() (Provider, error) {
 	fallbackKey := pbkdf2.Key([]byte(machineID), salt, iterations, 32, sha256.New)
 
 	// Try secret-service
-	ssKey, err := getSecretServiceKey()
-	if err != nil {
-		logger.Warn("Secret Service unavailable, falling back to machine-id key", "error", err)
-	}
+	ssKey, _ := getSecretServiceKey()
 
 	return &linuxProvider{
 		key:         ssKey,

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
 
@@ -86,9 +86,11 @@ func handleForwardAddFlags(alias, lForward, rForward string, dForward int, isTem
 }
 
 func handleForwardAddInteractive(alias string, isTemp bool) error {
-	line := liner.NewLiner()
+	line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+	if err != nil {
+		return err
+	}
 	defer line.Close()
-	line.SetCtrlCAborts(true)
 
 	provider, err := crypto.NewProvider()
 	if err != nil {
@@ -110,7 +112,8 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 			fmt.Printf("%d) %s\n", i+1, a)
 		}
 		for {
-			aliasStr, err := line.Prompt("Alias (name or number): ")
+			line.SetPrompt("Alias (name or number): ")
+			aliasStr, err := line.Readline()
 			if err != nil {
 				return err
 			}
@@ -139,7 +142,8 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 	fmt.Println("2) Remote (R) - Access local service remotely")
 	fmt.Println("3) Dynamic (D) - SOCKS5 proxy")
 	
-	choice, err := line.Prompt("Choice (1-3): ")
+	line.SetPrompt("Choice (1-3): ")
+	choice, err := line.Readline()
 	if err != nil {
 		return err
 	}
@@ -150,7 +154,8 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 	switch choice {
 	case "1":
 		fType = "L"
-		lpStr, err := line.Prompt("Local Port: ")
+		line.SetPrompt("Local Port: ")
+		lpStr, err := line.Readline()
 		if err != nil {
 			return err
 		}
@@ -158,13 +163,15 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 		if err != nil {
 			return fmt.Errorf("invalid port: %v", err)
 		}
-		remoteAddr, err = line.Prompt("Remote Address (e.g. 127.0.0.1:80): ")
+		line.SetPrompt("Remote Address (e.g. 127.0.0.1:80): ")
+		remoteAddr, err = line.Readline()
 		if err != nil {
 			return err
 		}
 	case "2":
 		fType = "R"
-		lpStr, err := line.Prompt("Remote Port: ")
+		line.SetPrompt("Remote Port: ")
+		lpStr, err := line.Readline()
 		if err != nil {
 			return err
 		}
@@ -172,13 +179,15 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 		if err != nil {
 			return fmt.Errorf("invalid port: %v", err)
 		}
-		remoteAddr, err = line.Prompt("Local Address (e.g. 127.0.0.1:8080): ")
+		line.SetPrompt("Local Address (e.g. 127.0.0.1:8080): ")
+		remoteAddr, err = line.Readline()
 		if err != nil {
 			return err
 		}
 	case "3":
 		fType = "D"
-		lpStr, err := line.Prompt("Local Port: ")
+		line.SetPrompt("Local Port: ")
+		lpStr, err := line.Readline()
 		if err != nil {
 			return err
 		}
@@ -190,7 +199,8 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 		return fmt.Errorf("invalid choice")
 	}
 
-	permStr, err := line.Prompt("Save as permanent rule? (Y/n): ")
+	line.SetPrompt("Save as permanent rule? (Y/n): ")
+	permStr, err := line.Readline()
 	if err != nil {
 		return err
 	}

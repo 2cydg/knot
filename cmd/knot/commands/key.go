@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -60,14 +60,15 @@ var keyListCmd = &cobra.Command{
 	},
 }
 
-func PromptForKey(line *liner.State) ([]byte, string, error) {
+func PromptForKey(rl *readline.Instance) ([]byte, string, error) {
 	fmt.Println("Enter private key file path or paste content (Ctrl+D to finish pasting):")
 	var keyBytes []byte
 	var input string
 	var passphrase string
 
 	for {
-		lineStr, err := line.Prompt("> ")
+		rl.SetPrompt("> ")
+		lineStr, err := rl.Readline()
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -105,11 +106,11 @@ func PromptForKey(line *liner.State) ([]byte, string, error) {
 	// Try to parse to see if it needs a passphrase
 	_, err := ssh.ParsePrivateKey(keyBytes)
 	if err != nil && strings.Contains(err.Error(), "passphrase") {
-		pass, err := line.PasswordPrompt("Enter passphrase for private key: ")
+		pass, err := rl.ReadPassword("Enter passphrase for private key: ")
 		if err != nil {
 			return nil, "", err
 		}
-		passphrase = pass
+		passphrase = string(pass)
 		fmt.Println("Note: The original passphrase will be removed, and the key will be re-encrypted using Knot's secure storage.")
 	}
 
@@ -168,13 +169,16 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 		}
 
 		// Interactive mode
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		if alias == "" {
 			for {
-				aliasStr, err := line.Prompt("Key Alias: ")
+				line.SetPrompt("Key Alias: ")
+				aliasStr, err := line.Readline()
 				if err != nil {
 					return err
 				}
@@ -188,7 +192,8 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 
 		if _, exists := cfg.Keys[alias]; exists {
 			fmt.Printf("Key alias '%s' already exists. Overwrite? (y/N): ", alias)
-			resp, _ := line.Prompt("")
+			line.SetPrompt("")
+			resp, _ := line.Readline()
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
@@ -248,9 +253,13 @@ var keyRemoveCmd = &cobra.Command{
 				fmt.Printf("- %s\n", s)
 			}
 			fmt.Print("If you delete it, these servers' key settings will be cleared. Continue? (y/N): ")
-			line := liner.NewLiner()
+			line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+			if err != nil {
+				return err
+			}
 			defer line.Close()
-			resp, _ := line.Prompt("")
+			line.SetPrompt("")
+			resp, _ := line.Readline()
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
@@ -294,9 +303,11 @@ var keyEditCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Editing key '%s'.\n", alias)
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		kb, pass, err := PromptForKey(line)
 		if err != nil {

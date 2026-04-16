@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
 
@@ -34,19 +34,27 @@ var editCmd = &cobra.Command{
 			return fmt.Errorf("server alias '%s' not found", alias)
 		}
 
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{
+			Prompt:          "> ",
+			InterruptPrompt: "^C",
+			EOFPrompt:       "exit",
+		})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		fmt.Printf("Editing server: %s\n", alias)
 
 		// Basic fields
-		newHost, _ := line.Prompt(fmt.Sprintf("Host [%s]: ", srv.Host))
+		line.SetPrompt(fmt.Sprintf("Host [%s]: ", srv.Host))
+		newHost, _ := line.Readline()
 		if newHost != "" {
 			srv.Host = newHost
 		}
 
-		newPortStr, _ := line.Prompt(fmt.Sprintf("Port [%d]: ", srv.Port))
+		line.SetPrompt(fmt.Sprintf("Port [%d]: ", srv.Port))
+		newPortStr, _ := line.Readline()
 		if newPortStr != "" {
 			newPort, err := strconv.Atoi(newPortStr)
 			if err == nil {
@@ -54,7 +62,8 @@ var editCmd = &cobra.Command{
 			}
 		}
 
-		newUser, _ := line.Prompt(fmt.Sprintf("User [%s]: ", srv.User))
+		line.SetPrompt(fmt.Sprintf("User [%s]: ", srv.User))
+		newUser, _ := line.Readline()
 		if newUser != "" {
 			srv.User = newUser
 		}
@@ -65,15 +74,17 @@ var editCmd = &cobra.Command{
 		fmt.Println("1) Password")
 		fmt.Println("2) Private Key (managed)")
 		fmt.Println("3) SSH Agent")
-		choice, _ := line.Prompt("Selection (1-3): ")
+		line.SetPrompt("Selection (1-3): ")
+		choice, _ := line.Readline()
 		if choice != "" {
 			switch choice {
 			case "1":
 				srv.AuthMethod = config.AuthMethodPassword
-				password, err := line.PasswordPrompt("New Password (leave empty to keep current, use '[none]' to clear): ")
+				pass, err := line.ReadPassword("New Password (leave empty to keep current, use '[none]' to clear): ")
 				if err != nil {
 					return err
 				}
+				password := string(pass)
 				if password == "[none]" {
 					srv.Password = ""
 				} else if password != "" {
@@ -83,7 +94,8 @@ var editCmd = &cobra.Command{
 			case "2":
 				if len(cfg.Keys) == 0 {
 					fmt.Print("No keys configured. Add one now? (Y/n): ")
-					resp, _ := line.Prompt("")
+					line.SetPrompt("")
+					resp, _ := line.Readline()
 					if resp != "" && strings.ToLower(resp) != "y" {
 						fmt.Println("No keys available. Please add a key using 'knot key add' first.")
 					} else {
@@ -95,7 +107,8 @@ var editCmd = &cobra.Command{
 						
 						var kAlias string
 						for {
-							kAlias, err = line.Prompt("New Key Alias: ")
+							line.SetPrompt("New Key Alias: ")
+							kAlias, err = line.Readline()
 							if err != nil {
 								return err
 							}
@@ -130,7 +143,8 @@ var editCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, k)
 					}
 					for {
-						kChoice, _ := line.Prompt(fmt.Sprintf("Select key (0-%d): ", len(keyAliases)))
+						line.SetPrompt(fmt.Sprintf("Select key (0-%d): ", len(keyAliases)))
+						kChoice, _ := line.Readline()
 						if kChoice == "" || kChoice == "0" {
 							break
 						}
@@ -158,7 +172,8 @@ var editCmd = &cobra.Command{
 			fmt.Println("1) Edit Proxy")
 			fmt.Println("2) Edit Jump Host(s)")
 			fmt.Println("0) Finish/Done")
-			choice, err := line.Prompt("Selection (0-2): ")
+			line.SetPrompt("Selection (0-2): ")
+			choice, err := line.Readline()
 			if err != nil {
 				return err
 			}
@@ -169,7 +184,8 @@ var editCmd = &cobra.Command{
 			if choice == "1" {
 				if len(srv.JumpHost) > 0 {
 					fmt.Print("Configuring Proxy will clear existing Jump Host(s). Continue? (y/N): ")
-					resp, err := line.Prompt("")
+					line.SetPrompt("")
+					resp, err := line.Readline()
 					if err != nil {
 						return err
 					}
@@ -181,7 +197,8 @@ var editCmd = &cobra.Command{
 
 				if len(cfg.Proxies) == 0 {
 					fmt.Print("No proxies configured. Add one now? (Y/n): ")
-					resp, _ := line.Prompt("")
+					line.SetPrompt("")
+					resp, _ := line.Readline()
 					if resp == "" || strings.ToLower(resp) == "y" {
 						p, err := PromptForProxy(line, cfg, "")
 						if err != nil {
@@ -208,7 +225,8 @@ var editCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, p)
 					}
 					for {
-						pChoice, _ := line.Prompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+						line.SetPrompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+						pChoice, _ := line.Readline()
 						if pChoice == "" {
 							break // keep current
 						}
@@ -227,7 +245,8 @@ var editCmd = &cobra.Command{
 			} else if choice == "2" {
 				if srv.ProxyAlias != "" {
 					fmt.Print("Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
-					resp, err := line.Prompt("")
+					line.SetPrompt("")
+					resp, err := line.Readline()
 					if err != nil {
 						return err
 					}
@@ -241,7 +260,8 @@ var editCmd = &cobra.Command{
 				fmt.Printf("\nCurrent Jump Host chain: %s\n", strings.Join(srv.JumpHost, " -> "))
 				fmt.Println("1) Modify chain")
 				fmt.Println("0) Back")
-				jhEditChoice, err := line.Prompt("Selection (0-1): ")
+				line.SetPrompt("Selection (0-1): ")
+				jhEditChoice, err := line.Readline()
 				if err != nil {
 					return err
 				}
@@ -275,7 +295,8 @@ var editCmd = &cobra.Command{
 							fmt.Printf("%d) %s\n", i+1, a)
 						}
 
-						jhChoice, err := line.Prompt(fmt.Sprintf("Selection (0-%d): ", len(available)))
+						line.SetPrompt(fmt.Sprintf("Selection (0-%d): ", len(available)))
+						jhChoice, err := line.Readline()
 						if err != nil {
 							return err
 						}

@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
 	knotsftp "knot/pkg/sftp"
@@ -17,17 +18,18 @@ import (
 )
 
 type knotSFTPConn struct {
-	conn     net.Conn
-	buf      []byte
-	cwdCh    chan string
-	dataCh   chan []byte
-	errCh    chan error
-	once     sync.Once
-	closed   chan struct{}
+	conn      net.Conn
+	buf       []byte
+	cwdCh     chan string
+	dataCh    chan []byte
+	errCh     chan error
+	startOnce sync.Once
+	closeOnce sync.Once
+	closed    chan struct{}
 }
 
 func (k *knotSFTPConn) start() {
-	k.once.Do(func() {
+	k.startOnce.Do(func() {
 		k.dataCh = make(chan []byte, 100)
 		k.errCh = make(chan error, 1)
 		k.closed = make(chan struct{})
@@ -91,7 +93,10 @@ func (k *knotSFTPConn) Read(p []byte) (n int, err error) {
 	}
 
 	select {
-	case data := <-k.dataCh:
+	case data, ok := <-k.dataCh:
+		if !ok {
+			return 0, io.EOF
+		}
 		n = copy(p, data)
 		if n < len(data) {
 			k.buf = data[n:]
@@ -99,6 +104,8 @@ func (k *knotSFTPConn) Read(p []byte) (n int, err error) {
 		return n, nil
 	case err := <-k.errCh:
 		return 0, err
+	case <-k.closed:
+		return 0, io.EOF
 	}
 }
 
@@ -111,10 +118,10 @@ func (k *knotSFTPConn) Write(p []byte) (n int, err error) {
 }
 
 func (k *knotSFTPConn) Close() error {
-	k.once.Do(func() {}) // Ensure closed channel exists if Close called early
-	if k.closed != nil {
+	k.start() // Ensure channels are initialized
+	k.closeOnce.Do(func() {
 		close(k.closed)
-	}
+	})
 	return k.conn.Close()
 }
 

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
 
@@ -52,10 +52,11 @@ var proxyListCmd = &cobra.Command{
 	},
 }
 
-func PromptForProxy(line *liner.State, cfg *config.Config, alias string) (*config.ProxyConfig, error) {
+func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (*config.ProxyConfig, error) {
 	if alias == "" {
 		for {
-			aliasStr, err := line.Prompt("Proxy Alias: ")
+			line.SetPrompt("Proxy Alias: ")
+			aliasStr, err := line.Readline()
 			if err != nil {
 				return nil, err
 			}
@@ -69,7 +70,8 @@ func PromptForProxy(line *liner.State, cfg *config.Config, alias string) (*confi
 
 	if _, exists := cfg.Proxies[alias]; exists {
 		fmt.Printf("Proxy alias '%s' already exists. Overwrite? (y/N): ", alias)
-		resp, _ := line.Prompt("")
+		line.SetPrompt("")
+		resp, _ := line.Readline()
 		if strings.ToLower(resp) != "y" {
 			return nil, nil
 		}
@@ -80,7 +82,8 @@ func PromptForProxy(line *liner.State, cfg *config.Config, alias string) (*confi
 	fmt.Println("2) HTTP")
 	var pType string
 	for {
-		choice, err := line.Prompt("Choice (1-2, default 1): ")
+		line.SetPrompt("Choice (1-2, default 1): ")
+		choice, err := line.Readline()
 		if err != nil {
 			return nil, err
 		}
@@ -94,22 +97,25 @@ func PromptForProxy(line *liner.State, cfg *config.Config, alias string) (*confi
 		fmt.Println("Invalid choice.")
 	}
 
-	host, err := line.Prompt("Proxy Host: ")
+	line.SetPrompt("Proxy Host: ")
+	host, err := line.Readline()
 	if err != nil {
 		return nil, err
 	}
 	
-	portStr, err := line.Prompt("Proxy Port: ")
+	line.SetPrompt("Proxy Port: ")
+	portStr, err := line.Readline()
 	if err != nil {
 		return nil, err
 	}
 	port, _ := strconv.Atoi(portStr)
 
-	username, err := line.Prompt("Proxy Username (optional): ")
+	line.SetPrompt("Proxy Username (optional): ")
+	username, err := line.Readline()
 	if err != nil {
 		return nil, err
 	}
-	password, err := line.PasswordPrompt("Proxy Password (optional): ")
+	password, err := line.ReadPassword("Proxy Password (optional): ")
 	if err != nil {
 		return nil, err
 	}
@@ -120,9 +126,9 @@ func PromptForProxy(line *liner.State, cfg *config.Config, alias string) (*confi
 		Host:     host,
 		Port:     port,
 		Username: username,
-		Password: password,
+		Password: string(password),
 	}, nil
-}
+	}
 
 var proxyAddCmd = &cobra.Command{
 	Use:   "add [alias]",
@@ -168,9 +174,11 @@ var proxyAddCmd = &cobra.Command{
 		}
 
 		// Interactive mode
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		p, err := PromptForProxy(line, cfg, alias)
 		if err != nil {
@@ -226,9 +234,13 @@ var proxyRemoveCmd = &cobra.Command{
 				fmt.Printf("- %s\n", s)
 			}
 			fmt.Print("If you delete it, these servers' proxy settings will be cleared. Continue? (y/N): ")
-			line := liner.NewLiner()
+			line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+			if err != nil {
+				return err
+			}
 			defer line.Close()
-			resp, _ := line.Prompt("")
+			line.SetPrompt("")
+			resp, _ := line.Readline()
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
@@ -273,40 +285,46 @@ var proxyEditCmd = &cobra.Command{
 			return fmt.Errorf("proxy '%s' not found", alias)
 		}
 
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		fmt.Printf("Editing proxy '%s' (leave blank to keep current value)\n", alias)
 
 		fmt.Printf("Proxy Type [%s]: ", p.Type)
-		pType, _ := line.Prompt("")
+		line.SetPrompt("")
+		pType, _ := line.Readline()
 		if pType != "" {
 			p.Type = pType
 		}
 
 		fmt.Printf("Proxy Host [%s]: ", p.Host)
-		host, _ := line.Prompt("")
+		line.SetPrompt("")
+		host, _ := line.Readline()
 		if host != "" {
 			p.Host = host
 		}
 
 		fmt.Printf("Proxy Port [%d]: ", p.Port)
-		portStr, _ := line.Prompt("")
+		line.SetPrompt("")
+		portStr, _ := line.Readline()
 		if portStr != "" {
 			p.Port, _ = strconv.Atoi(portStr)
 		}
 
 		fmt.Printf("Proxy Username [%s]: ", p.Username)
-		user, _ := line.Prompt("")
+		line.SetPrompt("")
+		user, _ := line.Readline()
 		if user != "" {
 			p.Username = user
 		}
 
 		fmt.Print("Proxy Password (hidden, leave blank to keep current): ")
-		pass, _ := line.PasswordPrompt("")
-		if pass != "" {
-			p.Password = pass
+		pass, _ := line.ReadPassword("")
+		if len(pass) > 0 {
+			p.Password = string(pass)
 		}
 
 		cfg.Proxies[alias] = p

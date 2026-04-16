@@ -8,28 +8,23 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
 )
 
 // RunREPL starts an interactive SFTP shell.
 func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan string) error {
-	line := liner.NewLiner()
-	defer line.Close()
-	line.SetCtrlCAborts(true)
-
-	// Set up history
 	historyPath := filepath.Join(os.TempDir(), ".knot_sftp_history")
-	if f, err := os.Open(historyPath); err == nil {
-		line.ReadHistory(f)
-		f.Close()
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          "",
+		HistoryFile:     historyPath,
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+	})
+	if err != nil {
+		return err
 	}
-	defer func() {
-		if f, err := os.Create(historyPath); err == nil {
-			line.WriteHistory(f)
-			f.Close()
-		}
-	}()
+	defer rl.Close()
 
 	cwd, err := client.Getwd()
 	if err != nil {
@@ -52,10 +47,10 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 		default:
 		}
 
-		prompt := fmt.Sprintf("sftp:%s> ", cwd)
-		input, err := line.Prompt(prompt)
+		rl.SetPrompt(fmt.Sprintf("sftp:%s> ", cwd))
+		input, err := rl.Readline()
 		if err != nil {
-			if err == liner.ErrPromptAborted || err == io.EOF {
+			if err == readline.ErrInterrupt || err == io.EOF {
 				fmt.Println()
 				return nil
 			}
@@ -67,7 +62,6 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 			continue
 		}
 
-		line.AppendHistory(input)
 		args := strings.Fields(input)
 		cmd := args[0]
 

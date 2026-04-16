@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
 
@@ -89,13 +89,20 @@ var addCmd = &cobra.Command{
 		}
 
 		// Interactive mode
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{
+			Prompt:          "> ",
+			InterruptPrompt: "^C",
+			EOFPrompt:       "exit",
+		})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		if alias == "" {
 			for {
-				aliasStr, err := line.Prompt("Alias: ")
+				line.SetPrompt("Alias: ")
+				aliasStr, err := line.Readline()
 				if err != nil {
 					return err
 				}
@@ -113,13 +120,15 @@ var addCmd = &cobra.Command{
 
 		if _, exists := cfg.Servers[alias]; exists {
 			fmt.Printf("Alias '%s' already exists. Overwrite? (y/N): ", alias)
-			resp, _ := line.Prompt("")
+			line.SetPrompt("")
+			resp, _ := line.Readline()
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
 		}
 
-		host, err := line.Prompt("Host: ")
+		line.SetPrompt("Host: ")
+		host, err := line.Readline()
 		if err != nil {
 			return err
 		}
@@ -127,7 +136,8 @@ var addCmd = &cobra.Command{
 			return fmt.Errorf("host cannot be empty")
 		}
 
-		portStr, err := line.Prompt("Port (default 22): ")
+		line.SetPrompt("Port (default 22): ")
+		portStr, err := line.Readline()
 		if err != nil {
 			return err
 		}
@@ -139,7 +149,8 @@ var addCmd = &cobra.Command{
 			return fmt.Errorf("invalid port number: %v", err)
 		}
 
-		user, err := line.Prompt("User: ")
+		line.SetPrompt("User: ")
+		user, err := line.Readline()
 		if err != nil {
 			return err
 		}
@@ -154,7 +165,8 @@ var addCmd = &cobra.Command{
 		fmt.Println("3) SSH Agent")
 		var authMethod, password, keyAlias string
 		for {
-			choice, err := line.Prompt("Choice (1-3, default 1): ")
+			line.SetPrompt("Choice (1-3, default 1): ")
+			choice, err := line.Readline()
 			if err != nil {
 				return err
 			}
@@ -164,15 +176,17 @@ var addCmd = &cobra.Command{
 			switch choice {
 			case "1":
 				authMethod = config.AuthMethodPassword
-				password, err = line.PasswordPrompt("Password: ")
+				pass, err := line.ReadPassword("Password: ")
 				if err != nil {
 					return err
 				}
+				password = string(pass)
 			case "2":
 				authMethod = config.AuthMethodKey
 				if len(cfg.Keys) == 0 {
 					fmt.Print("No keys configured. Add one now? (Y/n): ")
-					resp, _ := line.Prompt("")
+					line.SetPrompt("")
+					resp, _ := line.Readline()
 					if resp != "" && strings.ToLower(resp) != "y" {
 						fmt.Println("No keys available. Please add a key using 'knot key add' first.")
 						return fmt.Errorf("no keys available")
@@ -186,7 +200,8 @@ var addCmd = &cobra.Command{
 					
 					var kAlias string
 					for {
-						kAlias, err = line.Prompt("New Key Alias: ")
+						line.SetPrompt("New Key Alias: ")
+						kAlias, err = line.Readline()
 						if err != nil {
 							return err
 						}
@@ -217,7 +232,8 @@ var addCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, k)
 					}
 					for {
-						kChoice, _ := line.Prompt(fmt.Sprintf("Select key (1-%d): ", len(keyAliases)))
+						line.SetPrompt(fmt.Sprintf("Select key (1-%d): ", len(keyAliases)))
+						kChoice, _ := line.Readline()
 						idx, err := strconv.Atoi(kChoice)
 						if err == nil && idx > 0 && idx <= len(keyAliases) {
 							keyAlias = keyAliases[idx-1]
@@ -243,7 +259,8 @@ var addCmd = &cobra.Command{
 			fmt.Println("1) Configure Proxy (from managed proxies)")
 			fmt.Println("2) Configure Jump Host(s)")
 			fmt.Println("0) Finish/Done")
-			choice, err := line.Prompt("Selection (0-2): ")
+			line.SetPrompt("Selection (0-2): ")
+			choice, err := line.Readline()
 			if err != nil {
 				return err
 			}
@@ -254,7 +271,8 @@ var addCmd = &cobra.Command{
 			if choice == "1" {
 				if len(jumpHosts) > 0 {
 					fmt.Print("Configuring Proxy will clear existing Jump Host(s). Continue? (y/N): ")
-					resp, err := line.Prompt("")
+					line.SetPrompt("")
+					resp, err := line.Readline()
 					if err != nil {
 						return err
 					}
@@ -266,7 +284,8 @@ var addCmd = &cobra.Command{
 
 				if len(cfg.Proxies) == 0 {
 					fmt.Print("No proxies configured. Add one now? (Y/n): ")
-					resp, _ := line.Prompt("")
+					line.SetPrompt("")
+					resp, _ := line.Readline()
 					if resp == "" || strings.ToLower(resp) == "y" {
 						p, err := PromptForProxy(line, cfg, "")
 						if err != nil {
@@ -293,7 +312,8 @@ var addCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, p)
 					}
 					for {
-						pChoice, _ := line.Prompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+						line.SetPrompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+						pChoice, _ := line.Readline()
 						if pChoice == "0" || pChoice == "" {
 							proxyAlias = ""
 							break
@@ -309,7 +329,8 @@ var addCmd = &cobra.Command{
 			} else if choice == "2" {
 				if proxyAlias != "" {
 					fmt.Print("Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
-					resp, err := line.Prompt("")
+					line.SetPrompt("")
+					resp, err := line.Readline()
 					if err != nil {
 						return err
 					}
@@ -348,7 +369,8 @@ var addCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, a)
 					}
 
-					jhChoice, err := line.Prompt(fmt.Sprintf("Selection (0-%d): ", len(available)))
+					line.SetPrompt(fmt.Sprintf("Selection (0-%d): ", len(available)))
+					jhChoice, err := line.Readline()
 					if err != nil {
 						return err
 					}

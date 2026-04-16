@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/peterh/liner"
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
 
@@ -33,13 +33,16 @@ var exportCmd = &cobra.Command{
 			return err
 		}
 
-		line := liner.NewLiner()
+		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+		if err != nil {
+			return err
+		}
 		defer line.Close()
-		line.SetCtrlCAborts(true)
 
 		// Check if file exists
 		if _, err := os.Stat(path); err == nil {
-			resp, err := line.Prompt(fmt.Sprintf("File %s already exists. Overwrite? (y/N): ", path))
+			line.SetPrompt(fmt.Sprintf("File %s already exists. Overwrite? (y/N): ", path))
+			resp, err := line.Readline()
 			if err != nil {
 				return err
 			}
@@ -49,29 +52,29 @@ var exportCmd = &cobra.Command{
 			}
 		}
 
-		password, err := line.PasswordPrompt("Enter encryption password: ")
+		password, err := line.ReadPassword("Enter encryption password: ")
 		if err != nil {
-			if err == liner.ErrPromptAborted {
+			if err == readline.ErrInterrupt {
 				return fmt.Errorf("export cancelled")
 			}
 			return err
 		}
-		if password == "" {
+		if string(password) == "" {
 			return fmt.Errorf("password cannot be empty")
 		}
 
-		confirm, err := line.PasswordPrompt("Confirm password: ")
+		confirm, err := line.ReadPassword("Confirm password: ")
 		if err != nil {
-			if err == liner.ErrPromptAborted {
+			if err == readline.ErrInterrupt {
 				return fmt.Errorf("export cancelled")
 			}
 			return err
 		}
-		if password != confirm {
+		if string(password) != string(confirm) {
 			return fmt.Errorf("passwords do not match")
 		}
 
-		data, err := config.ExportConfig(cfg, password)
+		data, err := config.ExportConfig(cfg, string(password))
 		if err != nil {
 			return err
 		}
@@ -100,19 +103,21 @@ var importCmd = &cobra.Command{
 			return fmt.Errorf("failed to read file: %w", err)
 		}
 
-		line := liner.NewLiner()
-		defer line.Close()
-		line.SetCtrlCAborts(true)
-
-		password, err := line.PasswordPrompt("Enter decryption password: ")
+		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
 		if err != nil {
-			if err == liner.ErrPromptAborted {
+			return err
+		}
+		defer line.Close()
+
+		password, err := line.ReadPassword("Enter decryption password: ")
+		if err != nil {
+			if err == readline.ErrInterrupt {
 				return fmt.Errorf("import cancelled")
 			}
 			return err
 		}
 
-		importedCfg, err := config.DecryptConfig(data, password)
+		importedCfg, err := config.DecryptConfig(data, string(password))
 		if err != nil {
 			return err
 		}
@@ -128,7 +133,8 @@ var importCmd = &cobra.Command{
 		
 		var mode int
 		for {
-			choice, err := line.Prompt("Selection (1-3): ")
+			line.SetPrompt("Selection (1-3): ")
+			choice, err := line.Readline()
 			if err != nil {
 				return err
 			}
