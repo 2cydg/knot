@@ -3,9 +3,9 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"knot/internal/paths"
 	"knot/pkg/crypto"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	configFileName = "config.toml"
 	encPrefix      = "ENC:"
 
 	AuthMethodPassword = "password"
@@ -82,28 +81,99 @@ type Config struct {
 	Keys     map[string]KeyConfig    `toml:"keys"`
 }
 
-func GetConfigDir() (string, error) {
-	usr, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(usr.HomeDir, ".config", "knot"), nil
-}
-
-func GetConfigPath() (string, error) {
-	dir, err := GetConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, configFileName), nil
-}
-
 func Load(cryptoProvider crypto.Provider) (*Config, error) {
-	configPath, err := GetConfigPath()
+	configPath, err := paths.GetConfigPath()
 	if err != nil {
 		return nil, err
 	}
 	return LoadFromPath(configPath, cryptoProvider)
+}
+
+type SecretManager interface {
+	ProcessSecrets(crypto.Provider, bool) error
+}
+
+func (s *ServerConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
+	if s.Password != "" {
+		if encrypt {
+			if !strings.HasPrefix(s.Password, encPrefix) {
+				enc, err := encryptField([]byte(s.Password), p)
+				if err != nil {
+					return err
+				}
+				s.Password = encPrefix + enc
+			}
+		} else {
+			if strings.HasPrefix(s.Password, encPrefix) {
+				dec, err := decryptField(s.Password[len(encPrefix):], p)
+				if err != nil {
+					return err
+				}
+				s.Password = string(dec)
+			}
+		}
+	}
+	return nil
+}
+
+func (p *ProxyConfig) ProcessSecrets(cp crypto.Provider, encrypt bool) error {
+	if p.Password != "" {
+		if encrypt {
+			if !strings.HasPrefix(p.Password, encPrefix) {
+				enc, err := encryptField([]byte(p.Password), cp)
+				if err != nil {
+					return err
+				}
+				p.Password = encPrefix + enc
+			}
+		} else {
+			if strings.HasPrefix(p.Password, encPrefix) {
+				dec, err := decryptField(p.Password[len(encPrefix):], cp)
+				if err != nil {
+					return err
+				}
+				p.Password = string(dec)
+			}
+		}
+	}
+	return nil
+}
+
+func (k *KeyConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
+	if k.PrivateKey != "" {
+		if encrypt {
+			if !strings.HasPrefix(k.PrivateKey, encPrefix) {
+				enc, err := encryptField([]byte(k.PrivateKey), p)
+				if err != nil {
+					return err
+				}
+				k.PrivateKey = encPrefix + enc
+			}
+		} else {
+			if strings.HasPrefix(k.PrivateKey, encPrefix) {
+				dec, err := decryptField(k.PrivateKey[len(encPrefix):], p)
+				if err != nil {
+					return err
+				}
+				k.PrivateKey = string(dec)
+			}
+		}
+	}
+	return nil
+}
+
+func processSecretsMap[T any, PT interface {
+	*T
+	SecretManager
+}](m map[string]T, p crypto.Provider, encrypt bool) error {
+	for k, v := range m {
+		pt := PT(&v)
+		if err := pt.ProcessSecrets(p, encrypt); err != nil {
+			return err
+		}
+		m[k] = *pt
+	}
+	return nil
 }
 
 func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, error) {
@@ -127,7 +197,7 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
-	// Set defaults for missing settings
+	// Set defaults
 	if cfg.Settings.IdleTimeout == "" {
 		cfg.Settings.IdleTimeout = "30m"
 	}
@@ -148,47 +218,22 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		cfg.Keys = make(map[string]KeyConfig)
 	}
 
-	// Decrypt sensitive fields in Servers
-	for alias, srv := range cfg.Servers {
-		if strings.HasPrefix(srv.Password, encPrefix) {
-			decrypted, err := decryptField(srv.Password[len(encPrefix):], cryptoProvider)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt password for server %s: %w", alias, err)
-			}
-			srv.Password = string(decrypted)
-			cfg.Servers[alias] = srv
-		}
+	// Decrypt all sensitive fields
+	if err := processSecretsMap[ServerConfig, *ServerConfig](cfg.Servers, cryptoProvider, false); err != nil {
+		return nil, err
 	}
-
-	// Decrypt sensitive fields in Proxies
-	for alias, proxy := range cfg.Proxies {
-		if strings.HasPrefix(proxy.Password, encPrefix) {
-			decrypted, err := decryptField(proxy.Password[len(encPrefix):], cryptoProvider)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt password for proxy %s: %w", alias, err)
-			}
-			proxy.Password = string(decrypted)
-			cfg.Proxies[alias] = proxy
-		}
+	if err := processSecretsMap[ProxyConfig, *ProxyConfig](cfg.Proxies, cryptoProvider, false); err != nil {
+		return nil, err
 	}
-
-	// Decrypt sensitive fields in Keys
-	for alias, key := range cfg.Keys {
-		if strings.HasPrefix(key.PrivateKey, encPrefix) {
-			decrypted, err := decryptField(key.PrivateKey[len(encPrefix):], cryptoProvider)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt private key for key %s: %w", alias, err)
-			}
-			key.PrivateKey = string(decrypted)
-			cfg.Keys[alias] = key
-		}
+	if err := processSecretsMap[KeyConfig, *KeyConfig](cfg.Keys, cryptoProvider, false); err != nil {
+		return nil, err
 	}
 
 	return &cfg, nil
 }
 
 func (c *Config) Save(cryptoProvider crypto.Provider) error {
-	configPath, err := GetConfigPath()
+	configPath, err := paths.GetConfigPath()
 	if err != nil {
 		return err
 	}
@@ -201,13 +246,12 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		return err
 	}
 
-	// Ensure Settings defaults are initialized before saving if they were nil
 	if c.Settings.ForwardAgent == nil {
 		defaultTrue := true
 		c.Settings.ForwardAgent = &defaultTrue
 	}
 
-	// Create a copy to encrypt fields before saving
+	// Deep copy and encrypt
 	cfgToSave := Config{
 		Settings: c.Settings,
 		Servers:  make(map[string]ServerConfig),
@@ -215,40 +259,24 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		Keys:     make(map[string]KeyConfig),
 	}
 
-	for alias, srv := range c.Servers {
-		srvCopy := srv
-		if srvCopy.Password != "" && !strings.HasPrefix(srvCopy.Password, encPrefix) {
-			encrypted, err := encryptField([]byte(srvCopy.Password), cryptoProvider)
-			if err != nil {
-				return fmt.Errorf("failed to encrypt password for server %s: %w", alias, err)
-			}
-			srvCopy.Password = encPrefix + encrypted
-		}
-		cfgToSave.Servers[alias] = srvCopy
+	for k, v := range c.Servers {
+		cfgToSave.Servers[k] = v
+	}
+	for k, v := range c.Proxies {
+		cfgToSave.Proxies[k] = v
+	}
+	for k, v := range c.Keys {
+		cfgToSave.Keys[k] = v
 	}
 
-	for alias, proxy := range c.Proxies {
-		proxyCopy := proxy
-		if proxyCopy.Password != "" && !strings.HasPrefix(proxyCopy.Password, encPrefix) {
-			encrypted, err := encryptField([]byte(proxyCopy.Password), cryptoProvider)
-			if err != nil {
-				return fmt.Errorf("failed to encrypt password for proxy %s: %w", alias, err)
-			}
-			proxyCopy.Password = encPrefix + encrypted
-		}
-		cfgToSave.Proxies[alias] = proxyCopy
+	if err := processSecretsMap[ServerConfig, *ServerConfig](cfgToSave.Servers, cryptoProvider, true); err != nil {
+		return err
 	}
-
-	for alias, key := range c.Keys {
-		keyCopy := key
-		if keyCopy.PrivateKey != "" && !strings.HasPrefix(keyCopy.PrivateKey, encPrefix) {
-			encrypted, err := encryptField([]byte(keyCopy.PrivateKey), cryptoProvider)
-			if err != nil {
-				return fmt.Errorf("failed to encrypt private key for key %s: %w", alias, err)
-			}
-			keyCopy.PrivateKey = encPrefix + encrypted
-		}
-		cfgToSave.Keys[alias] = keyCopy
+	if err := processSecretsMap[ProxyConfig, *ProxyConfig](cfgToSave.Proxies, cryptoProvider, true); err != nil {
+		return err
+	}
+	if err := processSecretsMap[KeyConfig, *KeyConfig](cfgToSave.Keys, cryptoProvider, true); err != nil {
+		return err
 	}
 
 	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
@@ -257,11 +285,7 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 	}
 	defer f.Close()
 
-	if err := toml.NewEncoder(f).Encode(cfgToSave); err != nil {
-		return fmt.Errorf("failed to encode config: %w", err)
-	}
-
-	return nil
+	return toml.NewEncoder(f).Encode(cfgToSave)
 }
 
 func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {

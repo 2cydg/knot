@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"io"
 	"knot/internal/logger"
+	"knot/internal/paths"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -160,7 +160,7 @@ func getMachineID() (string, error) {
 }
 
 func getSalt() ([]byte, error) {
-	configDir, err := getConfigDir()
+	configDir, err := paths.GetConfigDir()
 	if err != nil {
 		return nil, err
 	}
@@ -182,13 +182,4 @@ func getSalt() ([]byte, error) {
 	}
 
 	return os.ReadFile(saltPath)
-}
-
-func getConfigDir() (string, error) {
-	usr, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-	// Use ~/.config/knot
-	return filepath.Join(usr.HomeDir, ".config", "knot"), nil
 }

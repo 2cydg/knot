@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"knot/pkg/config"
 	"knot/internal/protocol"
+	"knot/internal/paths"
 	"net"
 	"os"
 	"path/filepath"
@@ -344,7 +345,7 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	// Host Key Verification
 	khPath := srv.KnownHostsPath
 	if khPath == "" {
-		dir, err := config.GetConfigDir()
+		dir, err := paths.GetConfigDir()
 		if err != nil {
 			return nil, err
 		}
@@ -425,32 +426,7 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	if jumpClient != nil {
 		conn, err = jumpClient.Dial("tcp", addr)
 	} else if srv.ProxyAlias != "" && cfg != nil {
-		proxyCfg, ok := cfg.Proxies[srv.ProxyAlias]
-		if !ok {
-			return nil, fmt.Errorf("proxy %s not found in config", srv.ProxyAlias)
-		}
-
-		proxyAddr := net.JoinHostPort(proxyCfg.Host, strconv.Itoa(proxyCfg.Port))
-		dialer := &net.Dialer{Timeout: 15 * time.Second}
-		switch proxyCfg.Type {
-		case config.ProxyTypeSOCKS5:
-			var auth *proxy.Auth
-			if proxyCfg.Username != "" {
-				auth = &proxy.Auth{
-					User:     proxyCfg.Username,
-					Password: proxyCfg.Password,
-				}
-			}
-			socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, dialer)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create SOCKS5 dialer: %w", err)
-			}
-			conn, err = socksDialer.Dial("tcp", addr)
-		case config.ProxyTypeHTTP:
-			conn, err = dialHTTPProxy(proxyAddr, addr, proxyCfg.Username, proxyCfg.Password, dialer)
-		default:
-			return nil, fmt.Errorf("unsupported proxy type: %s", proxyCfg.Type)
-		}
+		conn, err = dialViaProxy(addr, srv.ProxyAlias, cfg)
 	} else {
 		dialer := &net.Dialer{Timeout: 15 * time.Second}
 		conn, err = dialer.Dial("tcp", addr)
@@ -478,6 +454,36 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	client := ssh.NewClient(ncc, chans, reqs)
 	success = true
 	return client, nil
+}
+
+func dialViaProxy(targetAddr, proxyAlias string, cfg *config.Config) (net.Conn, error) {
+	proxyCfg, ok := cfg.Proxies[proxyAlias]
+	if !ok {
+		return nil, fmt.Errorf("proxy %s not found in config", proxyAlias)
+	}
+
+	proxyAddr := net.JoinHostPort(proxyCfg.Host, strconv.Itoa(proxyCfg.Port))
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+
+	switch proxyCfg.Type {
+	case config.ProxyTypeSOCKS5:
+		var auth *proxy.Auth
+		if proxyCfg.Username != "" {
+			auth = &proxy.Auth{
+				User:     proxyCfg.Username,
+				Password: proxyCfg.Password,
+			}
+		}
+		socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, dialer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SOCKS5 dialer: %w", err)
+		}
+		return socksDialer.Dial("tcp", targetAddr)
+	case config.ProxyTypeHTTP:
+		return dialHTTPProxy(proxyAddr, targetAddr, proxyCfg.Username, proxyCfg.Password, dialer)
+	default:
+		return nil, fmt.Errorf("unsupported proxy type: %s", proxyCfg.Type)
+	}
 }
 
 func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer) (net.Conn, error) {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"knot/pkg/crypto"
+	"knot/internal/paths"
 	"os"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ func TestConfigLoadSave(t *testing.T) {
 	}
 
 	// Backup existing config if any
-	configPath, _ := GetConfigPath()
+	configPath, _ := paths.GetConfigPath()
 	var backup []byte
 	if _, err := os.Stat(configPath); err == nil {
 		backup, _ = os.ReadFile(configPath)
