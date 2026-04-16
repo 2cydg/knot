@@ -45,7 +45,6 @@ type ForwardConfig struct {
 	Type       string `toml:"type"`
 	LocalPort  int    `toml:"local_port"`
 	RemoteAddr string `toml:"remote_addr,omitempty"`
-	Enabled    bool   `toml:"enabled"`
 }
 
 type ServerConfig struct {

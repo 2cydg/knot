@@ -19,6 +19,7 @@ type ForwardRule struct {
 	Config    config.ForwardConfig
 	Alias     string
 	IsTemp    bool
+	Enabled   bool
 	Status    string // Active, Inactive, Error
 	Error     string
 	listener  net.Listener
@@ -30,7 +31,7 @@ type ForwardRule struct {
 func (r *ForwardRule) GetStatus() (string, string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.Status, r.Error, r.Config.Enabled
+	return r.Status, r.Error, r.Enabled
 }
 
 // ForwardManager manages all port forwarding rules.
@@ -52,17 +53,18 @@ func (fm *ForwardManager) GetRuleKey(alias string, fType string, port int) strin
 }
 
 // AddRule adds a new rule. If it's enabled and a connection exists, it starts it.
-func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, isTemp bool, sshClient *ssh.Client) error {
+func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enabled bool, isTemp bool, sshClient *ssh.Client) error {
 	key := fm.GetRuleKey(alias, cfg.Type, cfg.LocalPort)
 	
 	fm.mu.Lock()
 	rule, exists := fm.rules[key]
 	if !exists {
 		rule = &ForwardRule{
-			Config: cfg,
-			Alias:  alias,
-			IsTemp: isTemp,
-			Status: "Inactive",
+			Config:  cfg,
+			Alias:   alias,
+			IsTemp:  isTemp,
+			Enabled: enabled,
+			Status:  "Inactive",
 		}
 		fm.rules[key] = rule
 	}
@@ -75,10 +77,11 @@ func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, isTemp
 			return fmt.Errorf("forwarding rule %s is already active", key)
 		}
 		rule.Config = cfg
+		rule.Enabled = enabled
 		rule.mu.Unlock()
 	}
 
-	if cfg.Enabled && sshClient != nil {
+	if enabled && sshClient != nil {
 		return fm.StartRule(rule, sshClient)
 	}
 	return nil
@@ -118,7 +121,7 @@ func (fm *ForwardManager) StartRule(rule *ForwardRule, sshClient *ssh.Client) er
 	}
 
 	rule.ctx, rule.cancel = context.WithCancel(context.Background())
-	rule.Config.Enabled = true // Mark as enabled when starting
+	rule.Enabled = true // Mark as enabled when starting
 
 	var err error
 	switch rule.Config.Type {
@@ -161,7 +164,7 @@ func (fm *ForwardManager) StopRule(rule *ForwardRule) {
 		rule.cancel = nil
 	}
 	rule.Status = "Inactive"
-	// Note: We don't set Config.Enabled = false here because StopRule 
+	// Note: We don't set Enabled = false here because StopRule 
 	// might be called during disconnect, where we want to keep it enabled for reconnect.
 	// Use SetEnabled(false) for manual disable.
 }
@@ -169,7 +172,7 @@ func (fm *ForwardManager) StopRule(rule *ForwardRule) {
 // SetEnabled updates the enabled state of a rule.
 func (fm *ForwardManager) SetEnabled(rule *ForwardRule, enabled bool, sshClient *ssh.Client) error {
 	rule.mu.Lock()
-	rule.Config.Enabled = enabled
+	rule.Enabled = enabled
 	rule.mu.Unlock()
 
 	if enabled {

@@ -39,9 +39,8 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 					Type:       req.Config.Type,
 					LocalPort:  req.Config.LocalPort,
 					RemoteAddr: req.Config.RemoteAddr,
-					Enabled:    req.Config.Enabled,
 				}
-				err = d.fm.AddRule(req.Alias, fConfig, req.IsTemp, sshClient)
+				err = d.fm.AddRule(req.Alias, fConfig, req.Config.Enabled, req.IsTemp, sshClient)
 				if err == nil && !req.IsTemp {
 					d.syncConfig(req.Alias)
 				}
@@ -62,9 +61,6 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 			if ok {
 				sshClient, _ := d.pool.GetClientForAlias(req.Alias)
 				err = d.fm.SetEnabled(rule, true, sshClient)
-				if err == nil && !rule.IsTemp {
-					d.syncConfig(req.Alias)
-				}
 			} else {
 				err = fmt.Errorf("rule not found")
 			}
@@ -74,9 +70,6 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 			if ok {
 				sshClient, _ := d.pool.GetClientForAlias(req.Alias)
 				err = d.fm.SetEnabled(rule, false, sshClient)
-				if err == nil && !rule.IsTemp {
-					d.syncConfig(req.Alias)
-				}
 			} else {
 				err = fmt.Errorf("rule not found")
 			}
@@ -110,7 +103,7 @@ func (d *Daemon) handleForwardListRequest(conn net.Conn, alias string) {
 				Type:       r.Config.Type,
 				LocalPort:  r.Config.LocalPort,
 				RemoteAddr: r.Config.RemoteAddr,
-				Enabled:    r.Config.Enabled,
+				Enabled:    r.Enabled,
 				IsTemp:     r.IsTemp,
 				Status:     r.Status,
 				Error:      r.Error,

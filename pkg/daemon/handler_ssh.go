@@ -55,7 +55,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, err := d.pool.GetClient(srv, cfg, confirmCallback)
+	client, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return
@@ -132,6 +132,34 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	// Send success response with session ID
 	if err := protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("ok:"+s.ID)); err != nil {
 		return
+	}
+
+	// 4.5 Send port forward notifications (only on new connection)
+	if isNew {
+		for _, rule := range d.fm.ListRules() {
+			if rule.Alias == req.Alias && rule.Enabled {
+				status, errStr, _ := rule.GetStatus()
+				var msgStr string
+				switch rule.Config.Type {
+				case "L":
+					msgStr = fmt.Sprintf("[Forward] L: localhost:%d -> %s", rule.Config.LocalPort, rule.Config.RemoteAddr)
+				case "R":
+					msgStr = fmt.Sprintf("[Forward] R: %s:%d -> %s", req.Alias, rule.Config.LocalPort, rule.Config.RemoteAddr)
+				case "D":
+					msgStr = fmt.Sprintf("[Forward] D: localhost:%d -> SOCKS5", rule.Config.LocalPort)
+				}
+
+				if status == "Active" {
+					msgStr += " [Active]"
+				} else if status == "Error" {
+					msgStr += fmt.Sprintf(" [Error: %s]", errStr)
+				} else {
+					msgStr += " [Inactive]"
+				}
+
+				protocol.WriteMessage(conn, protocol.TypeForwardNotify, 0, []byte(msgStr))
+			}
+		}
 	}
 
 	// 5. Proxy I/O

@@ -159,6 +159,10 @@ var sshCmd = &cobra.Command{
 					outMu.Unlock()
 					errCh <- nil // Signal normal exit, allowing defers to run
 					return
+				case protocol.TypeForwardNotify:
+					outMu.Lock()
+					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
+					outMu.Unlock()
 				case protocol.TypeData:
 					func() {
 						outMu.Lock()

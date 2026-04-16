@@ -72,7 +72,8 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 	if cfg, err := config.Load(d.crypto); err == nil {
 		for alias, srv := range cfg.Servers {
 			for _, f := range srv.Forwards {
-				d.fm.AddRule(alias, f, false, nil)
+				// All permanent rules are enabled by default on start
+				d.fm.AddRule(alias, f, true, false, nil)
 			}
 		}
 	}
@@ -82,7 +83,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		// Start any existing rules that are enabled for this alias
 		for _, rule := range d.fm.ListRules() {
 			rule.mu.RLock()
-			shouldStart := rule.Alias == alias && rule.Status != "Active" && rule.Config.Enabled
+			shouldStart := rule.Alias == alias && rule.Status != "Active" && rule.Enabled
 			rule.mu.RUnlock()
 			if shouldStart {
 				d.fm.StartRule(rule, client)

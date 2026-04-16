@@ -63,7 +63,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, err := d.pool.GetClient(srv, cfg, confirmCallback)
+	client, _, err := d.pool.GetClient(srv, cfg, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

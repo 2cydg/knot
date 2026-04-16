@@ -60,7 +60,7 @@ func (p *Pool) SetIdleTimeout(d time.Duration) {
 
 // GetClient returns a cached ssh.Client for the given server config, or dials a new one.
 // If jump host is specified, it will recursively dial jump hosts first.
-func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, error) {
+func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, bool, error) {
 	// Update pool-wide idle timeout from config if available
 	if cfg != nil && cfg.Settings.IdleTimeout != "" {
 		if d, err := time.ParseDuration(cfg.Settings.IdleTimeout); err == nil {
@@ -77,7 +77,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 			entry.lastAccess = time.Now()
 			client := entry.client
 			p.mu.Unlock()
-			return client, nil
+			return client, false, nil
 		}
 		// Connection is dead, close and remove it.
 		entry.client.Close()
@@ -100,14 +100,14 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		jhSrv, ok := cfg.Servers[jhAlias]
 		if !ok {
 			finalErr = fmt.Errorf("jump host %s not found in config", jhAlias)
-			return nil, finalErr
+			return nil, false, finalErr
 		}
 
 		var client *ssh.Client
 		var err error
 		if i == 0 && cfg != nil {
 			// First hop: leverage pool for multiplexing and recursive jump hosts
-			client, err = p.GetClient(jhSrv, cfg, confirmCallback)
+			client, _, err = p.GetClient(jhSrv, cfg, confirmCallback)
 		} else {
 			// Subsequent hops: dial through the current chain
 			client, err = dial(jhSrv, cfg, jumpClient, confirmCallback)
@@ -118,7 +118,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 
 		if err != nil {
 			finalErr = fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
-			return nil, finalErr
+			return nil, false, finalErr
 		}
 		jumpClient = client
 	}
@@ -127,7 +127,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	client, err := dial(srv, cfg, jumpClient, confirmCallback)
 	if err != nil {
 		finalErr = err
-		return nil, finalErr
+		return nil, false, finalErr
 	}
 
 	// Cache the new connection
@@ -147,7 +147,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		go p.ConnectCallback(srv.Alias, client)
 	}
 
-	return client, nil
+	return client, true, nil
 }
 
 func (p *Pool) keepAliveLoop(alias string, client *ssh.Client, cfg *config.Config) {

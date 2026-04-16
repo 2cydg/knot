@@ -7,6 +7,7 @@ import (
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -100,20 +101,36 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 
 	if alias == "" {
 		fmt.Println("Available servers:")
+		aliases := make([]string, 0, len(cfg.Servers))
 		for a := range cfg.Servers {
-			fmt.Println("- " + a)
+			aliases = append(aliases, a)
+		}
+		sort.Strings(aliases)
+		for i, a := range aliases {
+			fmt.Printf("%d) %s\n", i+1, a)
 		}
 		for {
-			aliasStr, err := line.Prompt("Alias: ")
+			aliasStr, err := line.Prompt("Alias (name or number): ")
 			if err != nil {
 				return err
 			}
 			aliasStr = strings.TrimSpace(aliasStr)
+			if aliasStr == "" {
+				continue
+			}
+
+			// Try as number
+			if idx, err := strconv.Atoi(aliasStr); err == nil && idx > 0 && idx <= len(aliases) {
+				alias = aliases[idx-1]
+				break
+			}
+
+			// Try as alias
 			if _, ok := cfg.Servers[aliasStr]; ok {
 				alias = aliasStr
 				break
 			}
-			fmt.Println("Invalid alias.")
+			fmt.Println("Invalid selection.")
 		}
 	}
 
@@ -171,6 +188,17 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 		}
 	default:
 		return fmt.Errorf("invalid choice")
+	}
+
+	permStr, err := line.Prompt("Save as permanent rule? (Y/n): ")
+	if err != nil {
+		return err
+	}
+	permStr = strings.ToLower(strings.TrimSpace(permStr))
+	if permStr == "n" || permStr == "no" {
+		isTemp = true
+	} else {
+		isTemp = false
 	}
 
 	return sendForwardAdd(alias, fType, localPort, remoteAddr, isTemp)

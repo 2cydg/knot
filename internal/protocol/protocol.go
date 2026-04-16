@@ -38,6 +38,7 @@ const (
 	TypeForwardReq uint8 = 0x0C
 	TypeForwardListReq uint8 = 0x0D
 	TypeForwardListResp uint8 = 0x0E
+	TypeForwardNotify   uint8 = 0x0F
 )
 
 // SubTypes for TypeData (using Reserved field)
