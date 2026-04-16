@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -166,4 +167,46 @@ func (c *Client) Signal(signal string) error {
 	}
 
 	return protocol.WriteMessage(conn, protocol.TypeSignal, subType, []byte(signal))
+}
+
+// Clear sends a clear request to the daemon to disconnect all SSH connections.
+func (c *Client) Clear() (int, error) {
+	conn, err := c.ConnectWithAutoStart()
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	// Set reasonable deadlines
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	if err := protocol.WriteMessage(conn, protocol.TypeClearReq, 0, nil); err != nil {
+		return 0, err
+	}
+
+	msg, err := protocol.ReadMessage(conn)
+	if err != nil {
+		return 0, err
+	}
+
+	if msg.Header.Type != protocol.TypeClearResp {
+		if strings.HasPrefix(string(msg.Payload), "error:") {
+			return 0, fmt.Errorf("%s", string(msg.Payload))
+		}
+		return 0, fmt.Errorf("unexpected response type: %d", msg.Header.Type)
+	}
+
+	// Reserved field contains count if it's small, otherwise parse from payload
+	count := int(msg.Header.Reserved)
+	payload := string(msg.Payload)
+	if strings.HasPrefix(payload, "ok:") {
+		parts := strings.Fields(payload)
+		if len(parts) >= 2 {
+			if n, err := strconv.Atoi(parts[1]); err == nil {
+				count = n
+			}
+		}
+	}
+
+	return count, nil
 }

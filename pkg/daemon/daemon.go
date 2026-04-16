@@ -321,6 +321,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		case protocol.TypeForwardListReq:
 			alias := string(msg.Payload)
 			d.handleForwardListRequest(conn, alias)
+		case protocol.TypeClearReq:
+			d.handleClearRequest(conn)
 		case protocol.TypeSignal:
 			if msg.Header.Reserved == protocol.SignalStop || string(msg.Payload) == "stop" {
 				go d.Stop()

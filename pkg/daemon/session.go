@@ -159,3 +159,20 @@ func (sm *SessionManager) Count() int {
 	defer sm.mu.RUnlock()
 	return len(sm.sessions)
 }
+
+func (sm *SessionManager) Clear() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	// Close all connections to prevent resource leaks
+	for _, s := range sm.sessions {
+		if s.primaryConn != nil {
+			s.primaryConn.Close()
+		}
+		for _, f := range s.followers {
+			f.Close()
+		}
+	}
+	// Clear all sessions and nextID
+	sm.sessions = make(map[string]*Session)
+	sm.nextID = 1
+}

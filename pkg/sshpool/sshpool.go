@@ -273,15 +273,17 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	return stats
 }
 
-// CloseAll closes all active SSH clients in the pool.
-func (p *Pool) CloseAll() {
+// CloseAll closes all active SSH clients in the pool and returns the count.
+func (p *Pool) CloseAll() int {
 	p.cancel()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	count := len(p.entries)
 	for _, entry := range p.entries {
 		entry.client.Close()
 	}
 	p.entries = make(map[string]*clientEntry)
+	return count
 }
 
 func (p *Pool) autoCleanup() {

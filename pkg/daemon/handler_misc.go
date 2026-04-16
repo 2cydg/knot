@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"knot/internal/protocol"
 	"net"
 	"os"
@@ -38,4 +39,13 @@ func (d *Daemon) handleStatusRequest(conn net.Conn) {
 		return
 	}
 	protocol.WriteMessage(conn, protocol.TypeStatusResp, 0, data)
+}
+
+func (d *Daemon) handleClearRequest(conn net.Conn) {
+	// 1. Clear sessions first (consistency)
+	d.sm.Clear()
+	// 2. Close all physical connections
+	count := d.pool.CloseAll()
+	// 3. Respond with count in Reserved field and TypeClearResp
+	protocol.WriteMessage(conn, protocol.TypeClearResp, uint8(count), []byte(fmt.Sprintf("ok: %d connections cleared", count)))
 }
