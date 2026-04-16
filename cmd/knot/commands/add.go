@@ -38,6 +38,7 @@ var addCmd = &cobra.Command{
 		keyAliasFlag, _ := cmd.Flags().GetString("key")
 		khFlag, _ := cmd.Flags().GetString("known-hosts")
 		proxyAliasFlag, _ := cmd.Flags().GetString("proxy")
+		tagsFlag, _ := cmd.Flags().GetString("tags")
 
 		authFlag, _ := cmd.Flags().GetString("auth-method")
 		jhFlag, _ := cmd.Flags().GetString("jump-host")
@@ -62,6 +63,19 @@ var addCmd = &cobra.Command{
 				}
 			}
 
+			var tags []string
+			if tagsFlag != "" {
+				rawTags := strings.Split(tagsFlag, ",")
+				tagMap := make(map[string]bool)
+				for _, t := range rawTags {
+					t = strings.TrimSpace(t)
+					if t != "" && !tagMap[t] {
+						tags = append(tags, t)
+						tagMap[t] = true
+					}
+				}
+			}
+
 			if authFlag == "" {
 				if keyAliasFlag != "" {
 					authFlag = config.AuthMethodKey
@@ -80,6 +94,7 @@ var addCmd = &cobra.Command{
 				KnownHostsPath: khFlag,
 				ProxyAlias:     proxyAliasFlag,
 				JumpHost:       jumpHosts,
+				Tags:           tags,
 			}
 			if err := cfg.Save(provider); err != nil {
 				return err
@@ -251,6 +266,30 @@ var addCmd = &cobra.Command{
 			break
 		}
 
+		// Tags input (Optional)
+		existingTags := cfg.GetAllTags()
+		if len(existingTags) > 0 {
+		        fmt.Printf("\nExisting Tags: [%s]\n", strings.Join(existingTags, ", "))
+		}
+		tagsStr, _ := line.Readline()
+
+		var finalTags []string
+		if tagsStr != "" {
+			rawTags := strings.Split(tagsStr, ",")
+			tagMap := make(map[string]bool)
+			for _, t := range rawTags {
+				t = strings.TrimSpace(t)
+				if t != "" && !tagMap[t] {
+					if len(t) > 50 {
+						fmt.Printf("Warning: Tag '%s' is too long (max 50 chars), skipping.\n", t)
+						continue
+					}
+					finalTags = append(finalTags, t)
+					tagMap[t] = true
+				}
+			}
+		}
+
 		var proxyAlias string
 		var jumpHosts []string
 
@@ -405,6 +444,7 @@ var addCmd = &cobra.Command{
 			KeyAlias:       keyAlias,
 			ProxyAlias:     proxyAlias,
 			JumpHost:       jumpHosts,
+			Tags:           finalTags,
 		}
 
 		if err := cfg.Save(provider); err != nil {
@@ -426,6 +466,7 @@ func init() {
 	addCmd.Flags().String("known-hosts", "", "Known hosts file path")
 	addCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
 	addCmd.Flags().String("proxy", "", "Proxy alias")
+	addCmd.Flags().StringP("tags", "t", "", "Server tags, comma-separated")
 	addCmd.GroupID = basicGroup.ID
 	rootCmd.AddCommand(addCmd)
 }

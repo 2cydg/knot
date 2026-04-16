@@ -166,6 +166,34 @@ var editCmd = &cobra.Command{
 			}
 		}
 
+		// Tags editing (Optional)
+		existingTags := cfg.GetAllTags()
+		if len(existingTags) > 0 {
+		        fmt.Printf("\nExisting Tags: [%s]\n", strings.Join(existingTags, ", "))
+		}
+		line.SetPrompt("Tags (comma separated, optional): ")
+		if len(srv.Tags) > 0 {
+		        line.WriteStdin([]byte(strings.Join(srv.Tags, ",")))
+		}
+		tagsStr, _ := line.Readline()
+
+		var newTags []string
+		if tagsStr != "" {
+			rawTags := strings.Split(tagsStr, ",")
+			tagMap := make(map[string]bool)
+			for _, t := range rawTags {
+				t = strings.TrimSpace(t)
+				if t != "" && !tagMap[t] {
+					if len(t) > 50 {
+						fmt.Printf("Warning: Tag '%s' is too long (max 50 chars), skipping.\n", t)
+						continue
+					}
+					newTags = append(newTags, t)
+					tagMap[t] = true
+				}
+			}
+		}
+		srv.Tags = newTags
 		// Advanced options
 		for {
 			fmt.Println("\nAdvanced Options:")

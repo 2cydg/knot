@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"knot/internal/protocol"
+	"knot/pkg/config"
+	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	knotsftp "knot/pkg/sftp"
 	"knot/internal/logger"
@@ -245,6 +247,19 @@ var sftpCmd = &cobra.Command{
 				return fmt.Errorf("daemon error: %s", resp[7:])
 			}
 			return fmt.Errorf("daemon error: %s", resp)
+		}
+
+		// Update recent history
+		provider, err := crypto.NewProvider()
+		if err == nil {
+			cfg, err := config.Load(provider)
+			if err == nil {
+				state, err := config.LoadState()
+				if err == nil {
+					state.UpdateRecent(alias, cfg.Settings.RecentLimit)
+					state.Save()
+				}
+			}
 		}
 
 		// Create SFTP client using the proxied connection

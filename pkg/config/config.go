@@ -7,6 +7,7 @@ import (
 	"knot/pkg/crypto"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -58,6 +59,7 @@ type ServerConfig struct {
 	ProxyAlias     string          `toml:"proxy_alias,omitempty"`
 	JumpHost       []string        `toml:"jump_host,omitempty"`
 	Forwards       []ForwardConfig `toml:"forwards,omitempty"`
+	Tags           []string        `toml:"tags,omitempty"`
 }
 
 type SettingsConfig struct {
@@ -65,6 +67,7 @@ type SettingsConfig struct {
 	IdleTimeout       string `toml:"idle_timeout"`
 	KeepaliveInterval string `toml:"keepalive_interval"`
 	LogLevel          string `toml:"log_level"`
+	RecentLimit       int    `toml:"recent_limit"`
 }
 
 func (s SettingsConfig) GetForwardAgent() bool {
@@ -79,6 +82,21 @@ type Config struct {
 	Servers  map[string]ServerConfig `toml:"servers"`
 	Proxies  map[string]ProxyConfig  `toml:"proxies"`
 	Keys     map[string]KeyConfig    `toml:"keys"`
+}
+
+func (c *Config) GetAllTags() []string {
+	tagMap := make(map[string]bool)
+	for _, srv := range c.Servers {
+		for _, tag := range srv.Tags {
+			tagMap[tag] = true
+		}
+	}
+	tags := make([]string, 0, len(tagMap))
+	for tag := range tagMap {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	return tags
 }
 
 func Load(cryptoProvider crypto.Provider) (*Config, error) {
@@ -206,6 +224,9 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 	}
 	if cfg.Settings.LogLevel == "" {
 		cfg.Settings.LogLevel = "error"
+	}
+	if cfg.Settings.RecentLimit <= 0 {
+		cfg.Settings.RecentLimit = 5
 	}
 
 	if cfg.Servers == nil {

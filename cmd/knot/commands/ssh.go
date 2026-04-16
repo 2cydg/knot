@@ -101,14 +101,22 @@ var sshCmd = &cobra.Command{
 
 			resp := string(msg.Payload)
 			if resp == "ok" || strings.HasPrefix(resp, "ok:") {
+				// Update recent history
+				state, err := config.LoadState()
+				if err == nil {
+					state.UpdateRecent(alias, cfg.Settings.RecentLimit)
+					state.Save()
+				}
 				break
 			}
 			return fmt.Errorf("daemon error: %s", resp)
 		}
 
 		// Set terminal to raw mode
+		var oldState *term.State
 		if term.IsTerminal(fd) {
-			oldState, err := term.MakeRaw(fd)
+			var err error
+			oldState, err = term.MakeRaw(fd)
 			if err != nil {
 				return fmt.Errorf("failed to set raw mode: %w", err)
 			}
@@ -148,8 +156,9 @@ var sshCmd = &cobra.Command{
 				if err != nil {
 					if err != io.EOF {
 						errCh <- err
+					} else {
+						errCh <- nil
 					}
-					errCh <- nil // Normal exit
 					return
 				}
 				switch msg.Header.Type {
@@ -157,8 +166,12 @@ var sshCmd = &cobra.Command{
 					outMu.Lock()
 					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
 					outMu.Unlock()
-					errCh <- nil // Signal normal exit, allowing defers to run
-					return
+					
+					// Force restore terminal and exit immediately to avoid blocking on stdin
+					if term.IsTerminal(fd) {
+						term.Restore(fd, oldState)
+					}
+					os.Exit(0)
 				case protocol.TypeForwardNotify:
 					outMu.Lock()
 					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
@@ -167,9 +180,10 @@ var sshCmd = &cobra.Command{
 					func() {
 						outMu.Lock()
 						defer outMu.Unlock()
-						if msg.Header.Reserved == protocol.DataStdout {
+						switch msg.Header.Reserved {
+						case protocol.DataStdout:
 							os.Stdout.Write(msg.Payload)
-						} else if msg.Header.Reserved == protocol.DataStderr {
+						case protocol.DataStderr:
 							os.Stderr.Write(msg.Payload)
 						}
 					}()
