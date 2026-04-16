@@ -3,6 +3,7 @@
 package crypto
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 	"golang.org/x/crypto/pbkdf2"
@@ -152,31 +154,36 @@ func getDBusConn() (*dbus.Conn, error) {
 	if addr == "" {
 		// Try standard path fallback
 		stdPath := fmt.Sprintf("unix:path=/run/user/%d/bus", os.Getuid())
-		if _, err := os.Stat(strings.TrimPrefix(stdPath, "unix:path=")); err == nil {
+		socketPath := strings.TrimPrefix(stdPath, "unix:path=")
+		if _, err := os.Stat(socketPath); err == nil {
 			addr = stdPath
 			logger.Debug("Using fallback DBUS_SESSION_BUS_ADDRESS", "path", stdPath)
 		}
 	}
 
-	if addr != "" {
-		return dbus.Dial(addr)
+	if addr == "" {
+		return nil, fmt.Errorf("no D-Bus session address found (DBUS_SESSION_BUS_ADDRESS is empty)")
 	}
-	return dbus.SessionBus()
+
+	return dbus.Dial(addr)
 }
 
 func getSecretServiceKey() ([]byte, error) {
 	conn, err := getDBusConn()
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to session bus: %w", err)
+		return nil, err
 	}
 	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
 	obj := conn.Object(ssServiceName, ssObjectPath)
 
 	// 1. Open Session (Plain)
 	var sessionPath dbus.ObjectPath
 	var outVariant dbus.Variant
-	err = obj.Call(ssInterface+".OpenSession", 0, "plain", dbus.MakeVariant("")).Store(&outVariant, &sessionPath)
+	err = obj.CallWithContext(ctx, ssInterface+".OpenSession", 0, "plain", dbus.MakeVariant("")).Store(&outVariant, &sessionPath)
 	if err != nil {
 		return nil, fmt.Errorf("OpenSession failed: %w", err)
 	}
@@ -184,7 +191,7 @@ func getSecretServiceKey() ([]byte, error) {
 	// 2. Search Items
 	var unlockedPaths []dbus.ObjectPath
 	var lockedPaths []dbus.ObjectPath
-	err = obj.Call(ssInterface+".SearchItems", 0, ssItemAttributes).Store(&unlockedPaths, &lockedPaths)
+	err = obj.CallWithContext(ctx, ssInterface+".SearchItems", 0, ssItemAttributes).Store(&unlockedPaths, &lockedPaths)
 	if err != nil {
 		return nil, fmt.Errorf("SearchItems failed: %w", err)
 	}
@@ -193,10 +200,10 @@ func getSecretServiceKey() ([]byte, error) {
 	if len(unlockedPaths) > 0 {
 		itemPath = unlockedPaths[0]
 	} else if len(lockedPaths) > 0 {
-		// Attempt to unlock (may trigger GUI prompt)
+		// Attempt to unlock (may trigger GUI prompt, but we'll timeout if no user action)
 		var unlocked []dbus.ObjectPath
 		var prompt dbus.ObjectPath
-		err = obj.Call(ssInterface+".Unlock", 0, lockedPaths).Store(&unlocked, &prompt)
+		err = obj.CallWithContext(ctx, ssInterface+".Unlock", 0, lockedPaths).Store(&unlocked, &prompt)
 		if err == nil && len(unlocked) > 0 {
 			itemPath = unlocked[0]
 		}
@@ -211,7 +218,7 @@ func getSecretServiceKey() ([]byte, error) {
 			ContentType string
 		}
 		var secret Secret
-		err = conn.Object(ssServiceName, itemPath).Call("org.freedesktop.Secret.Item.GetSecret", 0, sessionPath).Store(&secret)
+		err = conn.Object(ssServiceName, itemPath).CallWithContext(ctx, "org.freedesktop.Secret.Item.GetSecret", 0, sessionPath).Store(&secret)
 		if err == nil {
 			return base64.StdEncoding.DecodeString(strings.TrimSpace(string(secret.Value)))
 		}
@@ -246,7 +253,7 @@ func getSecretServiceKey() ([]byte, error) {
 
 	var newItem dbus.ObjectPath
 	var prompt dbus.ObjectPath
-	err = conn.Object(ssServiceName, ssCollection).Call("org.freedesktop.Secret.Collection.CreateItem", 0, properties, secretInput, true).Store(&newItem, &prompt)
+	err = conn.Object(ssServiceName, ssCollection).CallWithContext(ctx, "org.freedesktop.Secret.Collection.CreateItem", 0, properties, secretInput, true).Store(&newItem, &prompt)
 	if err != nil {
 		return nil, fmt.Errorf("CreateItem failed: %w", err)
 	}
