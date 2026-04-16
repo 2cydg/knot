@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/term"
 )
 
 var (
@@ -31,7 +33,15 @@ func Setup(logPath string, level slog.Level, isJSON bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
-		writer = io.MultiWriter(os.Stdout, file)
+
+		// If we're logging to a file and stdout is not a terminal, we assume 
+		// stdout is already redirected (e.g., in background daemon mode) 
+		// and we avoid double logging by not using MultiWriter.
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			writer = io.MultiWriter(os.Stdout, file)
+		} else {
+			writer = file
+		}
 	}
 
 	opts := &slog.HandlerOptions{

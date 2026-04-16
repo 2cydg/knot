@@ -13,6 +13,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -55,7 +56,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
+	client, poolKey, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return
@@ -123,10 +124,10 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 
 	// Register session in SessionManager
 	s := d.sm.Add(req.Alias, conn)
-	d.pool.IncRef(req.Alias)
+	d.pool.IncRef(poolKey)
 	defer func() {
 		d.sm.Remove(s.ID)
-		d.pool.DecRef(req.Alias)
+		d.pool.DecRef(poolKey)
 	}()
 
 	// Send success response with session ID
@@ -216,7 +217,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			if err != nil {
 				return
 			}
-			d.pool.Touch(req.Alias)
+			d.pool.Touch(poolKey)
 			switch msg.Header.Type {
 			case protocol.TypeData:
 				if msg.Header.Reserved == protocol.DataStdin {
@@ -242,27 +243,36 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		}
 	}()
 
-	// Wait for completion or context cancellation (e.g. error in one goroutine)
-	done := make(chan struct{})
+	// 6. Wait for completion
+	sessionExit := make(chan error, 1)
 	go func() {
-		wg.Wait()
-		close(done)
+		sessionExit <- session.Wait()
 	}()
 
 	select {
-	case <-done:
-	case <-ctx.Done():
+	case <-sessionExit:
+		logger.Debug("SSH session finished normally", "alias", req.Alias)
 	case <-d.stopCh:
+		logger.Info("Daemon stopping, closing SSH session", "alias", req.Alias)
+	case <-ctx.Done():
+		logger.Debug("SSH handler context cancelled", "alias", req.Alias)
 	}
 
 	// Trigger cancellation and close session to break blocking reads
+	// Unblock conn -> stdin goroutine by setting a deadline
+	conn.SetReadDeadline(time.Now().Add(-1 * time.Second))
 	cancel()
 	session.Close()
 	wg.Wait()
 
-	// Final check: if client is no longer in the pool, the connection was lost
-	if !d.pool.IsAlive(req.Alias, client) {
-		protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
+	// Final check: only send "lost" message if the session didn't exit normally AND the connection is dead
+	select {
+	case <-sessionExit:
+		// Normal exit, no message needed
+	default:
+		if !d.pool.IsAlive(req.Alias, client) {
+			protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
+		}
 	}
 }
 
