@@ -249,9 +249,15 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		sessionExit <- session.Wait()
 	}()
 
+	var normalExit bool
 	select {
-	case <-sessionExit:
-		logger.Debug("SSH session finished normally", "alias", req.Alias)
+	case err := <-sessionExit:
+		normalExit = true
+		if err != nil {
+			logger.Debug("SSH session finished with error", "alias", req.Alias, "error", err)
+		} else {
+			logger.Debug("SSH session finished normally", "alias", req.Alias)
+		}
 	case <-d.stopCh:
 		logger.Info("Daemon stopping, closing SSH session", "alias", req.Alias)
 	case <-ctx.Done():
@@ -266,11 +272,8 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	wg.Wait()
 
 	// Final check: only send "lost" message if the session didn't exit normally AND the connection is dead
-	select {
-	case <-sessionExit:
-		// Normal exit, no message needed
-	default:
-		if !d.pool.IsAlive(req.Alias, client) {
+	if !normalExit {
+		if !d.pool.IsAlive(poolKey, client) {
 			protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
 		}
 	}

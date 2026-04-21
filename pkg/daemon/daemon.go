@@ -78,8 +78,9 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		}
 	}
 
-	d.pool.ConnectCallback = func(alias string, client *ssh.Client) {
-		logger.Info("SSH client connected. Starting forwarding rules.", "alias", alias)
+	d.pool.ConnectCallback = func(poolKey string, client *ssh.Client) {
+		alias := strings.SplitN(poolKey, ":", 2)[0]
+		logger.Info("SSH client connected. Starting forwarding rules.", "alias", alias, "pool_key", poolKey)
 		// Start any existing rules that are enabled for this alias
 		for _, rule := range d.fm.ListRules() {
 			rule.mu.RLock()
@@ -91,8 +92,9 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		}
 	}
 
-	d.pool.DisconnectCallback = func(alias string) {
-		logger.Info("SSH client disconnected. Notifying sessions.", "alias", alias)
+	d.pool.DisconnectCallback = func(poolKey string) {
+		alias := strings.SplitN(poolKey, ":", 2)[0]
+		logger.Info("SSH client disconnected. Notifying sessions.", "alias", alias, "pool_key", poolKey)
 		d.fm.StopAllForAlias(alias)
 		sessions := d.sm.ListByAlias(alias)
 		for _, s := range sessions {

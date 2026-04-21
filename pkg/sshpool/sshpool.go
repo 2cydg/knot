@@ -39,7 +39,8 @@ type Pool struct {
 	cancel             context.CancelFunc
 }
 
-func getConnKey(srv config.ServerConfig) string {
+// GetConnKey returns the unique pool key for a server configuration.
+func GetConnKey(srv config.ServerConfig) string {
 	return fmt.Sprintf("%s:%s@%s:%d", srv.Alias, srv.User, srv.Host, srv.Port)
 }
 
@@ -73,7 +74,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		}
 	}
 
-	key := getConnKey(srv)
+	key := GetConnKey(srv)
 
 	// Try to get from cache first
 	p.mu.Lock()

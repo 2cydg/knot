@@ -6,7 +6,10 @@ import (
 	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
+	"knot/pkg/sshpool"
 	"net"
+
+	"golang.org/x/crypto/ssh"
 )
 
 func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardRequest) {
@@ -22,19 +25,24 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 	} else if req.Config.Type != "L" && req.Config.Type != "R" && req.Config.Type != "D" {
 		err = fmt.Errorf("invalid forward type: %s", req.Config.Type)
 	} else {
+		// Load config to get server info for exact pool key lookup
+		cfg, loadErr := config.Load(d.crypto)
+		var sshClient *ssh.Client
+		if loadErr == nil {
+			if srv, ok := cfg.Servers[req.Alias]; ok {
+				poolKey := sshpool.GetConnKey(srv)
+				sshClient, _ = d.pool.GetClientForKey(poolKey)
+			}
+		}
+
 		switch req.Action {
 		case "add":
-			// Check if server exists
-			cfg, loadErr := config.Load(d.crypto)
 			if loadErr != nil {
 				err = loadErr
 			} else if _, ok := cfg.Servers[req.Alias]; !ok {
 				err = fmt.Errorf("server alias '%s' not found", req.Alias)
 			} else {
-				// 1. Get SSH client if exists
-				sshClient, _ := d.pool.GetClientForAlias(req.Alias)
-				
-				// 2. Add rule to ForwardManager
+				// 1. Add rule to ForwardManager
 				fConfig := config.ForwardConfig{
 					Type:       req.Config.Type,
 					LocalPort:  req.Config.LocalPort,
@@ -59,7 +67,6 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 		case "enable":
 			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
 			if ok {
-				sshClient, _ := d.pool.GetClientForAlias(req.Alias)
 				err = d.fm.SetEnabled(rule, true, sshClient)
 			} else {
 				err = fmt.Errorf("rule not found")
@@ -68,7 +75,6 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 		case "disable":
 			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
 			if ok {
-				sshClient, _ := d.pool.GetClientForAlias(req.Alias)
 				err = d.fm.SetEnabled(rule, false, sshClient)
 			} else {
 				err = fmt.Errorf("rule not found")

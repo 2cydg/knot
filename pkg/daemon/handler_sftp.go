@@ -193,8 +193,10 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 		close(done)
 	}()
 
+	var normalExit bool
 	select {
 	case <-done:
+		normalExit = true
 	case <-ctx.Done():
 	case <-d.stopCh:
 	}
@@ -205,7 +207,9 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 	wg.Wait()
 
 	// Final check: if client is no longer in the pool, the connection was lost
-	if !d.pool.IsAlive(poolKey, client) {
-		protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
+	if !normalExit {
+		if !d.pool.IsAlive(poolKey, client) {
+			protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
+		}
 	}
 }
