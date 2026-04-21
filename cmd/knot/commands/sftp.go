@@ -3,129 +3,16 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	knotsftp "knot/pkg/sftp"
-	"knot/internal/logger"
-	"net"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 )
-
-type knotSFTPConn struct {
-	conn      net.Conn
-	buf       []byte
-	cwdCh     chan string
-	dataCh    chan []byte
-	errCh     chan error
-	startOnce sync.Once
-	closeOnce sync.Once
-	closed    chan struct{}
-}
-
-func (k *knotSFTPConn) start() {
-	k.startOnce.Do(func() {
-		k.dataCh = make(chan []byte, 100)
-		k.errCh = make(chan error, 1)
-		k.closed = make(chan struct{})
-		go func() {
-			for {
-				msg, err := protocol.ReadMessage(k.conn)
-				if err != nil {
-					select {
-					case k.errCh <- err:
-					case <-k.closed:
-					}
-					return
-				}
-
-				switch msg.Header.Type {
-				case protocol.TypeDisconnect:
-					fmt.Printf("\r\n[knot] %s\r\n", string(msg.Payload))
-					select {
-					case k.errCh <- fmt.Errorf("disconnected"):
-					case <-k.closed:
-					}
-					return
-				case protocol.TypeData:
-					data := make([]byte, len(msg.Payload))
-					copy(data, msg.Payload)
-					select {
-					case k.dataCh <- data:
-					case <-k.closed:
-						return
-					}
-				case protocol.TypeHostKeyConfirm:
-					fmt.Printf("\n%s ", string(msg.Payload))
-					var response string
-					if _, err := fmt.Scanln(&response); err != nil {
-						response = "no"
-					}
-					protocol.WriteMessage(k.conn, protocol.TypeHostKeyConfirm, 0, []byte(response))
-				case protocol.TypeCWDUpdate:
-					if k.cwdCh != nil {
-						select {
-						case k.cwdCh <- string(msg.Payload):
-						default:
-						}
-					}
-				case protocol.TypeSignal:
-					continue
-				default:
-					logger.Warn("unexpected message type", "type", msg.Header.Type)
-				}
-			}
-		}()
-	})
-}
-
-func (k *knotSFTPConn) Read(p []byte) (n int, err error) {
-	k.start()
-	if len(k.buf) > 0 {
-		n = copy(p, k.buf)
-		k.buf = k.buf[n:]
-		return n, nil
-	}
-
-	select {
-	case data, ok := <-k.dataCh:
-		if !ok {
-			return 0, io.EOF
-		}
-		n = copy(p, data)
-		if n < len(data) {
-			k.buf = data[n:]
-		}
-		return n, nil
-	case err := <-k.errCh:
-		return 0, err
-	case <-k.closed:
-		return 0, io.EOF
-	}
-}
-
-func (k *knotSFTPConn) Write(p []byte) (n int, err error) {
-	err = protocol.WriteMessage(k.conn, protocol.TypeData, 0, p)
-	if err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
-func (k *knotSFTPConn) Close() error {
-	k.start() // Ensure channels are initialized
-	k.closeOnce.Do(func() {
-		close(k.closed)
-	})
-	return k.conn.Close()
-}
 
 var sftpCmd = &cobra.Command{
 	Use:           "sftp [alias]",
@@ -217,38 +104,6 @@ var sftpCmd = &cobra.Command{
 			return err
 		}
 
-		// Wait for ok/error
-		msg, err := protocol.ReadMessage(conn)
-		if err != nil {
-			return err
-		}
-
-		// Handle potential host key confirmation before "ok"
-		for msg.Header.Type == protocol.TypeHostKeyConfirm {
-			fmt.Printf("\n%s ", string(msg.Payload))
-			var response string
-			if _, err := fmt.Scanln(&response); err != nil {
-				response = "no"
-			}
-			protocol.WriteMessage(conn, protocol.TypeHostKeyConfirm, 0, []byte(response))
-			msg, err = protocol.ReadMessage(conn)
-			if err != nil {
-				return err
-			}
-		}
-
-		if msg.Header.Type != protocol.TypeResp {
-			return fmt.Errorf("unexpected response type: %d", msg.Header.Type)
-		}
-
-		resp := string(msg.Payload)
-		if resp != "ok" {
-			if strings.HasPrefix(resp, "error: ") {
-				return fmt.Errorf("daemon error: %s", resp[7:])
-			}
-			return fmt.Errorf("daemon error: %s", resp)
-		}
-
 		// Update recent history
 		provider, err := crypto.NewProvider()
 		if err == nil {
@@ -257,14 +112,25 @@ var sftpCmd = &cobra.Command{
 				state, err := config.LoadState()
 				if err == nil {
 					state.UpdateRecent(alias, cfg.Settings.RecentLimit)
-					state.Save()
+					_ = state.Save()
 				}
 			}
 		}
 
-		// Create SFTP client using the proxied connection
+		// Create SFTP client (handshake handled internally by SFTPConn)
 		cwdCh := make(chan string, 1)
-		sftpConn := &knotSFTPConn{conn: conn, cwdCh: cwdCh}
+		sftpConn := &knotsftp.SFTPConn{Conn: conn, CwdCh: cwdCh, Interactive: true}
+		sftpConn.Start()
+		select {
+		case <-sftpConn.Ready:
+			// Check for handshake error
+			select {
+			case err := <-sftpConn.ErrCh:
+				return err
+			default:
+			}
+		}
+
 		sftpClient, err := sftp.NewClientPipe(sftpConn, sftpConn)
 		if err != nil {
 			return fmt.Errorf("failed to create sftp client: %w", err)

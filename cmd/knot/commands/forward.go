@@ -300,18 +300,21 @@ var forwardListCmd = &cobra.Command{
 			return err
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ALIAS\tTYPE\tPORT\tREMOTE/LOCAL ADDR\tTEMP\tSTATUS\tERROR")
-		for _, f := range resp.Forwards {
-			tempStr := ""
-			if f.IsTemp {
-				tempStr = "Yes"
+		formatter := NewFormatter()
+		return formatter.Render(resp, func() error {
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ALIAS\tTYPE\tPORT\tREMOTE/LOCAL ADDR\tTEMP\tSTATUS\tERROR")
+			for _, f := range resp.Forwards {
+				tempStr := ""
+				if f.IsTemp {
+					tempStr = "Yes"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+					f.Alias, f.Type, f.LocalPort, f.RemoteAddr, tempStr, f.Status, f.Error)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", 
-				f.Alias, f.Type, f.LocalPort, f.RemoteAddr, tempStr, f.Status, f.Error)
-		}
-		w.Flush()
-		return nil
+			w.Flush()
+			return nil
+		})
 	},
 }
 

@@ -115,7 +115,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 			if len(args) > 2 {
 				localPath = args[2]
 			}
-			if err := Download(client, remotePath, localPath, false); err != nil {
+			if err := Download(client, remotePath, localPath, false, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				fmt.Println("Download complete.")
@@ -130,7 +130,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 			if len(args) > 2 {
 				remotePath = resolvePath(cwd, args[2])
 			}
-			if err := Upload(client, localPath, remotePath, false); err != nil {
+			if err := Upload(client, localPath, remotePath, false, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				fmt.Println("Upload complete.")

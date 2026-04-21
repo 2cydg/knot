@@ -6,23 +6,40 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/sftp"
 	"github.com/schollz/progressbar/v3"
 )
 
-// Upload uploads a local file to the remote server.
-func Upload(client *sftp.Client, localPath, remotePath string, overwrite bool) error {
+// Upload uploads a local file or directory to the remote server.
+func Upload(client *sftp.Client, localPath, remotePath string, recursive, overwrite bool, quiet bool) error {
 	stat, err := os.Stat(localPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat local file: %w", err)
+		return fmt.Errorf("failed to stat local path: %w", err)
 	}
 
 	if stat.IsDir() {
-		return fmt.Errorf("'%s' is a directory, recursive upload not supported yet", localPath)
+		if !recursive {
+			return fmt.Errorf("'%s' is a directory, use -r for recursive upload", localPath)
+		}
+		return uploadDir(client, localPath, remotePath, overwrite, quiet)
 	}
 
-	// Check if remote file exists
+	return uploadFile(client, localPath, remotePath, overwrite, quiet)
+}
+
+func uploadFile(client *sftp.Client, localPath, remotePath string, overwrite bool, quiet bool) error {
+	stat, err := os.Stat(localPath)
+	if err != nil {
+		return err
+	}
+
+	// If remotePath is a directory, append local filename
+	if rStat, err := client.Stat(remotePath); err == nil && rStat.IsDir() {
+		remotePath = path.Join(remotePath, filepath.Base(localPath))
+	}
+
 	if !overwrite {
 		if _, err := client.Stat(remotePath); err == nil {
 			return fmt.Errorf("remote file already exists: %s", remotePath)
@@ -37,35 +54,80 @@ func Upload(client *sftp.Client, localPath, remotePath string, overwrite bool) e
 
 	remoteFile, err := client.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
-		return fmt.Errorf("failed to create/open remote file: %w", err)
+		return fmt.Errorf("failed to create remote file: %w", err)
 	}
 	defer remoteFile.Close()
 
-	bar := progressbar.DefaultBytes(
-		stat.Size(),
-		"uploading "+filepath.Base(localPath),
-	)
-
-	_, err = io.Copy(io.MultiWriter(remoteFile, bar), localFile)
-	if err != nil {
-		return fmt.Errorf("failed to upload file: %w", err)
+	var writer io.Writer = remoteFile
+	if !quiet {
+		bar := progressbar.DefaultBytes(
+			stat.Size(),
+			"uploading "+filepath.Base(localPath),
+		)
+		writer = io.MultiWriter(remoteFile, bar)
 	}
 
-	return nil
+	_, err = io.Copy(writer, localFile)
+	return err
 }
 
-// Download downloads a remote file to the local machine.
-func Download(client *sftp.Client, remotePath, localPath string, overwrite bool) error {
+func uploadDir(client *sftp.Client, localDir, remoteDir string, overwrite bool, quiet bool) error {
+	// Handle /. suffix (copy contents instead of directory itself)
+	copyContents := strings.HasSuffix(localDir, string(os.PathSeparator)+".")
+	if copyContents {
+		localDir = localDir[:len(localDir)-2]
+	} else {
+		remoteDir = path.Join(remoteDir, filepath.Base(localDir))
+	}
+
+	return filepath.Walk(localDir, func(lp string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(localDir, lp)
+		if err != nil {
+			return err
+		}
+
+		rp := path.Join(remoteDir, filepath.ToSlash(rel))
+
+		if info.IsDir() {
+			return client.MkdirAll(rp)
+		}
+
+		return uploadFile(client, lp, rp, overwrite, quiet)
+	})
+}
+
+// Download downloads a remote file or directory to the local machine.
+func Download(client *sftp.Client, remotePath, localPath string, recursive, overwrite bool, quiet bool) error {
 	stat, err := client.Stat(remotePath)
 	if err != nil {
-		return fmt.Errorf("failed to stat remote file: %w", err)
+		return fmt.Errorf("failed to stat remote path: %w", err)
 	}
 
 	if stat.IsDir() {
-		return fmt.Errorf("'%s' is a directory, recursive download not supported yet", remotePath)
+		if !recursive {
+			return fmt.Errorf("'%s' is a directory, use -r for recursive download", remotePath)
+		}
+		return downloadDir(client, remotePath, localPath, overwrite, quiet)
 	}
 
-	// Check if local file exists
+	return downloadFile(client, remotePath, localPath, overwrite, quiet)
+}
+
+func downloadFile(client *sftp.Client, remotePath, localPath string, overwrite bool, quiet bool) error {
+	stat, err := client.Stat(remotePath)
+	if err != nil {
+		return err
+	}
+
+	// If localPath is a directory, append remote filename
+	if lStat, err := os.Stat(localPath); err == nil && lStat.IsDir() {
+		localPath = filepath.Join(localPath, path.Base(remotePath))
+	}
+
 	if !overwrite {
 		if _, err := os.Stat(localPath); err == nil {
 			return fmt.Errorf("local file already exists: %s", localPath)
@@ -78,26 +140,66 @@ func Download(client *sftp.Client, remotePath, localPath string, overwrite bool)
 	}
 	defer remoteFile.Close()
 
-	localFile, err := os.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	// Use remote file permissions for local file (masked by 0777 for safety)
+	mode := stat.Mode().Perm()
+	localFile, err := os.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
-		return fmt.Errorf("failed to create/open local file: %w", err)
+		return fmt.Errorf("failed to create local file: %w", err)
 	}
 	defer localFile.Close()
 
-	bar := progressbar.DefaultBytes(
-		stat.Size(),
-		"downloading "+filepath.Base(remotePath),
-	)
-
-	_, err = io.Copy(io.MultiWriter(localFile, bar), remoteFile)
-	if err != nil {
-		return fmt.Errorf("failed to download file: %w", err)
+	var writer io.Writer = localFile
+	if !quiet {
+		bar := progressbar.DefaultBytes(
+			stat.Size(),
+			"downloading "+path.Base(remotePath),
+		)
+		writer = io.MultiWriter(localFile, bar)
 	}
 
+	_, err = io.Copy(writer, remoteFile)
+	return err
+}
+
+func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool, quiet bool) error {
+	// Handle /. suffix
+	copyContents := strings.HasSuffix(remoteDir, "/.")
+	if copyContents {
+		remoteDir = remoteDir[:len(remoteDir)-2]
+	} else {
+		localDir = filepath.Join(localDir, path.Base(remoteDir))
+	}
+
+	walker := client.Walk(remoteDir)
+	for walker.Step() {
+		if err := walker.Err(); err != nil {
+			return err
+		}
+
+		rp := walker.Path()
+		rel, err := filepath.Rel(remoteDir, rp)
+		if err != nil {
+			return err
+		}
+
+		lp := filepath.Join(localDir, filepath.FromSlash(rel))
+
+		if walker.Stat().IsDir() {
+			mode := walker.Stat().Mode().Perm()
+			if err := os.MkdirAll(lp, mode); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := downloadFile(client, rp, lp, overwrite, quiet); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// MGet downloads multiple remote files matching a pattern.
+// MGet downloads multiple remote files matching a pattern. (Keeping for compatibility)
 func MGet(client *sftp.Client, remotePattern, localDir string, overwrite bool) error {
 	remoteDir := path.Dir(remotePattern)
 	pattern := path.Base(remotePattern)
@@ -123,8 +225,7 @@ func MGet(client *sftp.Client, remotePattern, localDir string, overwrite bool) e
 
 	for _, rf := range matchedFiles {
 		lf := filepath.Join(localDir, path.Base(rf))
-		fmt.Printf("Downloading %s to %s...\n", rf, lf)
-		if err := Download(client, rf, lf, overwrite); err != nil {
+		if err := downloadFile(client, rf, lf, overwrite, false); err != nil {
 			fmt.Printf("Error downloading %s: %v\n", rf, err)
 		}
 	}
@@ -132,7 +233,7 @@ func MGet(client *sftp.Client, remotePattern, localDir string, overwrite bool) e
 	return nil
 }
 
-// MPut uploads multiple local files matching a pattern.
+// MPut uploads multiple local files matching a pattern. (Keeping for compatibility)
 func MPut(client *sftp.Client, localPattern, remoteDir string, overwrite bool) error {
 	matches, err := filepath.Glob(localPattern)
 	if err != nil {
@@ -153,8 +254,7 @@ func MPut(client *sftp.Client, localPattern, remoteDir string, overwrite bool) e
 
 	for _, lf := range matchedFiles {
 		rf := path.Join(remoteDir, filepath.Base(lf))
-		fmt.Printf("Uploading %s to %s...\n", lf, rf)
-		if err := Upload(client, lf, rf, overwrite); err != nil {
+		if err := uploadFile(client, lf, rf, overwrite, false); err != nil {
 			fmt.Printf("Error uploading %s: %v\n", lf, err)
 		}
 	}

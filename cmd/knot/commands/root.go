@@ -12,10 +12,12 @@ var rootCmd = &cobra.Command{
 	Use:   "knot",
 	Short: "knot is a minimalist SSH/SFTP CLI tool",
 	Long:  `knot is a minimalist SSH/SFTP CLI tool with connection multiplexing and secure credential storage.`,
-	SilenceUsage: true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 var (
+	jsonOutput bool
 	basicGroup = &cobra.Group{
 		ID:    "basic",
 		Title: "Basic Commands:",
@@ -68,9 +70,25 @@ func Execute() error {
 		}
 	}
 
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	if err != nil {
+		exitCode := 1
+		var displayErr error = err
+
+		if e, ok := err.(*ExitCodeError); ok {
+			exitCode = e.Code
+			displayErr = e.Err
+		}
+
+		if displayErr != nil {
+			NewFormatter().PrintError(displayErr)
+		}
+		os.Exit(exitCode)
+	}
+	return nil
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.AddGroup(basicGroup, advancedGroup)
 }

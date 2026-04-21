@@ -261,6 +261,10 @@ func (d *Daemon) syncConfig(targetAlias string) error {
 	return cfg.Save(d.crypto)
 }
 
+func (d *Daemon) loadConfig() (*config.Config, error) {
+	return config.Load(d.crypto)
+}
+
 func (d *Daemon) handleConnection(conn net.Conn) {
 	d.sem <- struct{}{}
 	defer func() {
@@ -323,6 +327,9 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		case protocol.TypeForwardListReq:
 			alias := string(msg.Payload)
 			d.handleForwardListRequest(conn, alias)
+		case protocol.TypeExecReq:
+			d.handleExecRequest(conn, msg.Payload)
+			return // handleExecRequest finishes its work
 		case protocol.TypeClearReq:
 			d.handleClearRequest(conn)
 		case protocol.TypeSignal:

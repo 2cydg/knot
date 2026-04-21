@@ -41,6 +41,8 @@ const (
 	TypeForwardNotify   uint8 = 0x0F
 	TypeClearReq        uint8 = 0x10
 	TypeClearResp       uint8 = 0x11
+	TypeExecReq         uint8 = 0x12
+	TypeExecResp        uint8 = 0x13
 )
 
 // SubTypes for TypeData (using Reserved field)
@@ -64,6 +66,27 @@ type SSHRequest struct {
 	Cols         int    `json:"cols"`
 	ForwardAgent bool   `json:"forward_agent"`
 	SSHAuthSock  string `json:"ssh_auth_sock,omitempty"`
+}
+
+// ExecRequest defines the payload for an SSH exec request.
+type ExecRequest struct {
+	Alias   string `json:"alias"`
+	Command string `json:"command"`
+	Timeout int    `json:"timeout"` // seconds
+}
+
+// ExecResponse defines the payload for an SSH exec response.
+type ExecResponse struct {
+	// ExitCode semantics:
+	//   -1: execution framework error (connection failed, timeout, etc.), see Error field for details
+	//    0: remote command exited successfully
+	//   >0: remote command exit code
+	ExitCode      int    `json:"exit_code"`
+	Stdout        string `json:"stdout"`
+	Stderr        string `json:"stderr"`
+	Error         string `json:"error,omitempty"`
+	Truncated     bool   `json:"truncated"`
+	TruncatedSize int    `json:"truncated_size,omitempty"`
 }
 
 // ResizePayload defines the payload for a terminal resize signal.
