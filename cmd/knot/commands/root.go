@@ -38,7 +38,7 @@ func Execute() error {
 		if !strings.HasPrefix(firstArg, "-") {
 			// Check if first arg matches a known subcommand or built-in Cobra command.
 			isKnown := false
-			if firstArg == "help" {
+			if firstArg == "help" || firstArg == "completion" {
 				isKnown = true
 			} else {
 				for _, c := range rootCmd.Commands() {
@@ -92,7 +92,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format for scripting and automation")
 	rootCmd.AddGroup(coreGroup, managementGroup)
 
-	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	rootCmd.ValidArgsFunction = serverAliasCompleter
 
 	rootCmd.SetUsageTemplate(`Usage:{{if .Runnable}}
   {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}{{if eq .Name "knot"}}

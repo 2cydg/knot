@@ -16,9 +16,10 @@ var (
 )
 
 var execCmd = &cobra.Command{
-	Use:   "exec [alias] [command...]",
-	Short: "Execute a command on a remote server",
-	Args:  cobra.MinimumNArgs(2),
+	Use:               "exec [alias] [command...]",
+	Short:             "Execute a command on a remote server",
+	Args:              cobra.MinimumNArgs(2),
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 		remoteCmd := strings.Join(args[1:], " ")

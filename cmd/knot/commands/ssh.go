@@ -18,11 +18,12 @@ import (
 )
 
 var sshCmd = &cobra.Command{
-	Use:           "ssh [alias]",
-	Short:         "Connect to a server via SSH",
-	Args:          cobra.ExactArgs(1),
-	SilenceUsage:  true,
-	SilenceErrors: true,
+	Use:               "ssh [alias]",
+	Short:             "Connect to a server via SSH",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: serverAliasCompleter,
+	SilenceUsage:      true,
+	SilenceErrors:     true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 		if len(alias) > 255 {

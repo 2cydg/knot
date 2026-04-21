@@ -9,10 +9,11 @@ import (
 )
 
 var removeCmd = &cobra.Command{
-	Use:     "remove [alias]",
-	Aliases: []string{"rm", "delete"},
-	Short:   "Remove a server configuration",
-	Args:    cobra.ExactArgs(1),
+	Use:               "remove [alias]",
+	Aliases:           []string{"rm", "delete"},
+	Short:             "Remove a server configuration",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 

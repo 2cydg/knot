@@ -24,6 +24,7 @@ var forwardCmd = &cobra.Command{
 var forwardAddCmd = &cobra.Command{
 	Use:   "add [alias]",
 	Short: "Add a new port forwarding rule",
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var alias string
 		if len(args) > 0 {
@@ -245,6 +246,7 @@ var forwardRemoveCmd = &cobra.Command{
 	Use:   "remove [alias] [type:port]",
 	Short: "Remove a port forwarding rule",
 	Args:  cobra.ExactArgs(2),
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 		target := args[1]
@@ -284,6 +286,7 @@ var forwardRemoveCmd = &cobra.Command{
 var forwardListCmd = &cobra.Command{
 	Use:   "list [alias]",
 	Short: "List port forwarding rules",
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := ""
 		if len(args) > 0 {
@@ -322,6 +325,7 @@ var forwardEnableCmd = &cobra.Command{
 	Use:   "enable [alias] [type:port]",
 	Short: "Enable a port forwarding rule",
 	Args:  cobra.ExactArgs(2),
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return handleForwardToggle(args[0], args[1], true)
 	},
@@ -331,6 +335,7 @@ var forwardDisableCmd = &cobra.Command{
 	Use:   "disable [alias] [type:port]",
 	Short: "Disable a port forwarding rule",
 	Args:  cobra.ExactArgs(2),
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return handleForwardToggle(args[0], args[1], false)
 	},

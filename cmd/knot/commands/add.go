@@ -468,6 +468,11 @@ func init() {
 	addCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
 	addCmd.Flags().String("proxy", "", "Proxy alias")
 	addCmd.Flags().StringP("tags", "t", "", "Server tags, comma-separated")
+
+	addCmd.RegisterFlagCompletionFunc("key", keyAliasCompleter)
+	addCmd.RegisterFlagCompletionFunc("proxy", proxyAliasCompleter)
+	addCmd.RegisterFlagCompletionFunc("jump-host", serverAliasCompleter)
+
 	addCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(addCmd)
 }

@@ -15,11 +15,12 @@ import (
 )
 
 var sftpCmd = &cobra.Command{
-	Use:           "sftp [alias]",
-	Short:         "Interactive SFTP shell",
-	Args:          cobra.ExactArgs(1),
-	SilenceUsage:  true,
-	SilenceErrors: true,
+	Use:               "sftp [alias] [remote_path]",
+	Short:             "Interactive SFTP shell",
+	Args:              cobra.RangeArgs(1, 2),
+	ValidArgsFunction: serverAliasCompleter,
+	SilenceUsage:      true,
+	SilenceErrors:     true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 		if len(alias) > 255 {
@@ -39,6 +40,9 @@ var sftpCmd = &cobra.Command{
 		defer conn.Close()
 
 		var initialDir string
+		if len(args) > 1 {
+			initialDir = args[1]
+		}
 		var sessionID string
 		if follow {
 			// 1. Get sessions for this alias

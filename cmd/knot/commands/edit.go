@@ -13,9 +13,10 @@ import (
 )
 
 var editCmd = &cobra.Command{
-	Use:   "edit [alias]",
-	Short: "Edit an existing server configuration",
-	Args:  cobra.ExactArgs(1),
+	Use:               "edit [alias]",
+	Short:             "Edit an existing server configuration",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
 
@@ -34,6 +35,94 @@ var editCmd = &cobra.Command{
 			return fmt.Errorf("server alias '%s' not found", alias)
 		}
 
+		hostFlag, _ := cmd.Flags().GetString("host")
+		portFlag, _ := cmd.Flags().GetInt("port")
+		userFlag, _ := cmd.Flags().GetString("user")
+		passFlag, _ := cmd.Flags().GetString("password")
+		keyFlag, _ := cmd.Flags().GetString("key")
+		authFlag, _ := cmd.Flags().GetString("auth-method")
+		khFlag, _ := cmd.Flags().GetString("known-hosts")
+		jhFlag, _ := cmd.Flags().GetString("jump-host")
+		proxyFlag, _ := cmd.Flags().GetString("proxy")
+		tagsFlag, _ := cmd.Flags().GetString("tags")
+
+		nonInteractive := cmd.Flags().Changed("host") || cmd.Flags().Changed("port") ||
+			cmd.Flags().Changed("user") || cmd.Flags().Changed("password") ||
+			cmd.Flags().Changed("key") || cmd.Flags().Changed("auth-method") ||
+			cmd.Flags().Changed("known-hosts") || cmd.Flags().Changed("jump-host") ||
+			cmd.Flags().Changed("proxy") || cmd.Flags().Changed("tags")
+
+		if nonInteractive {
+			if hostFlag != "" {
+				srv.Host = hostFlag
+			}
+			if cmd.Flags().Changed("port") {
+				srv.Port = portFlag
+			}
+			if userFlag != "" {
+				srv.User = userFlag
+			}
+			if passFlag != "" {
+				srv.Password = passFlag
+			}
+			if keyFlag != "" {
+				srv.KeyAlias = keyFlag
+			}
+			if khFlag != "" {
+				srv.KnownHostsPath = khFlag
+			}
+			if proxyFlag != "" {
+				srv.ProxyAlias = proxyFlag
+			} else if cmd.Flags().Changed("proxy") {
+				srv.ProxyAlias = ""
+			}
+			if jhFlag != "" {
+				srv.JumpHost = strings.Split(jhFlag, ",")
+				for i, jh := range srv.JumpHost {
+					srv.JumpHost[i] = strings.TrimSpace(jh)
+				}
+				if err := cfg.HasCycle(alias, srv.JumpHost); err != nil {
+					return err
+				}
+			} else if cmd.Flags().Changed("jump-host") {
+				srv.JumpHost = nil
+			}
+			if tagsFlag != "" {
+				rawTags := strings.Split(tagsFlag, ",")
+				var tags []string
+				tagMap := make(map[string]bool)
+				for _, t := range rawTags {
+					t = strings.TrimSpace(t)
+					if t != "" && !tagMap[t] {
+						tags = append(tags, t)
+						tagMap[t] = true
+					}
+				}
+				srv.Tags = tags
+			} else if cmd.Flags().Changed("tags") {
+				srv.Tags = nil
+			}
+			if authFlag != "" {
+				srv.AuthMethod = authFlag
+				if authFlag == config.AuthMethodKey {
+					srv.Password = ""
+				} else if authFlag == config.AuthMethodAgent {
+					srv.Password = ""
+					srv.KeyAlias = ""
+				}
+			} else if keyFlag != "" && authFlag == "" {
+				srv.AuthMethod = config.AuthMethodKey
+				srv.Password = ""
+			}
+
+			cfg.Servers[alias] = srv
+			if err := cfg.Save(provider); err != nil {
+				return err
+			}
+			fmt.Printf("Server '%s' updated successfully.\n", alias)
+			return nil
+		} else {
+			// Interactive mode
 		line, err := readline.NewEx(&readline.Config{
 			Prompt:          "> ",
 			InterruptPrompt: "^C",
@@ -358,10 +447,26 @@ var editCmd = &cobra.Command{
 
 		fmt.Printf("Server '%s' updated successfully.\n", alias)
 		return nil
+		}
 	},
 }
 
 func init() {
+	editCmd.Flags().StringP("host", "H", "", "Server host")
+	editCmd.Flags().IntP("port", "P", 0, "Server port")
+	editCmd.Flags().StringP("user", "u", "", "Server user")
+	editCmd.Flags().StringP("password", "p", "", "Server password")
+	editCmd.Flags().StringP("key", "k", "", "Key alias")
+	editCmd.Flags().String("auth-method", "", "Authentication method (password, key, agent)")
+	editCmd.Flags().String("known-hosts", "", "Known hosts file path")
+	editCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
+	editCmd.Flags().String("proxy", "", "Proxy alias")
+	editCmd.Flags().StringP("tags", "t", "", "Server tags, comma-separated")
+
+	editCmd.RegisterFlagCompletionFunc("key", keyAliasCompleter)
+	editCmd.RegisterFlagCompletionFunc("proxy", proxyAliasCompleter)
+	editCmd.RegisterFlagCompletionFunc("jump-host", serverAliasCompleter)
+
 	editCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(editCmd)
 }
