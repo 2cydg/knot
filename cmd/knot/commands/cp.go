@@ -150,7 +150,7 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 }
 
 func init() {
-	cpCmd.Flags().BoolVarP(&cpRecursive, "recursive", "r", false, "Recursive copy")
+	cpCmd.Flags().BoolVarP(&cpRecursive, "recursive", "r", true, "Recursive copy")
 	cpCmd.Flags().BoolVarP(&cpForce, "force", "f", false, "Overwrite existing files")
 	
 	cpCmd.GroupID = coreGroup.ID

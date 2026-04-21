@@ -1,53 +1,123 @@
 # Knot
 
-Knot is a minimalist, high-speed, and secure SSH/SFTP command-line management tool designed for developers and AI Agents.
+[简体中文](./README_zh.md) | English
 
-## Core Philosophy
-- **Minimalist Interaction**: Pure CLI with no TUI, making it friendly for automation and AI integration.
-- **Connection Multiplexing**: A background daemon manages physical connections, allowing for instant new sessions.
-- **Native Security**: Deep integration with OS-level secure storage (e.g., Windows DPAPI, Linux Machine-ID + Salt) to keep credentials safe.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
-## Key Features
-- **C/S Architecture**: Frontend CLI communicates with a backend Daemon via Unix Domain Socket (UDS).
-- **Fast Response**: Drastically reduces connection overhead by reusing existing SSH clients.
-- **Secure Storage**: Sensitive information is encrypted and stored in TOML configurations with an `ENC:` prefix.
-- **Interactive SFTP REPL**: A powerful environment for file operations with completion and history support.
-- **Directory Following**: Syncs SSH and SFTP working directories via OSC 7.
+**Knot** is a minimalist, high-performance SSH/SFTP management tool designed for developers and AI Agents. By utilizing a background daemon and connection multiplexing, it eliminates the handshake overhead of traditional SSH, making remote sessions and file transfers nearly instant.
 
-## Architecture
-- **Language**: Go (Golang)
-- **Protocols**: `golang.org/x/crypto/ssh`, `github.com/pkg/sftp`
-- **Communication**: Local UDS for high-performance CLI-to-Daemon interaction.
+---
 
-## Getting Started
+## 🚀 Why Knot?
 
-### Prerequisites
-- Go 1.21 or higher (for building from source)
-- Linux (Windows and macOS support in progress)
+*   ⚡ **Instant Connectivity**: Connection multiplexing via a background daemon. No more waiting for SSH handshakes.
+*   🔒 **Native Security**: Passwords and keys are never stored in plaintext. Uses OS-level encryption (Windows DPAPI, macOS Keychain, Linux Machine-ID).
+*   🤖 **AI & Scripting Ready**: Built-in `--json` support for all commands and non-interactive modes for seamless automation.
+*   🛠️ **Modern SFTP**: Interactive REPL with "Directory Following" (OSC 7) to sync with your active SSH session.
+*   🔌 **Powerful Forwarding**: Easy management of local, remote, and dynamic (SOCKS5) port forwarding.
 
-### Installation
+---
+
+## 📦 Installation
+
+Build from source (requires Go 1.20+):
+
 ```bash
 go build -o knot cmd/knot/main.go
+# Move to your PATH, e.g., /usr/local/bin/
+sudo mv knot /usr/local/bin/
 ```
 
-### Usage
+### Shell Completion
+
+Knot provides built-in completion for Bash, Zsh, and Fish.
+
 ```bash
-# Add a new server configuration
-./knot add [alias]
-
-# List all servers
-./knot list
-
-# Connect via SSH
-./knot ssh [alias]
-
-# Enter SFTP REPL
-./knot sftp [alias]
-
-# Export/Import configurations
-./knot export
-./knot import [file]
+# For Zsh
+knot completion zsh > ~/.zfunc/_knot
+# For Bash
+knot completion bash > /etc/bash_completion.d/knot
 ```
 
-## License
-MIT License. See [LICENSE](LICENSE) for details.
+---
+
+## 🛠️ Quick Start
+
+### 1. Add a Server
+Knot will guide you through the setup or you can use flags for automation.
+```bash
+knot add web-prod --host 1.2.3.4 --user deploy --key my_key --tags prod
+```
+
+### 2. Connect Instantly
+Unknown subcommands are treated as aliases. `knot [alias]` is all you need.
+```bash
+knot web-prod
+```
+
+### 3. Jump Hosts & Proxies
+```bash
+# Add a proxy
+knot proxy add my-socks5 --host 127.0.0.1 --port 1080 --type socks5
+
+# Add a server with a proxy or jump host chain
+knot add web-prod --host 1.2.3.4 --proxy my-socks5
+knot add db-internal --host 10.0.0.5 --jump jumphost1,jumphost2
+```
+
+### 4. File Transfer (Docker-style)
+```bash
+# Upload
+knot cp ./dist/. web-prod:/var/www/html/
+# Download
+knot cp web-prod:/var/log/nginx/access.log ./
+```
+
+### 4. Remote Execution
+```bash
+knot exec web-prod "uptime" --json
+```
+
+---
+
+## 🏗️ Architecture
+
+Knot uses a Client/Server model to maintain persistent SSH connections in the background.
+
+
+
+*   **Daemon**: Maintains a pool of physical SSH connections.
+*   **CLI**: Lightweight frontend that talks to the daemon over UDS.
+*   **Protocol**: Compact 8-byte header binary protocol for low-latency IPC.
+
+---
+
+## 🔒 Security
+
+Sensitive data in `~/.config/knot/config.toml` is encrypted with an `ENC:` prefix:
+- **Windows**: DPAPI
+- **macOS**: Keychain
+- **Linux**: AES-256-GCM (Derived from `/etc/machine-id` + Salt)
+
+---
+
+## ⌨️ Command Reference
+
+| Category | Command | Description |
+| :--- | :--- | :--- |
+| **Sessions** | `knot [alias]` | Shortcut for `knot ssh [alias]` |
+| | `knot sftp [alias]` | Interactive SFTP with directory following |
+| **Files** | `knot cp [src] [dst]` | High-speed file transfer (Local ↔ Remote) |
+| **Remote** | `knot exec [alias] [cmd]` | Non-interactive command execution |
+| **Network** | `knot forward` | Manage L/R/D port forwarding rules |
+| **Manager** | `knot list [pattern]` | List servers grouped by tags |
+| | `knot status` | Check daemon and connection pool health |
+| | `knot export/import` | Encrypted configuration backup |
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).

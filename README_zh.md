@@ -1,53 +1,129 @@
 # Knot
 
-Knot 是一款专为开发者与 AI Agent 设计的极简、高速且安全的 SSH/SFTP 命令行管理工具。
+简体中文 | [English](./README.md)
 
-## 核心理念
-- **极简交互**：拥抱纯 CLI，无 TUI（终端用户界面），对自动化脚本和 AI 集成极其友好。
-- **连接复用**：通过后台守护进程 (Daemon) 维护 SSH 物理长连接，实现秒级开启新会话。
-- **原生安全**：凭据存储与操作系统深度集成（如 Windows DPAPI, Linux Machine-ID + Salt），杜绝明文密码。
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
-## 主要特性
-- **C/S 架构**：前端 CLI 与后端 Daemon 通过 Unix Domain Socket (UDS) 进行高效通信。
-- **极速响应**：通过连接池技术，大幅降低新会话的建立开销。
-- **安全存储**：敏感信息加密后以 `ENC:` 前缀存储于 TOML 配置文件中。
-- **交互式 SFTP REPL**：提供功能强大的交互环境，支持命令补全与历史记录。
-- **目录跟随**：通过监听 PTY 数据流（OSC 7），支持 SSH 与 SFTP 工作目录实时同步。
+**Knot** 是一款极简、高性能的 SSH/SFTP 管理工具，专为开发者与 AI Agent 设计。通过后台守护进程 (Daemon) 与连接复用技术，它彻底消除了传统 SSH 的握手开销，让远程会话和文件传输几乎达到“瞬时”响应。
 
-## 技术架构
-- **语言**：Go (Golang)
-- **协议**：`golang.org/x/crypto/ssh`, `github.com/pkg/sftp`
-- **通信**：本地 UDS 确保高性能与本地安全性。
+---
 
-## 快速入门
+## 🚀 为什么选择 Knot?
 
-### 前置条件
-- Go 1.21 或更高版本（用于从源码构建）
-- Linux (Windows 与 macOS 支持正在开发中)
+*   ⚡ **瞬时连接**: 基于连接复用技术，后台维护物理连接，新建会话无需等待握手。
+*   🔌 **高级网络支持**: 内置跳板机链 (Jump Host) 与 SOCKS5/HTTP 代理支持。
+*   🔒 **原生安全**: 密码与密钥绝不以明文存储。深度集成系统级加密（Windows DPAPI, macOS Keychain, Linux Secret Service 及其 Machine-ID 降级方案）。
+*   🤖 **AI & 脚本友好**: 所有命令原生支持 `--json` 输出，提供完整的非交互模式，完美适配自动化脚本。
+*   🛠️ **现代 SFTP**: 交互式 REPL 环境，支持“目录跟随”(OSC 7)，可与活跃的 SSH 会话实时同步路径。
+*   🔌 **强力转发**: 轻松管理本地 (L)、远程 (R) 和动态 (D/SOCKS5) 端口转发。
 
-### 安装
+---
+
+## 📦 安装
+
+从源码编译（需要 Go 1.20+）：
+
 ```bash
 go build -o knot cmd/knot/main.go
+# 移动到 PATH 目录，例如 /usr/local/bin/
+sudo mv knot /usr/local/bin/
 ```
 
-### 常用命令
+### Shell 补全
+
+Knot 内置了对 Bash, Zsh, 和 Fish 的补全支持。
+
 ```bash
-# 添加新的服务器配置
-./knot add [alias]
-
-# 列出所有服务器
-./knot list
-
-# 通过 SSH 连接
-./knot ssh [alias]
-
-# 进入 SFTP 交互环境
-./knot sftp [alias]
-
-# 导出/导入配置
-./knot export
-./knot import [file]
+# Zsh 示例
+knot completion zsh > ~/.zfunc/_knot
+# Bash 示例
+knot completion bash > /etc/bash_completion.d/knot
 ```
 
-## 许可证
-MIT License. 详见 [LICENSE](LICENSE) 文件。
+---
+
+## 🛠️ 快速上手
+
+### 1. 添加服务器
+Knot 提供交互式引导，也支持通过参数快速添加。
+```bash
+knot add web-prod --host 1.2.3.4 --user deploy --key my_key --tags prod
+```
+
+### 2. 瞬时连接
+未识别的子命令会被自动作为别名处理。只需输入 `knot [别名]` 即可。
+```bash
+knot web-prod
+```
+
+### 3. 跳板机与代理
+```bash
+# 添加代理
+knot proxy add my-socks5 --host 127.0.0.1 --port 1080 --type socks5
+
+# 添加带代理或跳板机链的服务器
+knot add web-prod --host 1.2.3.4 --proxy my-socks5
+knot add db-internal --host 10.0.0.5 --jump jumphost1,jumphost2
+```
+
+### 4. 文件传输 (Docker 风格)
+```bash
+# 上传
+knot cp ./dist/. web-prod:/var/www/html/
+# 下载
+knot cp web-prod:/var/log/nginx/access.log ./
+```
+
+### 5. 远程命令执行
+```bash
+knot exec web-prod "uptime" --json
+```
+
+---
+
+## 🏗️ 架构设计
+
+Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
+
+```text
+┌─────────────┐     Unix Domain Socket     ┌──────────────────┐
+│  knot CLI   │ ◄────────────────────────► │  knot daemon     │
+│   (前端)     │       二进制协议           │ (SSH 持久连接)    │
+└─────────────┘                            └──────────────────┘
+```
+
+*   **Daemon**: 维护物理 SSH 连接池。
+*   **CLI**: 轻量级前端，通过 UDS 与守护进程通信。
+*   **协议**: 紧凑的 8 字节头部二进制协议，确保低延迟。
+
+---
+
+## 🔒 安全性
+
+`~/.config/knot/config.toml` 中的敏感数据均带有 `ENC:` 前缀进行加密存储：
+- **Windows**: DPAPI
+- **macOS**: Keychain
+- **Linux**: AES-256-GCM (密钥存储于 Secret Service / D-Bus，降级方案为 `/etc/machine-id` + 盐值)
+
+---
+
+## ⌨️ 常用命令参考
+
+| 分类 | 命令 | 说明 |
+| :--- | :--- | :--- |
+| **会话管理** | `knot [别名]` | `knot ssh [别名]` 的快捷方式 |
+| | `knot sftp [alias]` | 带目录跟随功能的交互式 SFTP |
+| **文件操作** | `knot cp [源] [目标]` | 高速文件传输（本地 ↔ 远程） |
+| **远程执行** | `knot exec [别名] [命令]` | 非交互式远程命令执行 |
+| **网络功能** | `knot forward` | 管理 L/R/D 端口转发规则 |
+| **管理工具** | `knot list [模式]` | 查看按标签分组的服务器列表 |
+| | `knot status` | 查看守护进程与连接池状态 |
+| | `knot export/import` | 加密后的配置备份与导入 |
+
+---
+
+## 📄 许可证
+
+本项目采用 [MIT License](LICENSE) 许可证。
