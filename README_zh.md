@@ -87,12 +87,7 @@ knot exec web-prod "uptime" --json
 
 Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
 
-```text
-┌─────────────┐     Unix Domain Socket     ┌──────────────────┐
-│  knot CLI   │ ◄────────────────────────► │  knot daemon     │
-│   (前端)     │       二进制协议           │ (SSH 持久连接)    │
-└─────────────┘                            └──────────────────┘
-```
+<img width="511" height="241" alt="PixPin_2026-04-21_17-22-20" src="https://github.com/user-attachments/assets/caca981a-644c-456f-8f1a-59cc119fc87b" />
 
 *   **Daemon**: 维护物理 SSH 连接池。
 *   **CLI**: 轻量级前端，通过 UDS 与守护进程通信。
