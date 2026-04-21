@@ -41,7 +41,24 @@ func NewWindowsProvider() (Provider, error) {
 }
 
 func (p *windowsProvider) Name() string {
-	return "Windows DPAPI (with Fallback)"
+	// Try a simple DPAPI encryption to see if it's healthy
+	testData := []byte("health-check")
+	var dataIn windows.DataBlob
+	dataIn.Size = uint32(len(testData))
+	dataIn.Data = &testData[0]
+
+	var dataOut windows.DataBlob
+	err := windows.CryptProtectData(&dataIn, nil, nil, 0, nil, 1, &dataOut)
+	if err == nil {
+		windows.LocalFree(windows.Handle(unsafe.Pointer(dataOut.Data)))
+		return "Windows DPAPI"
+	}
+
+	if p.fallbackKey != nil {
+		return "Machine ID Fallback"
+	}
+
+	return "None"
 }
 
 // Encrypt encrypts data using Windows DPAPI, falls back to Machine ID if DPAPI fails.

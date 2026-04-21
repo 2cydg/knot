@@ -61,7 +61,7 @@ func NewDarwinProvider() (Provider, error) {
 
 func (p *darwinProvider) Name() string {
 	if p.key == nil {
-		return "macOS Machine ID (Fallback)"
+		return "Machine ID Fallback"
 	}
 	return "macOS Keychain"
 }
