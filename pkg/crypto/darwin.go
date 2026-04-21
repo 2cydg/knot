@@ -3,8 +3,6 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -20,67 +18,70 @@ const (
 )
 
 type darwinProvider struct {
-	key []byte
+	key         []byte
+	fallbackKey []byte
 }
 
 func NewDarwinProvider() (Provider, error) {
 	logger.Debug("Initializing macOS Keychain crypto provider")
+
+	// Pre-calculate fallback key
+	machineID, err := getMachineID()
+	if err != nil {
+		logger.Debug("Failed to get IOPlatformUUID, encryption might fail if Keychain is unavailable", "error", err)
+	}
+	
+	salt, err := GetSalt()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get salt: %w", err)
+	}
+
+	fallbackKey := DeriveKey(machineID, salt)
+
 	key, err := getOrCreateKeychainKey()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get or create keychain key: %w", err)
+		logger.Debug("Keychain access failed, will use Machine ID fallback", "error", err)
 	}
-	return &darwinProvider{key: key}, nil
+
+	return &darwinProvider{
+		key:         key,
+		fallbackKey: fallbackKey,
+	}, nil
 }
 
 func (p *darwinProvider) Name() string {
+	if p.key == nil {
+		return "macOS Machine ID (Fallback)"
+	}
 	return "macOS Keychain"
 }
 
 func (p *darwinProvider) Encrypt(plaintext []byte) ([]byte, error) {
-	logger.Debug("Encrypting data using AES-GCM (macOS Keychain key)")
-	block, err := aes.NewCipher(p.key)
-	if err != nil {
-		return nil, err
+	key := p.key
+	if key == nil {
+		logger.Debug("Encrypting using Machine ID fallback")
+		key = p.fallbackKey
+	} else {
+		logger.Debug("Encrypting using Keychain key")
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return ciphertext, nil
+	return EncryptWithKey(plaintext, key)
 }
 
 func (p *darwinProvider) Decrypt(ciphertext []byte) ([]byte, error) {
-	logger.Debug("Decrypting data using AES-GCM (macOS Keychain key)")
-	block, err := aes.NewCipher(p.key)
-	if err != nil {
-		return nil, err
+	// Try main key first (Keychain)
+	if p.key != nil {
+		logger.Debug("Attempting decryption with Keychain key")
+		plaintext, err := DecryptWithKey(ciphertext, p.key)
+		if err == nil {
+			return plaintext, nil
+		}
+		logger.Debug("Decryption with Keychain key failed", "error", err)
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return nil, ErrDecryptionFailed
-	}
-
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, ErrDecryptionFailed
-	}
-
-	return plaintext, nil
+	// Fallback to machine-id key
+	logger.Debug("Attempting decryption with Machine ID fallback key")
+	return DecryptWithKey(ciphertext, p.fallbackKey)
 }
 
 func getOrCreateKeychainKey() ([]byte, error) {
@@ -109,4 +110,26 @@ func getOrCreateKeychainKey() ([]byte, error) {
 
 	logger.Debug("New key created and stored in macOS Keychain successfully")
 	return key, nil
+}
+
+func getMachineID() (string, error) {
+	// ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
+	cmd := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "IOPlatformUUID") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				uuid := strings.TrimSpace(parts[1])
+				uuid = strings.Trim(uuid, "\"")
+				return uuid, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("IOPlatformUUID not found in ioreg output")
 }

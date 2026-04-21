@@ -4,33 +4,24 @@ package crypto
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"knot/internal/logger"
-	"knot/internal/paths"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/godbus/dbus/v5"
-	"golang.org/x/crypto/pbkdf2"
 )
 
 const (
-	saltFile      = ".salt"
-	saltLength    = 32
-	iterations    = 100000
-	ssServiceName = "org.freedesktop.secrets"
-	ssObjectPath  = "/org/freedesktop/secrets"
-	ssInterface   = "org.freedesktop.Secret.Service"
+	ssServiceName   = "org.freedesktop.secrets"
+	ssObjectPath    = "/org/freedesktop/secrets"
+	ssInterface     = "org.freedesktop.Secret.Service"
 	ssCollInterface = "org.freedesktop.Secret.Collection"
-	ssCollection  = "/org/freedesktop/secrets/collection/login"
+	ssCollection    = "/org/freedesktop/secrets/collection/login"
 )
 
 var ssItemAttributes = map[string]string{
@@ -52,12 +43,12 @@ func NewLinuxProvider() (Provider, error) {
 	}
 	logger.Debug("Machine ID retrieved", "id", machineID[:8]+"...")
 
-	salt, err := getSalt()
+	salt, err := GetSalt()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get salt: %w", err)
 	}
 
-	fallbackKey := pbkdf2.Key([]byte(machineID), salt, iterations, 32, sha256.New)
+	fallbackKey := DeriveKey(machineID, salt)
 
 	// Try secret-service via D-Bus
 	ssKey, err := getSecretServiceKey()
@@ -89,31 +80,14 @@ func (p *linuxProvider) Encrypt(plaintext []byte) ([]byte, error) {
 		logger.Debug("Encrypting using Secret Service")
 	}
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return ciphertext, nil
+	return EncryptWithKey(plaintext, key)
 }
 
 func (p *linuxProvider) Decrypt(ciphertext []byte) ([]byte, error) {
-	// Try main key first (Secret Service if available, or Machine ID)
-	key := p.key
-	if key != nil {
+	// Try main key first (Secret Service if available)
+	if p.key != nil {
 		logger.Debug("Attempting decryption with Secret Service key")
-		plaintext, err := p.decryptWithKey(ciphertext, key)
+		plaintext, err := DecryptWithKey(ciphertext, p.key)
 		if err == nil {
 			return plaintext, nil
 		}
@@ -122,32 +96,7 @@ func (p *linuxProvider) Decrypt(ciphertext []byte) ([]byte, error) {
 
 	// Fallback to machine-id key
 	logger.Debug("Attempting decryption with Machine ID fallback key")
-	return p.decryptWithKey(ciphertext, p.fallbackKey)
-}
-
-func (p *linuxProvider) decryptWithKey(ciphertext []byte, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return nil, ErrDecryptionFailed
-	}
-
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, ErrDecryptionFailed
-	}
-
-	return plaintext, nil
+	return DecryptWithKey(ciphertext, p.fallbackKey)
 }
 
 func getDBusConn() (*dbus.Conn, error) {
@@ -271,29 +220,4 @@ func getMachineID() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("could not find machine-id in any of %v", paths)
-}
-
-func getSalt() ([]byte, error) {
-	configDir, err := paths.GetConfigDir()
-	if err != nil {
-		return nil, err
-	}
-
-	saltPath := filepath.Join(configDir, saltFile)
-	if _, err := os.Stat(saltPath); os.IsNotExist(err) {
-		// Generate new salt
-		salt := make([]byte, saltLength)
-		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-			return nil, err
-		}
-		if err := os.MkdirAll(configDir, 0700); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(saltPath, salt, 0600); err != nil {
-			return nil, err
-		}
-		return salt, nil
-	}
-
-	return os.ReadFile(saltPath)
 }
