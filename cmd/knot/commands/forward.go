@@ -390,5 +390,6 @@ func init() {
 	forwardCmd.AddCommand(forwardEnableCmd)
 	forwardCmd.AddCommand(forwardDisableCmd)
 	
+	forwardCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(forwardCmd)
 }

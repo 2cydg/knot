@@ -189,27 +189,31 @@ var daemonClearCmd = &cobra.Command{
 }
 
 var stopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Stop the background daemon (shortcut for 'daemon stop')",
-	RunE:  daemonStopCmd.RunE,
+	Use:    "stop",
+	Short:  "Stop the background daemon (shortcut for 'daemon stop')",
+	RunE:   daemonStopCmd.RunE,
+	Hidden: true,
 }
 
 var startCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start the background daemon (shortcut for 'daemon start')",
-	RunE:  daemonStartCmd.RunE,
+	Use:    "start",
+	Short:  "Start the background daemon (shortcut for 'daemon start')",
+	RunE:   daemonStartCmd.RunE,
+	Hidden: true,
 }
 
 var restartCmd = &cobra.Command{
-	Use:   "restart",
-	Short: "Restart the background daemon (shortcut for 'daemon restart')",
-	RunE:  daemonRestartCmd.RunE,
+	Use:    "restart",
+	Short:  "Restart the background daemon (shortcut for 'daemon restart')",
+	RunE:   daemonRestartCmd.RunE,
+	Hidden: true,
 }
 
 var clearCmd = &cobra.Command{
-	Use:   "clear",
-	Short: "Clear active connections (shortcut for 'daemon clear')",
-	RunE:  daemonClearCmd.RunE,
+	Use:    "clear",
+	Short:  "Clear active connections (shortcut for 'daemon clear')",
+	RunE:   daemonClearCmd.RunE,
+	Hidden: true,
 }
 
 func init() {
@@ -218,12 +222,12 @@ func init() {
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonClearCmd)
-	daemonCmd.GroupID = advancedGroup.ID
+	daemonCmd.GroupID = managementGroup.ID
 
-	stopCmd.GroupID = advancedGroup.ID
-	startCmd.GroupID = advancedGroup.ID
-	restartCmd.GroupID = advancedGroup.ID
-	clearCmd.GroupID = advancedGroup.ID
+	stopCmd.GroupID = managementGroup.ID
+	startCmd.GroupID = managementGroup.ID
+	restartCmd.GroupID = managementGroup.ID
+	clearCmd.GroupID = managementGroup.ID
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(stopCmd)

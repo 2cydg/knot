@@ -468,6 +468,6 @@ func init() {
 	addCmd.Flags().StringP("jump-host", "J", "", "Jump host alias(es), comma-separated")
 	addCmd.Flags().String("proxy", "", "Proxy alias")
 	addCmd.Flags().StringP("tags", "t", "", "Server tags, comma-separated")
-	addCmd.GroupID = basicGroup.ID
+	addCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(addCmd)
 }

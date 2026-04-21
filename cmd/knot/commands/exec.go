@@ -80,6 +80,6 @@ var execCmd = &cobra.Command{
 
 func init() {
 	execCmd.Flags().IntVarP(&execTimeout, "timeout", "t", 60, "Command execution timeout in seconds (0 for infinite)")
-	execCmd.GroupID = basicGroup.ID
+	execCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(execCmd)
 }

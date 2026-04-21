@@ -163,7 +163,7 @@ func extractTime(line string) (time.Time, error) {
 func init() {
 	logsCmd.Flags().IntVarP(&logsTail, "tail", "t", 100, "Number of lines to show from the end of the logs")
 	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output")
-	logsCmd.GroupID = advancedGroup.ID
+	logsCmd.GroupID = managementGroup.ID
 	rootCmd.AddCommand(logsCmd)
 }
 

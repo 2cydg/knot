@@ -147,6 +147,6 @@ var sftpCmd = &cobra.Command{
 
 func init() {
 	sftpCmd.Flags().BoolP("follow", "f", false, "Follow an active SSH session directory")
-	sftpCmd.GroupID = basicGroup.ID
+	sftpCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(sftpCmd)
 }

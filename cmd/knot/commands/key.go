@@ -443,6 +443,6 @@ func init() {
 	keyCmd.AddCommand(keyAddCmd)
 	keyCmd.AddCommand(keyRemoveCmd)
 	keyCmd.AddCommand(keyEditCmd)
-	keyCmd.GroupID = advancedGroup.ID
+	keyCmd.GroupID = managementGroup.ID
 	rootCmd.AddCommand(keyCmd)
 }

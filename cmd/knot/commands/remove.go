@@ -45,6 +45,6 @@ var removeCmd = &cobra.Command{
 }
 
 func init() {
-	removeCmd.GroupID = basicGroup.ID
+	removeCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(removeCmd)
 }

@@ -362,6 +362,6 @@ var editCmd = &cobra.Command{
 }
 
 func init() {
-	editCmd.GroupID = basicGroup.ID
+	editCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(editCmd)
 }

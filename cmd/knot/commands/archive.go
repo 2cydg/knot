@@ -168,8 +168,8 @@ var importCmd = &cobra.Command{
 }
 
 func init() {
-	exportCmd.GroupID = basicGroup.ID
-	importCmd.GroupID = basicGroup.ID
+	exportCmd.GroupID = managementGroup.ID
+	importCmd.GroupID = managementGroup.ID
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(importCmd)
 }

@@ -195,7 +195,7 @@ var configSetCmd = &cobra.Command{
 }
 
 func init() {
-	configCmd.GroupID = advancedGroup.ID
+	configCmd.GroupID = managementGroup.ID
 	configCmd.AddCommand(configInitCmd, configListCmd, configGetCmd, configSetCmd)
 	rootCmd.AddCommand(configCmd)
 }

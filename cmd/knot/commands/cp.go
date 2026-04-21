@@ -153,6 +153,6 @@ func init() {
 	cpCmd.Flags().BoolVarP(&cpRecursive, "recursive", "r", false, "Recursive copy")
 	cpCmd.Flags().BoolVarP(&cpForce, "force", "f", false, "Overwrite existing files")
 	
-	cpCmd.GroupID = basicGroup.ID
+	cpCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(cpCmd)
 }

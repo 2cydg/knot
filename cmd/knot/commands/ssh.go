@@ -196,6 +196,6 @@ var sshCmd = &cobra.Command{
 }
 
 func init() {
-	sshCmd.GroupID = basicGroup.ID
+	sshCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(sshCmd)
 }
