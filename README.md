@@ -86,6 +86,7 @@ knot exec web-prod "uptime" --json
 
 Knot uses a Client/Server model to maintain persistent SSH connections in the background.
 
+<img width="511" height="241" alt="PixPin_2026-04-21_17-22-20" src="https://github.com/user-attachments/assets/caca981a-644c-456f-8f1a-59cc119fc87b" />
 
 
 *   **Daemon**: Maintains a pool of physical SSH connections.
