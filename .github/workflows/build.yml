@@ -12,15 +12,25 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
             artifact_name: knot
             asset_name: knot-linux-amd64
           - os: macos-latest
+            goos: darwin
+            goarch: amd64
             artifact_name: knot
             asset_name: knot-macos-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            artifact_name: knot
+            asset_name: knot-macos-arm64
           - os: windows-latest
+            goos: windows
+            goarch: amd64
             artifact_name: knot.exe
             asset_name: knot-windows-amd64.exe
 
@@ -39,10 +49,15 @@ jobs:
 
     - name: Run tests
       run: go test -v ./...
+      # Skip tests when cross-compiling as they cannot run natively
+      if: runner.os == 'Linux' && matrix.goos == 'linux' || runner.os == 'macOS' && matrix.goos == 'darwin' && matrix.goarch == 'amd64' || runner.os == 'Windows' && matrix.goos == 'windows'
 
     - name: Build
       run: |
         go build -v -o bin/${{ matrix.artifact_name }} cmd/knot/main.go
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
