@@ -30,7 +30,10 @@ func NewWindowsProvider() (Provider, error) {
 		return nil, fmt.Errorf("failed to get salt: %w", err)
 	}
 
-	fallbackKey := DeriveKey(machineID, salt)
+	var fallbackKey []byte
+	if machineID != "" {
+		fallbackKey = DeriveKey(machineID, salt)
+	}
 
 	return &windowsProvider{
 		fallbackKey: fallbackKey,
@@ -44,53 +47,60 @@ func (p *windowsProvider) Name() string {
 // Encrypt encrypts data using Windows DPAPI, falls back to Machine ID if DPAPI fails.
 func (p *windowsProvider) Encrypt(plaintext []byte) ([]byte, error) {
 	logger.Debug("Attempting encryption using Windows DPAPI")
-	
-	// Handle empty input explicitly if necessary, though EncryptWithKey handles it.
-	if len(plaintext) == 0 {
+
+	if len(plaintext) > 0 {
+		var dataIn windows.DataBlob
+		dataIn.Size = uint32(len(plaintext))
+		dataIn.Data = &plaintext[0]
+
+		var dataOut windows.DataBlob
+		// CRYPTPROTECT_UI_FORBIDDEN = 0x1
+		err := windows.CryptProtectData(&dataIn, nil, nil, 0, nil, 1, &dataOut)
+		if err == nil {
+			defer windows.LocalFree(windows.Handle(unsafe.Pointer(dataOut.Data)))
+			out := make([]byte, dataOut.Size)
+			copy(out, unsafe.Slice(dataOut.Data, dataOut.Size))
+			logger.Debug("Data encrypted successfully using DPAPI")
+			return out, nil
+		}
+		logger.Debug("DPAPI encryption failed, falling back to Machine ID", "error", err)
+	} else if len(plaintext) == 0 {
 		return nil, nil
 	}
 
-	var dataIn windows.DataBlob
-	dataIn.Size = uint32(len(plaintext))
-	dataIn.Data = &plaintext[0]
-
-	var dataOut windows.DataBlob
-	// CRYPTPROTECT_UI_FORBIDDEN = 0x1
-	err := windows.CryptProtectData(&dataIn, nil, nil, 0, nil, 1, &dataOut)
-	if err == nil {
-		defer windows.LocalFree(windows.Handle(unsafe.Pointer(dataOut.Data)))
-		out := make([]byte, dataOut.Size)
-		copy(out, unsafe.Slice(dataOut.Data, dataOut.Size))
-		logger.Debug("Data encrypted successfully using DPAPI")
-		return out, nil
+	if p.fallbackKey == nil {
+		return nil, fmt.Errorf("no encryption key available (DPAPI failed and Machine ID not found)")
 	}
 
-	logger.Debug("DPAPI encryption failed, falling back to Machine ID", "error", err)
 	return EncryptWithKey(plaintext, p.fallbackKey)
 }
 
 // Decrypt decrypts data using Windows DPAPI, falls back to Machine ID if DPAPI fails.
 func (p *windowsProvider) Decrypt(ciphertext []byte) ([]byte, error) {
-	if len(ciphertext) == 0 {
+	if len(ciphertext) > 0 {
+		logger.Debug("Attempting decryption using Windows DPAPI")
+		var dataIn windows.DataBlob
+		dataIn.Size = uint32(len(ciphertext))
+		dataIn.Data = &ciphertext[0]
+
+		var dataOut windows.DataBlob
+		err := windows.CryptUnprotectData(&dataIn, nil, nil, 0, nil, 1, &dataOut)
+		if err == nil {
+			defer windows.LocalFree(windows.Handle(unsafe.Pointer(dataOut.Data)))
+			out := make([]byte, dataOut.Size)
+			copy(out, unsafe.Slice(dataOut.Data, dataOut.Size))
+			logger.Debug("Data decrypted successfully using DPAPI")
+			return out, nil
+		}
+		logger.Debug("DPAPI decryption failed, trying Machine ID fallback", "error", err)
+	} else if len(ciphertext) == 0 {
 		return nil, nil
 	}
 
-	logger.Debug("Attempting decryption using Windows DPAPI")
-	var dataIn windows.DataBlob
-	dataIn.Size = uint32(len(ciphertext))
-	dataIn.Data = &ciphertext[0]
-
-	var dataOut windows.DataBlob
-	err := windows.CryptUnprotectData(&dataIn, nil, nil, 0, nil, 1, &dataOut)
-	if err == nil {
-		defer windows.LocalFree(windows.Handle(unsafe.Pointer(dataOut.Data)))
-		out := make([]byte, dataOut.Size)
-		copy(out, unsafe.Slice(dataOut.Data, dataOut.Size))
-		logger.Debug("Data decrypted successfully using DPAPI")
-		return out, nil
+	if p.fallbackKey == nil {
+		return nil, ErrDecryptionFailed
 	}
 
-	logger.Debug("DPAPI decryption failed, trying Machine ID fallback", "error", err)
 	return DecryptWithKey(ciphertext, p.fallbackKey)
 }
 
