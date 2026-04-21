@@ -122,6 +122,10 @@ var sshCmd = &cobra.Command{
 				return fmt.Errorf("failed to set raw mode: %w", err)
 			}
 			defer term.Restore(fd, oldState)
+
+			// Clear screen before starting session to provide a clean state
+			// Use \033[H to move cursor to home and \033[2J to clear screen
+			os.Stdout.Write([]byte("\033[H\033[2J"))
 		}
 
 		// Handle resize
