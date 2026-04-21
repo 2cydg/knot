@@ -26,9 +26,10 @@ const (
 	saltFile      = ".salt"
 	saltLength    = 32
 	iterations    = 100000
-	ssServiceName = "org.freedesktop.Secrets"
+	ssServiceName = "org.freedesktop.secrets"
 	ssObjectPath  = "/org/freedesktop/secrets"
 	ssInterface   = "org.freedesktop.Secret.Service"
+	ssCollInterface = "org.freedesktop.Secret.Collection"
 	ssCollection  = "/org/freedesktop/secrets/collection/login"
 )
 
@@ -165,7 +166,7 @@ func getDBusConn() (*dbus.Conn, error) {
 		return nil, fmt.Errorf("no D-Bus session address found (DBUS_SESSION_BUS_ADDRESS is empty)")
 	}
 
-	return dbus.Dial(addr)
+	return dbus.Connect(addr)
 }
 
 func getSecretServiceKey() ([]byte, error) {
@@ -253,7 +254,7 @@ func getSecretServiceKey() ([]byte, error) {
 
 	var newItem dbus.ObjectPath
 	var prompt dbus.ObjectPath
-	err = conn.Object(ssServiceName, ssCollection).CallWithContext(ctx, "org.freedesktop.Secret.Collection.CreateItem", 0, properties, secretInput, true).Store(&newItem, &prompt)
+	err = conn.Object(ssServiceName, ssCollection).CallWithContext(ctx, ssCollInterface+".CreateItem", 0, properties, secretInput, true).Store(&newItem, &prompt)
 	if err != nil {
 		return nil, fmt.Errorf("CreateItem failed: %w", err)
 	}

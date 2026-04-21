@@ -37,7 +37,7 @@ var daemonStartCmd = &cobra.Command{
 			
 			// Redirect output to a log file in background mode
 			home, _ := os.UserHomeDir()
-			logPath := filepath.Join(home, ".config/knot/daemon.log")
+			logPath := filepath.Join(home, ".config/knot/knot.log")
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 			if err == nil {
 				backgroundCmd.Stdout = logFile
@@ -71,7 +71,7 @@ var daemonStartCmd = &cobra.Command{
 
 		// 1. Pre-load config to get log level
 		home, _ := os.UserHomeDir()
-		logPath := filepath.Join(home, ".config/knot/daemon.log")
+		logPath := filepath.Join(home, ".config/knot/knot.log")
 		
 		// Temporary load to get settings
 		tmpProvider, _ := crypto.NewProvider() // We don't care if this fails/fallbacks yet
