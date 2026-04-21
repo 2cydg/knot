@@ -9,6 +9,7 @@ import (
 	"io"
 	"knot/internal/logger"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -25,10 +26,10 @@ type darwinProvider struct {
 func NewDarwinProvider() (Provider, error) {
 	logger.Debug("Initializing macOS Keychain crypto provider")
 
-	// Pre-calculate fallback key
+	// 1. Get Machine ID for fallback
 	machineID, err := getMachineID()
 	if err != nil {
-		logger.Debug("Failed to get IOPlatformUUID, encryption might fail if Keychain is unavailable", "error", err)
+		logger.Debug("Failed to get IOPlatformUUID", "error", err)
 	}
 	
 	salt, err := GetSalt()
@@ -36,11 +37,20 @@ func NewDarwinProvider() (Provider, error) {
 		return nil, fmt.Errorf("failed to get salt: %w", err)
 	}
 
-	fallbackKey := DeriveKey(machineID, salt)
+	var fallbackKey []byte
+	if machineID != "" {
+		fallbackKey = DeriveKey(machineID, salt)
+	}
 
+	// 2. Get or create Keychain key
 	key, err := getOrCreateKeychainKey()
 	if err != nil {
-		logger.Debug("Keychain access failed, will use Machine ID fallback", "error", err)
+		logger.Debug("Keychain access failed, will use Machine ID fallback if available", "error", err)
+	}
+
+	// 3. Validation
+	if key == nil && fallbackKey == nil {
+		return nil, fmt.Errorf("failed to initialize any crypto provider on macOS (Keychain failed and Machine ID not found)")
 	}
 
 	return &darwinProvider{
@@ -59,6 +69,9 @@ func (p *darwinProvider) Name() string {
 func (p *darwinProvider) Encrypt(plaintext []byte) ([]byte, error) {
 	key := p.key
 	if key == nil {
+		if p.fallbackKey == nil {
+			return nil, fmt.Errorf("no encryption key available")
+		}
 		logger.Debug("Encrypting using Machine ID fallback")
 		key = p.fallbackKey
 	} else {
@@ -80,31 +93,41 @@ func (p *darwinProvider) Decrypt(ciphertext []byte) ([]byte, error) {
 	}
 
 	// Fallback to machine-id key
-	logger.Debug("Attempting decryption with Machine ID fallback key")
-	return DecryptWithKey(ciphertext, p.fallbackKey)
+	if p.fallbackKey != nil {
+		logger.Debug("Attempting decryption with Machine ID fallback key")
+		return DecryptWithKey(ciphertext, p.fallbackKey)
+	}
+
+	return nil, ErrDecryptionFailed
 }
 
 func getOrCreateKeychainKey() ([]byte, error) {
 	logger.Debug("Attempting to find existing key in macOS Keychain")
-	// Try to find the key
+	
 	cmd := exec.Command("security", "find-generic-password", "-a", keychainAccount, "-s", keychainService, "-w")
 	out, err := cmd.Output()
 	if err == nil {
-		logger.Debug("Found existing key in macOS Keychain")
-		return base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+		if err == nil && len(key) == 32 {
+			logger.Debug("Found existing key in macOS Keychain")
+			return key, nil
+		}
+		logger.Debug("Found existing key in Keychain but data is invalid, deleting and recreating")
+		// Delete the corrupted item
+		deleteCmd := exec.Command("security", "delete-generic-password", "-a", keychainAccount, "-s", keychainService)
+		_ = deleteCmd.Run()
 	}
 
-	logger.Debug("No existing key found in Keychain, creating a new one")
-	// Key not found, create one
+	logger.Debug("Creating a new key in Keychain")
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
 		return nil, err
 	}
 	keyStr := base64.StdEncoding.EncodeToString(key)
 
-	cmd = exec.Command("security", "add-generic-password", "-a", keychainAccount, "-s", keychainService, "-w", "-")
-	cmd.Stdin = strings.NewReader(keyStr)
-	if err := cmd.Run(); err != nil {
+	addCmd := exec.Command("security", "add-generic-password", "-a", keychainAccount, "-s", keychainService, "-w", "-")
+	addCmd.Stdin = strings.NewReader(keyStr)
+	if err := addCmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to add key to keychain: %w", err)
 	}
 
@@ -113,23 +136,17 @@ func getOrCreateKeychainKey() ([]byte, error) {
 }
 
 func getMachineID() (string, error) {
-	// ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
 	cmd := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "IOPlatformUUID") {
-			parts := strings.Split(line, "=")
-			if len(parts) == 2 {
-				uuid := strings.TrimSpace(parts[1])
-				uuid = strings.Trim(uuid, "\"")
-				return uuid, nil
-			}
-		}
+	re := regexp.MustCompile(`"IOPlatformUUID"\s*=\s*"([^"]+)"`)
+	match := re.FindStringSubmatch(string(out))
+	if len(match) > 1 {
+		return match[1], nil
 	}
+	
 	return "", fmt.Errorf("IOPlatformUUID not found in ioreg output")
 }

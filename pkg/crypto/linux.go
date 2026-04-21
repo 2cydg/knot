@@ -125,7 +125,7 @@ func getSecretServiceKey() ([]byte, error) {
 	}
 	defer conn.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	obj := conn.Object(ssServiceName, ssObjectPath)
@@ -169,7 +169,7 @@ func getSecretServiceKey() ([]byte, error) {
 		}
 		var secret Secret
 		err = conn.Object(ssServiceName, itemPath).CallWithContext(ctx, "org.freedesktop.Secret.Item.GetSecret", 0, sessionPath).Store(&secret)
-		if err == nil {
+		if err == nil && len(secret.Value) > 0 {
 			return base64.StdEncoding.DecodeString(strings.TrimSpace(string(secret.Value)))
 		}
 	}

@@ -4,11 +4,17 @@ import (
 	"knot/pkg/crypto"
 	"knot/internal/paths"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestConfigLoadSave(t *testing.T) {
+	// Skip on macOS in CI as Keychain access is restricted in headless environments
+	if os.Getenv("GITHUB_ACTIONS") == "true" && runtime.GOOS == "darwin" {
+		t.Skip("Skipping TestConfigLoadSave on macOS in CI (Keychain restricted)")
+	}
+
 	provider, err := crypto.NewProvider()
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)

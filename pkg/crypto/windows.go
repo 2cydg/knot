@@ -43,16 +43,19 @@ func (p *windowsProvider) Name() string {
 
 // Encrypt encrypts data using Windows DPAPI, falls back to Machine ID if DPAPI fails.
 func (p *windowsProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	logger.Debug("Attempting encryption using Windows DPAPI")
+	
+	// Handle empty input explicitly if necessary, though EncryptWithKey handles it.
 	if len(plaintext) == 0 {
 		return nil, nil
 	}
 
-	logger.Debug("Attempting encryption using Windows DPAPI")
 	var dataIn windows.DataBlob
 	dataIn.Size = uint32(len(plaintext))
 	dataIn.Data = &plaintext[0]
 
 	var dataOut windows.DataBlob
+	// CRYPTPROTECT_UI_FORBIDDEN = 0x1
 	err := windows.CryptProtectData(&dataIn, nil, nil, 0, nil, 1, &dataOut)
 	if err == nil {
 		defer windows.LocalFree(windows.Handle(unsafe.Pointer(dataOut.Data)))
