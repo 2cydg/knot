@@ -99,14 +99,9 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		sessions := d.sm.ListByAlias(alias)
 		for _, s := range sessions {
 			s.mu.Lock()
-			conns := make([]net.Conn, 0, len(s.followers)+1)
-			if s.primaryConn != nil {
-				conns = append(conns, s.primaryConn)
-			}
-			conns = append(conns, s.followers...)
+			conn := s.primaryConn
 			s.mu.Unlock()
-
-			for _, conn := range conns {
+			if conn != nil {
 				protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
 			}
 		}
@@ -207,14 +202,9 @@ func (d *Daemon) Stop() error {
 			sessions := d.sm.ListAll()
 			for _, s := range sessions {
 				s.mu.Lock()
-				conns := make([]net.Conn, 0, len(s.followers)+1)
-				if s.primaryConn != nil {
-					conns = append(conns, s.primaryConn)
-				}
-				conns = append(conns, s.followers...)
+				conn := s.primaryConn
 				s.mu.Unlock()
-
-				for _, conn := range conns {
+				if conn != nil {
 					protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("Daemon is shutting down"))
 				}
 			}
@@ -301,13 +291,6 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		case protocol.TypeSFTPReq:
 			d.handleSFTPRequest(conn, msg.Payload)
 			return
-		case protocol.TypeSessionListReq:
-			alias := string(msg.Payload)
-			if alias != "" && !isValidAlias(alias) {
-				logger.Warn("SessionList Request: invalid alias format", "alias", alias)
-				return
-			}
-			d.handleSessionListRequest(conn, alias)
 		case protocol.TypeStatusReq:
 			d.handleStatusRequest(conn)
 		case protocol.TypeForwardReq:

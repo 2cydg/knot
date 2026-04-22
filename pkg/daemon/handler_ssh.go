@@ -167,7 +167,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	var wg sync.WaitGroup
 	wg.Add(3)
 
-	// stdout -> conn (with OSC 7 parsing)
+	// stdout -> conn
 	go func() {
 		defer wg.Done()
 		defer cancel()
@@ -175,11 +175,6 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				// Parse OSC 7 for CWD tracking
-				if dir, ok := parseOSC7(buf[:n]); ok {
-					d.sm.UpdateDir(s.ID, dir)
-				}
-
 				if err := protocol.WriteMessage(conn, protocol.TypeData, protocol.DataStdout, buf[:n]); err != nil {
 					return
 				}

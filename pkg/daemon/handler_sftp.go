@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
@@ -19,7 +18,6 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 	}
 
 	alias := sftpReq.Alias
-	followSessionID := sftpReq.SessionID
 
 	sendError := func(errMsg string) {
 		logger.Error("SFTP Request Error", "alias", alias, "error", errMsg)
@@ -94,24 +92,6 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 	if err != nil {
 		sendError("failed to get stderr pipe")
 		return
-	}
-
-	// Register as follower if requested
-	if followSessionID != "" {
-		// Use encapsulated Get method
-		s, ok := d.sm.Get(followSessionID)
-
-		if !ok {
-			sendError("session not found: " + followSessionID)
-			return
-		}
-		if s.Alias != alias {
-			sendError(fmt.Sprintf("session %s does not belong to alias %s", followSessionID, alias))
-			return
-		}
-
-		d.sm.AddFollower(followSessionID, conn)
-		defer d.sm.RemoveFollower(followSessionID, conn)
 	}
 
 	// Send success response

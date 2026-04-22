@@ -30,8 +30,6 @@ const (
 	TypeSignal uint8 = 0x04
 	TypeHostKeyConfirm uint8 = 0x05
 	TypeSFTPReq uint8 = 0x06
-	TypeSessionListReq uint8 = 0x07
-	TypeCWDUpdate uint8 = 0x08
 	TypeDisconnect uint8 = 0x09
 	TypeStatusReq uint8 = 0x0A
 	TypeStatusResp uint8 = 0x0B
@@ -91,7 +89,6 @@ type SSHRequest struct {
 // SFTPRequest defines the payload for an SFTP session request.
 type SFTPRequest struct {
 	Alias         string `json:"alias"`
-	SessionID     string `json:"session_id,omitempty"`
 	IsInteractive bool   `json:"is_interactive"`
 }
 

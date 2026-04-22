@@ -15,7 +15,7 @@
 *   ⚡ **Instant Connectivity**: Connection multiplexing via a background daemon. No more waiting for SSH handshakes.
 *   🔒 **Native Security**: Passwords and keys are never stored in plaintext. Uses OS-level encryption (Windows DPAPI, macOS Keychain, Linux Machine-ID).
 *   🤖 **AI & Scripting Ready**: Built-in `--json` support for all commands and non-interactive modes for seamless automation.
-*   🛠️ **Modern SFTP**: Interactive REPL with "Directory Following" (OSC 7) to sync with your active SSH session.
+*   🛠️ **Modern SFTP**: Interactive REPL for efficient remote file management.
 *   🔌 **Powerful Forwarding**: Easy management of local, remote, and dynamic (SOCKS5) port forwarding.
 
 ---
@@ -109,7 +109,7 @@ Sensitive data in `~/.config/knot/config.toml` is encrypted with an `ENC:` prefi
 | Category | Command | Description |
 | :--- | :--- | :--- |
 | **Sessions** | `knot [alias]` | Shortcut for `knot ssh [alias]` |
-| | `knot sftp [alias]` | Interactive SFTP with directory following |
+| | `knot sftp [alias]` | Interactive SFTP shell |
 | **Files** | `knot cp [src] [dst]` | High-speed file transfer (Local ↔ Remote) |
 | **Remote** | `knot exec [alias] [cmd]` | Non-interactive command execution |
 | **Network** | `knot forward` | Manage L/R/D port forwarding rules |

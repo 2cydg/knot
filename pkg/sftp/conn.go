@@ -15,7 +15,6 @@ type SFTPConn struct {
 	Conn       net.Conn
 	DataCh     chan []byte
 	ErrCh      chan error
-	CwdCh      chan string
 	Ready      chan struct{} // Closed when "ok" is received
 	Closed     chan struct{}
 	StartOnce  sync.Once
@@ -121,13 +120,6 @@ func (s *SFTPConn) Start() {
 							}
 						}
 						return
-					}
-				case protocol.TypeCWDUpdate:
-					if s.CwdCh != nil {
-						select {
-						case s.CwdCh <- string(msg.Payload):
-						default:
-						}
 					}
 				}
 			}

@@ -13,7 +13,7 @@ import (
 )
 
 // RunREPL starts an interactive SFTP shell.
-func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan string) error {
+func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 	historyPath := filepath.Join(os.TempDir(), ".knot_sftp_history")
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          "",
@@ -37,16 +37,6 @@ func RunREPL(client *sftp.Client, alias string, initialDir string, cwdCh <-chan 
 	fmt.Printf("Connected to %s via SFTP. Type 'help' for commands.\n", alias)
 
 	for {
-		// Check for directory updates from follower
-		select {
-		case newDir := <-cwdCh:
-			if newDir != "" && newDir != cwd {
-				fmt.Printf("\n[follow] Directory changed to: %s\n", newDir)
-				cwd = newDir
-			}
-		default:
-		}
-
 		rl.SetPrompt(fmt.Sprintf("sftp:%s> ", cwd))
 		input, err := rl.Readline()
 		if err != nil {
