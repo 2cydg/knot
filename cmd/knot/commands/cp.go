@@ -122,14 +122,13 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 	// 2. Create SFTP client (handshake handled internally by SFTPConn)
 	sftpConn := &ksftp.SFTPConn{Conn: conn, Interactive: false}
 	sftpConn.Start()
+	<-sftpConn.Ready
+
+	// Check if there was an immediate error during handshake
 	select {
-	case <-sftpConn.Ready:
-		// Check if there was an immediate error during handshake
-		select {
-		case err := <-sftpConn.ErrCh:
-			return err
-		default:
-		}
+	case err := <-sftpConn.ErrCh:
+		return err
+	default:
 	}
 
 	sftpClient, err := sftp.NewClientPipe(sftpConn, sftpConn)

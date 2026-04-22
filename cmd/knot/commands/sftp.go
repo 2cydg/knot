@@ -110,16 +110,15 @@ var sftpCmd = &cobra.Command{
 			},
 		}
 		sftpConn.Start()
+		<-sftpConn.Ready
+
 		select {
-		case <-sftpConn.Ready:
-			select {
-			case err := <-sftpConn.ErrCh:
-				return err
-			default:
-				if authUpdated {
-					if err := cfg.Save(provider); err != nil {
-						fmt.Printf("Warning: failed to save updated credentials: %v\n", err)
-					}
+		case err := <-sftpConn.ErrCh:
+			return err
+		default:
+			if authUpdated {
+				if err := cfg.Save(provider); err != nil {
+					fmt.Printf("Warning: failed to save updated credentials: %v\n", err)
 				}
 			}
 		}
