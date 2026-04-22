@@ -159,101 +159,14 @@ var editCmd = &cobra.Command{
 
 		// Auth method
 		fmt.Printf("Current Auth Method: %s\n", srv.AuthMethod)
-		fmt.Println("Choose new auth method (leave empty to keep current):")
-		fmt.Println("1) Password")
-		fmt.Println("2) Private Key (managed)")
-		fmt.Println("3) SSH Agent")
-		line.SetPrompt("Selection (1-3): ")
-		choice, _ := line.Readline()
-		if choice != "" {
-			switch choice {
-			case "1":
-				srv.AuthMethod = config.AuthMethodPassword
-				pass, err := line.ReadPassword("New Password (leave empty to keep current): ")
-				if err != nil {
-					return err
-				}
-				password := string(pass)
-				if password == "[none]" {
-					srv.Password = ""
-				} else if password != "" {
-					srv.Password = password
-				}
-				srv.KeyAlias = ""
-			case "2":
-				if len(cfg.Keys) == 0 {
-					fmt.Print("No keys configured. Add one now? (Y/n): ")
-					line.SetPrompt("")
-					resp, _ := line.Readline()
-					if resp != "" && strings.ToLower(resp) != "y" {
-						fmt.Println("No keys available. Please add a key using 'knot key add' first.")
-					} else {
-						// Add key on the fly
-						kb, pass, err := PromptForKey(line)
-						if err != nil {
-							return err
-						}
-						
-						var kAlias string
-						for {
-							line.SetPrompt("New Key Alias: ")
-							kAlias, err = line.Readline()
-							if err != nil {
-								return err
-							}
-							kAlias = strings.TrimSpace(kAlias)
-							if kAlias != "" {
-								break
-							}
-						}
-
-						kConfig, err := ValidateAndPrepareKey(kAlias, kb, pass)
-						if err != nil {
-							return err
-						}
-						cfg.Keys[kAlias] = *kConfig
-						if err := cfg.Save(provider); err != nil {
-							return err
-						}
-						srv.KeyAlias = kAlias
-						srv.AuthMethod = config.AuthMethodKey
-						fmt.Printf("Key '%s' added and selected.\n", srv.KeyAlias)
-					}
-				} else {
-					srv.AuthMethod = config.AuthMethodKey
-					fmt.Println("Available keys:")
-					var keyAliases []string
-					for k := range cfg.Keys {
-						keyAliases = append(keyAliases, k)
-					}
-					sort.Strings(keyAliases)
-					fmt.Printf("0) Keep current [%s]\n", srv.KeyAlias)
-					for i, k := range keyAliases {
-						fmt.Printf("%d) %s\n", i+1, k)
-					}
-					for {
-						line.SetPrompt(fmt.Sprintf("Select key (0-%d): ", len(keyAliases)))
-						kChoice, _ := line.Readline()
-						if kChoice == "" || kChoice == "0" {
-							break
-						}
-						idx, err := strconv.Atoi(kChoice)
-						if err == nil && idx > 0 && idx <= len(keyAliases) {
-							srv.KeyAlias = keyAliases[idx-1]
-							break
-						}
-						fmt.Println("Invalid selection.")
-					}
-				}
-				srv.Password = ""
-			case "3":
-				srv.AuthMethod = config.AuthMethodAgent
-				srv.Password = ""
-				srv.KeyAlias = ""
-			default:
-				fmt.Println("Invalid choice, please select 1, 2, or 3.")
+		line.SetPrompt("Change authentication method? (y/N, default N): ")
+		changeAuth, _ := line.Readline()
+		if strings.ToLower(strings.TrimSpace(changeAuth)) == "y" {
+			if err := PromptAuthUpdate(line, &srv, cfg, provider, nil); err != nil {
+				return err
 			}
 		}
+		line.SetPrompt("") // Reset for next fields
 
 		// Tags editing (Optional)
 		existingTags := cfg.GetAllTags()

@@ -2,30 +2,24 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 )
 
-func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
-	// Parse alias and optional sessionID (format: "alias[:sessionID]")
-	parts := strings.SplitN(payload, ":", 2)
-	alias := parts[0]
-	var followSessionID string
-	if len(parts) > 1 {
-		followSessionID = parts[1]
-		if followSessionID != "" {
-			if _, err := strconv.Atoi(followSessionID); err != nil {
-				protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: invalid session ID format"))
-				return
-			}
-		}
+func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
+	var sftpReq protocol.SFTPRequest
+	if err := json.Unmarshal(requestPayload, &sftpReq); err != nil {
+		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: invalid sftp request"))
+		return
 	}
+
+	alias := sftpReq.Alias
+	followSessionID := sftpReq.SessionID
 
 	sendError := func(errMsg string) {
 		logger.Error("SFTP Request Error", "alias", alias, "error", errMsg)
@@ -63,7 +57,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, payload string) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKey, _, err := d.pool.GetClient(srv, cfg, confirmCallback)
+	client, poolKey, _, err := d.dialWithRetry(conn, alias, srv, cfg, sftpReq.IsInteractive, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

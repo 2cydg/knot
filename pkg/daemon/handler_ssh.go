@@ -56,7 +56,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKey, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
+	client, poolKey, isNew, err := d.dialWithRetry(conn, req.Alias, srv, cfg, req.IsInteractive, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

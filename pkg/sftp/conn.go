@@ -1,6 +1,7 @@
 package sftp
 
 import (
+	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
 	"net"
@@ -21,6 +22,7 @@ type SFTPConn struct {
 	CloseOnce  sync.Once
 	Buf        []byte
 	Interactive bool // If true, handles HostKeyConfirm interactively
+	AuthHandler func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error)
 }
 
 func (s *SFTPConn) Start() {
@@ -82,6 +84,23 @@ func (s *SFTPConn) Start() {
 						}
 					}
 					return
+				case protocol.TypeAuthChallenge:
+					if s.AuthHandler != nil {
+						var challenge protocol.AuthChallengePayload
+						if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
+							_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+							continue
+						}
+						resp, err := s.AuthHandler(challenge)
+						if err != nil {
+							_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+							continue
+						}
+						payload, _ := json.Marshal(resp)
+						_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthResponse, 0, payload)
+					} else {
+						_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+					}
 				case protocol.TypeHostKeyConfirm:
 					if s.Interactive {
 						fmt.Printf("\n%s ", string(msg.Payload))

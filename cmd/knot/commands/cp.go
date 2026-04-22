@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
 	"knot/pkg/config"
@@ -106,7 +107,15 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 	defer conn.Close()
 
 	// 1. Send SFTP request
-	if err := protocol.WriteMessage(conn, protocol.TypeSFTPReq, 0, []byte(alias)); err != nil {
+	sftpReq := protocol.SFTPRequest{
+		Alias:         alias,
+		IsInteractive: false,
+	}
+	sftpReqPayload, err := json.Marshal(sftpReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sftp request: %w", err)
+	}
+	if err := protocol.WriteMessage(conn, protocol.TypeSFTPReq, 0, sftpReqPayload); err != nil {
 		return err
 	}
 

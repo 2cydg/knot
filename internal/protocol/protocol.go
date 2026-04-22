@@ -43,6 +43,9 @@ const (
 	TypeClearResp       uint8 = 0x11
 	TypeExecReq         uint8 = 0x12
 	TypeExecResp        uint8 = 0x13
+	TypeAuthChallenge  uint8 = 0x14 // Daemon -> CLI: Request new credentials
+	TypeAuthResponse   uint8 = 0x15 // CLI -> Daemon: New credentials
+	TypeAuthRetryAbort uint8 = 0x16 // CLI -> Daemon: Abort retry
 )
 
 // SubTypes for TypeData (using Reserved field)
@@ -58,14 +61,38 @@ const (
 	SignalResize uint8 = 0x02
 )
 
+// AuthChallengePayload defines the payload for an authentication challenge.
+type AuthChallengePayload struct {
+	Alias           string `json:"alias"`
+	AuthMethod      string `json:"auth_method"` // Current auth method
+	Error           string `json:"error"`       // Specific error message
+	Attempt         int    `json:"attempt"`
+	MaxAttempts     int    `json:"max_attempts"`
+}
+
+// AuthResponsePayload defines the payload for an authentication response.
+type AuthResponsePayload struct {
+	AuthMethod string `json:"auth_method"`
+	Password   string `json:"password,omitempty"`
+	KeyAlias   string `json:"key_alias,omitempty"`
+}
+
 // SSHRequest defines the payload for an SSH session request.
 type SSHRequest struct {
-	Alias        string `json:"alias"`
-	Term         string `json:"term"`
-	Rows         int    `json:"rows"`
-	Cols         int    `json:"cols"`
-	ForwardAgent bool   `json:"forward_agent"`
-	SSHAuthSock  string `json:"ssh_auth_sock,omitempty"`
+	Alias         string `json:"alias"`
+	Term          string `json:"term"`
+	Rows          int    `json:"rows"`
+	Cols          int    `json:"cols"`
+	ForwardAgent  bool   `json:"forward_agent"`
+	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
+	IsInteractive bool   `json:"is_interactive"`
+}
+
+// SFTPRequest defines the payload for an SFTP session request.
+type SFTPRequest struct {
+	Alias         string `json:"alias"`
+	SessionID     string `json:"session_id,omitempty"`
+	IsInteractive bool   `json:"is_interactive"`
 }
 
 // ExecRequest defines the payload for an SSH exec request.

@@ -10,6 +10,7 @@ import (
 	knotsftp "knot/pkg/sftp"
 	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +44,16 @@ var sftpCmd = &cobra.Command{
 		if len(args) > 1 {
 			initialDir = args[1]
 		}
+
+		provider, err := crypto.NewProvider()
+		if err != nil {
+			return err
+		}
+		cfg, err := config.Load(provider)
+		if err != nil {
+			return err
+		}
+
 		var sessionID string
 		if follow {
 			// 1. Get sessions for this alias
@@ -100,30 +111,66 @@ var sftpCmd = &cobra.Command{
 		}
 
 		// Send SFTP request
-		sftpReqPayload := alias
-		if sessionID != "" {
-			sftpReqPayload = fmt.Sprintf("%s:%s", alias, sessionID)
+		sftpReq := protocol.SFTPRequest{
+			Alias:         alias,
+			SessionID:     sessionID,
+			IsInteractive: true,
 		}
-		if err := protocol.WriteMessage(conn, protocol.TypeSFTPReq, 0, []byte(sftpReqPayload)); err != nil {
+		sftpReqPayload, err := json.Marshal(sftpReq)
+		if err != nil {
+			return fmt.Errorf("failed to marshal sftp request: %w", err)
+		}
+		if err := protocol.WriteMessage(conn, protocol.TypeSFTPReq, 0, sftpReqPayload); err != nil {
 			return err
 		}
 
 		// Update recent history
-		provider, err := crypto.NewProvider()
+		state, err := config.LoadState()
 		if err == nil {
-			cfg, err := config.Load(provider)
-			if err == nil {
-				state, err := config.LoadState()
-				if err == nil {
-					state.UpdateRecent(alias, cfg.Settings.RecentLimit)
-					_ = state.Save()
-				}
-			}
+			state.UpdateRecent(alias, cfg.Settings.RecentLimit)
+			_ = state.Save()
 		}
 
 		// Create SFTP client (handshake handled internally by SFTPConn)
 		cwdCh := make(chan string, 1)
-		sftpConn := &knotsftp.SFTPConn{Conn: conn, CwdCh: cwdCh, Interactive: true}
+		var authUpdated bool
+		var rl *readline.Instance
+		defer func() {
+			if rl != nil {
+				rl.Close()
+			}
+		}()
+
+		sftpConn := &knotsftp.SFTPConn{
+			Conn:        conn,
+			CwdCh:       cwdCh,
+			Interactive: true,
+			AuthHandler: func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error) {
+				if rl == nil {
+					var err error
+					rl, err = readline.NewEx(&readline.Config{
+						Prompt:          "> ",
+						InterruptPrompt: "^C",
+						EOFPrompt:       "exit",
+					})
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				srv := cfg.Servers[alias]
+				if err := PromptAuthUpdate(rl, &srv, cfg, provider, &challenge); err != nil {
+					return nil, err
+				}
+				authUpdated = true
+				cfg.Servers[alias] = srv
+				return &protocol.AuthResponsePayload{
+					AuthMethod: srv.AuthMethod,
+					Password:   srv.Password,
+					KeyAlias:   srv.KeyAlias,
+				}, nil
+			},
+		}
 		sftpConn.Start()
 		select {
 		case <-sftpConn.Ready:
@@ -132,6 +179,12 @@ var sftpCmd = &cobra.Command{
 			case err := <-sftpConn.ErrCh:
 				return err
 			default:
+				// Handshake success, save config if auth was updated
+				if authUpdated {
+					if err := cfg.Save(provider); err != nil {
+						fmt.Printf("Warning: failed to save updated credentials: %v\n", err)
+					}
+				}
 			}
 		}
 

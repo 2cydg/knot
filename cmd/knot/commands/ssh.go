@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -64,12 +65,13 @@ var sshCmd = &cobra.Command{
 		}
 
 		req := protocol.SSHRequest{
-			Alias:        alias,
-			Term:         envTerm,
-			Rows:         rows,
-			Cols:         cols,
-			ForwardAgent: cfg.Settings.GetForwardAgent(),
-			SSHAuthSock:  sshpool.GetAgentPath(),
+			Alias:         alias,
+			Term:          envTerm,
+			Rows:          rows,
+			Cols:          cols,
+			ForwardAgent:  cfg.Settings.GetForwardAgent(),
+			SSHAuthSock:   sshpool.GetAgentPath(),
+			IsInteractive: term.IsTerminal(fd) && !jsonOutput,
 		}
 
 		payload, err := json.Marshal(req)
@@ -81,7 +83,15 @@ var sshCmd = &cobra.Command{
 			return fmt.Errorf("failed to send request: %w", err)
 		}
 
-		// Wait for response (handling interactive host key confirmation)
+		// Wait for response (handling interactive host key confirmation and auth challenge)
+		var authUpdated bool
+		var rl *readline.Instance
+		defer func() {
+			if rl != nil {
+				rl.Close()
+			}
+		}()
+
 		for {
 			msg, err := protocol.ReadMessage(conn)
 			if err != nil {
@@ -100,6 +110,44 @@ var sshCmd = &cobra.Command{
 				continue
 			}
 
+			if msg.Header.Type == protocol.TypeAuthChallenge {
+				var challenge protocol.AuthChallengePayload
+				if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
+					return fmt.Errorf("failed to unmarshal auth challenge: %w", err)
+				}
+
+				if rl == nil {
+					rl, err = readline.NewEx(&readline.Config{
+						Prompt:          "> ",
+						InterruptPrompt: "^C",
+						EOFPrompt:       "exit",
+					})
+					if err != nil {
+						return err
+					}
+				}
+
+				srv := cfg.Servers[alias]
+				if err := PromptAuthUpdate(rl, &srv, cfg, provider, &challenge); err != nil {
+					protocol.WriteMessage(conn, protocol.TypeAuthRetryAbort, 0, nil)
+					return err
+				}
+
+				resp := protocol.AuthResponsePayload{
+					AuthMethod: srv.AuthMethod,
+					Password:   srv.Password,
+					KeyAlias:   srv.KeyAlias,
+				}
+				cfg.Servers[alias] = srv // Update in-memory config
+				authUpdated = true
+
+				respPayload, _ := json.Marshal(resp)
+				if err := protocol.WriteMessage(conn, protocol.TypeAuthResponse, 0, respPayload); err != nil {
+					return fmt.Errorf("failed to send auth response: %w", err)
+				}
+				continue
+			}
+
 			resp := string(msg.Payload)
 			if resp == "ok" || strings.HasPrefix(resp, "ok:") {
 				// Update recent history
@@ -107,6 +155,12 @@ var sshCmd = &cobra.Command{
 				if err == nil {
 					state.UpdateRecent(alias, cfg.Settings.RecentLimit)
 					state.Save()
+				}
+				// Save config if it was updated during auth retry
+				if authUpdated {
+					if err := cfg.Save(provider); err != nil {
+						fmt.Printf("Warning: failed to save updated credentials: %v\n", err)
+					}
 				}
 				break
 			}

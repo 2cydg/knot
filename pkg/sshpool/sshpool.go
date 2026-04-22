@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"knot/pkg/config"
 	"knot/internal/protocol"
@@ -20,6 +21,39 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/net/proxy"
 )
+
+var (
+	ErrAuthFailed    = fmt.Errorf("authentication failed")
+	ErrHostKeyReject = fmt.Errorf("host key verification failed")
+)
+
+// IsAuthError checks if the error is a definitive authentication failure.
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	msg := err.Error()
+
+	// Explicitly exclude host key verification errors - these are not auth failures
+	if strings.Contains(msg, "host key verification failed") ||
+		strings.Contains(msg, "REMOTE HOST IDENTIFICATION HAS CHANGED") {
+		return false
+	}
+
+	// x/crypto/ssh specific error identification
+	if strings.Contains(msg, "ssh: unable to authenticate") || 
+	   strings.Contains(msg, "no authentication methods provided") ||
+	   strings.Contains(msg, "handshake failed: ssh: unable to authenticate") {
+		return true
+	}
+	
+	if errors.Is(err, ErrAuthFailed) {
+		return true
+	}
+
+	return false
+}
 
 type clientEntry struct {
 	client     *ssh.Client
@@ -361,7 +395,7 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no authentication methods provided for %s", srv.Alias)
+		return nil, fmt.Errorf("no authentication methods provided for %s: %w", srv.Alias, ErrAuthFailed)
 	}
 
 	// Host Key Verification
@@ -401,10 +435,10 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 		// Handle key mismatch or unknown host
 		if strings.Contains(err.Error(), "known_hosts:") && strings.Contains(err.Error(), "mismatch") {
 			// Key mismatch - security risk!
-			return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
-				"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n" +
-				"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
-				"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!")
+			return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+				"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
+				"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+				"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
 		} else {
 			// Unknown host
 			if confirmCallback != nil {
@@ -426,9 +460,9 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 					}
 					return nil
 				}
-				return fmt.Errorf("host key verification failed (user rejected)")
+				return fmt.Errorf("host key verification failed (user rejected): %w", ErrHostKeyReject)
 			}
-			return err
+			return fmt.Errorf("host key verification failed: %w", ErrHostKeyReject)
 		}
 	}
 
@@ -461,6 +495,9 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, clientConfig)
 	if err != nil {
 		conn.Close()
+		if strings.Contains(err.Error(), "ssh: unable to authenticate") {
+			return nil, fmt.Errorf("ssh: unable to authenticate: %w", ErrAuthFailed)
+		}
 		return nil, err
 	}
 

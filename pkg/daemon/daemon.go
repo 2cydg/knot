@@ -299,17 +299,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 				return
 			}
 		case protocol.TypeSFTPReq:
-			alias := string(msg.Payload)
-			// Split by colon to get only the alias part for validation
-			aliasParts := strings.SplitN(alias, ":", 2)
-			if !isValidAlias(aliasParts[0]) {
-				logger.Warn("SFTP Request: invalid alias format", "alias", aliasParts[0])
-				return
-			}
-			if alias != "" {
-				d.handleSFTPRequest(conn, alias)
-				return
-			}
+			d.handleSFTPRequest(conn, msg.Payload)
+			return
 		case protocol.TypeSessionListReq:
 			alias := string(msg.Payload)
 			if alias != "" && !isValidAlias(alias) {
@@ -340,5 +331,66 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		default:
 			// Ignore other types for now
 		}
+	}
+}
+
+// dialWithRetry handles the authentication retry loop for SSH/SFTP connections.
+func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerConfig, cfg *config.Config, 
+    isInteractive bool, confirmCallback func(string) bool) (*ssh.Client, string, bool, error) {
+	
+	var authRetries int
+	const maxAuthRetries = 3
+
+	for {
+		client, poolKey, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
+		if err == nil {
+			return client, poolKey, isNew, nil
+		}
+
+		if isInteractive && sshpool.IsAuthError(err) && authRetries < maxAuthRetries {
+			authRetries++
+			logger.Warn("Authentication failed, challenging CLI for new credentials", "alias", alias, "attempt", authRetries)
+
+			challenge := protocol.AuthChallengePayload{
+				Alias:       alias,
+				AuthMethod:  srv.AuthMethod,
+				Error:       err.Error(),
+				Attempt:     authRetries,
+				MaxAttempts: maxAuthRetries,
+			}
+			challengePayload, _ := json.Marshal(challenge)
+			if err := protocol.WriteMessage(conn, protocol.TypeAuthChallenge, 0, challengePayload); err != nil {
+				return nil, "", false, err
+			}
+
+			// Wait for response
+			msg, err := protocol.ReadMessage(conn)
+			if err != nil {
+				logger.Warn("Connection lost during auth retry", "alias", alias, "error", err)
+				return nil, "", false, err
+			}
+
+			if msg.Header.Type == protocol.TypeAuthRetryAbort {
+				logger.Info("Authentication retry aborted by user", "alias", alias)
+				return nil, "", false, fmt.Errorf("authentication aborted")
+			}
+
+			if msg.Header.Type == protocol.TypeAuthResponse {
+				var resp protocol.AuthResponsePayload
+				if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+					return nil, "", false, fmt.Errorf("invalid auth response")
+				}
+				// Update server config in memory for retry
+				srv.AuthMethod = resp.AuthMethod
+				srv.Password = resp.Password
+				srv.KeyAlias = resp.KeyAlias
+				cfg.Servers[alias] = srv // Sync back to memory
+				continue
+			}
+
+			return nil, "", false, fmt.Errorf("unexpected protocol message during auth retry")
+		}
+
+		return nil, "", false, err
 	}
 }
