@@ -87,7 +87,9 @@ var sshCmd = &cobra.Command{
 
 		// Connection animation
 		stopSpinner := make(chan struct{})
+		spinnerDone := make(chan struct{})
 		go func() {
+			defer close(spinnerDone)
 			spinner := []string{"|", "/", "-", "\\"}
 			i := 0
 			for {
@@ -107,7 +109,7 @@ var sshCmd = &cobra.Command{
 			case <-stopSpinner:
 			default:
 				close(stopSpinner)
-				fmt.Print("\r\033[K")
+				<-spinnerDone
 			}
 		}()
 
@@ -124,13 +126,13 @@ var sshCmd = &cobra.Command{
 			msg, err := protocol.ReadMessage(conn)
 			if err != nil {
 				close(stopSpinner)
-				fmt.Print("\r\033[K")
+				<-spinnerDone
 				return fmt.Errorf("failed to read response: %w", err)
 			}
 
 			if msg.Header.Type == protocol.TypeHostKeyConfirm {
 				close(stopSpinner)
-				fmt.Print("\r\033[K")
+				<-spinnerDone
 				fmt.Printf("\n%s ", string(msg.Payload))
 				var response string
 				if _, err := fmt.Scanln(&response); err != nil {
@@ -144,7 +146,7 @@ var sshCmd = &cobra.Command{
 
 			if msg.Header.Type == protocol.TypeAuthChallenge {
 				close(stopSpinner)
-				fmt.Print("\r\033[K")
+				<-spinnerDone
 				var challenge protocol.AuthChallengePayload
 				if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
 					return fmt.Errorf("failed to unmarshal auth challenge: %w", err)
@@ -185,7 +187,7 @@ var sshCmd = &cobra.Command{
 			resp := string(msg.Payload)
 			if resp == "ok" || strings.HasPrefix(resp, "ok:") {
 				close(stopSpinner)
-				fmt.Print("\r\033[K")
+				<-spinnerDone
 				// Update recent history
 				state, err := config.LoadState()
 				if err == nil {
