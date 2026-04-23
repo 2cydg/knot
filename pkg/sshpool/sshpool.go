@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"knot/internal/logger"
 	"knot/pkg/config"
 	"knot/internal/protocol"
 	"knot/internal/paths"
@@ -60,6 +61,7 @@ type clientEntry struct {
 	lastAccess time.Time
 	refCount   int
 	remoteHost string
+	alias      string
 }
 
 // Pool manages a pool of SSH clients for connection multiplexing.
@@ -179,6 +181,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		lastAccess: time.Now(),
 		refCount:   0,
 		remoteHost: srv.Host,
+		alias:      srv.Alias,
 	}
 	p.mu.Unlock()
 
@@ -216,16 +219,30 @@ func (p *Pool) keepAliveLoop(key string, client *ssh.Client, cfg *config.Config)
 	for {
 		select {
 		case <-ticker.C:
-			// Send a global request as a keep-alive heartbeat.
-			_, _, err := client.SendRequest("keepalive@knot", true, nil)
-			if err != nil {
-				failCount++
-				if failCount >= maxFailures {
-					p.triggerDisconnect(key, client)
-					return
+			// Send a global request as a keep-alive heartbeat with a timeout.
+			errCh := make(chan error, 1)
+			go func() {
+				_, _, err := client.SendRequest("keepalive@knot", true, nil)
+				errCh <- err
+			}()
+
+			select {
+			case err := <-errCh:
+				if err != nil {
+					failCount++
+					logger.Warn("Keep-alive request failed", "key", key, "error", err, "failCount", failCount)
+				} else {
+					failCount = 0
 				}
-			} else {
-				failCount = 0
+			case <-time.After(interval / 2):
+				// Keep-alive request timed out
+				failCount++
+				logger.Warn("Keep-alive request timed out", "key", key, "failCount", failCount)
+			}
+
+			if failCount >= maxFailures {
+				p.triggerDisconnect(key, client)
+				return
 			}
 		case <-done:
 			p.triggerDisconnect(key, client)
@@ -320,7 +337,8 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	now := time.Now()
 	for key, entry := range p.entries {
 		stats = append(stats, protocol.PoolEntryStat{
-			Alias:    key,
+			Key:      key,
+			Alias:    entry.alias,
 			Host:     entry.remoteHost,
 			IdleTime: now.Sub(entry.lastAccess).Round(time.Second).String(),
 			RefCount: entry.refCount,
@@ -484,7 +502,10 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	} else if srv.ProxyAlias != "" && cfg != nil {
 		conn, err = dialViaProxy(addr, srv.ProxyAlias, cfg)
 	} else {
-		dialer := &net.Dialer{Timeout: 15 * time.Second}
+		dialer := &net.Dialer{
+			Timeout:   15 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
 		conn, err = dialer.Dial("tcp", addr)
 	}
 
@@ -522,7 +543,10 @@ func dialViaProxy(targetAddr, proxyAlias string, cfg *config.Config) (net.Conn, 
 	}
 
 	proxyAddr := net.JoinHostPort(proxyCfg.Host, strconv.Itoa(proxyCfg.Port))
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	dialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 
 	switch proxyCfg.Type {
 	case config.ProxyTypeSOCKS5:

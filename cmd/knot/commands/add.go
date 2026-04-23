@@ -108,6 +108,7 @@ var addCmd = &cobra.Command{
 			Prompt:          "> ",
 			InterruptPrompt: "^C",
 			EOFPrompt:       "exit",
+			HistorySearchFold: true,
 		})
 		if err != nil {
 			return err

@@ -132,6 +132,7 @@ type StatusResponse struct {
 
 // PoolEntryStat defines the statistics for a single SSH pool entry.
 type PoolEntryStat struct {
+	Key      string `json:"key"`
 	Alias    string `json:"alias"`
 	Host     string `json:"host"`
 	IdleTime string `json:"idle_time"`

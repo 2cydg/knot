@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
@@ -54,7 +55,8 @@ var sshCmd = &cobra.Command{
 
 		// Get terminal size
 		fd := int(os.Stdin.Fd())
-		cols, rows, err := term.GetSize(fd)
+		outFd := int(os.Stdout.Fd())
+		cols, rows, err := term.GetSize(outFd)
 		if err != nil {
 			cols, rows = 80, 40
 		}
@@ -83,6 +85,32 @@ var sshCmd = &cobra.Command{
 			return fmt.Errorf("failed to send request: %w", err)
 		}
 
+		// Connection animation
+		stopSpinner := make(chan struct{})
+		go func() {
+			spinner := []string{"|", "/", "-", "\\"}
+			i := 0
+			for {
+				select {
+				case <-stopSpinner:
+					fmt.Print("\r\033[K") // Clear spinner line
+					return
+				default:
+					fmt.Printf("\rConnecting to %s... %s", alias, spinner[i%len(spinner)])
+					i++
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+		}()
+		defer func() {
+			select {
+			case <-stopSpinner:
+			default:
+				close(stopSpinner)
+				fmt.Print("\r\033[K")
+			}
+		}()
+
 		// Wait for response (handling interactive host key confirmation and auth challenge)
 		var authUpdated bool
 		var rl *readline.Instance
@@ -95,10 +123,14 @@ var sshCmd = &cobra.Command{
 		for {
 			msg, err := protocol.ReadMessage(conn)
 			if err != nil {
+				close(stopSpinner)
+				fmt.Print("\r\033[K")
 				return fmt.Errorf("failed to read response: %w", err)
 			}
 
 			if msg.Header.Type == protocol.TypeHostKeyConfirm {
+				close(stopSpinner)
+				fmt.Print("\r\033[K")
 				fmt.Printf("\n%s ", string(msg.Payload))
 				var response string
 				if _, err := fmt.Scanln(&response); err != nil {
@@ -111,6 +143,8 @@ var sshCmd = &cobra.Command{
 			}
 
 			if msg.Header.Type == protocol.TypeAuthChallenge {
+				close(stopSpinner)
+				fmt.Print("\r\033[K")
 				var challenge protocol.AuthChallengePayload
 				if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
 					return fmt.Errorf("failed to unmarshal auth challenge: %w", err)
@@ -150,6 +184,8 @@ var sshCmd = &cobra.Command{
 
 			resp := string(msg.Payload)
 			if resp == "ok" || strings.HasPrefix(resp, "ok:") {
+				close(stopSpinner)
+				fmt.Print("\r\033[K")
 				// Update recent history
 				state, err := config.LoadState()
 				if err == nil {
@@ -177,9 +213,9 @@ var sshCmd = &cobra.Command{
 			}
 			defer term.Restore(fd, oldState)
 
-			// Clear screen before starting session to provide a clean state
-			// Use \033[H to move cursor to home and \033[2J to clear screen
-			os.Stdout.Write([]byte("\033[H\033[2J"))
+			// Send initial resize to ensure remote side is synced
+			initialResizePayload, _ := json.Marshal(protocol.ResizePayload{Rows: rows, Cols: cols})
+			_ = protocol.WriteMessage(conn, protocol.TypeSignal, protocol.SignalResize, initialResizePayload)
 		}
 
 		// Handle resize

@@ -79,8 +79,24 @@ var statusCmd = &cobra.Command{
 			if len(status.PoolStats) > 0 {
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(w, "ALIAS\tREMOTE HOST\tSESSIONS\tIDLE")
+
+				// Count occurrences of each alias to detect duplicates
+				aliasCount := make(map[string]int)
 				for _, s := range status.PoolStats {
-					fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", s.Alias, s.Host, s.RefCount, s.IdleTime)
+					aliasCount[s.Alias]++
+				}
+
+				for _, s := range status.PoolStats {
+					displayAlias := s.Alias
+					if aliasCount[s.Alias] > 1 {
+						// Format: [alias]([user@host:port])
+						// The key is alias:user@host:port, so we can extract the part after first colon
+						parts := strings.SplitN(s.Key, ":", 2)
+						if len(parts) > 1 {
+							displayAlias = fmt.Sprintf("%s(%s)", s.Alias, parts[1])
+						}
+					}
+					fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", displayAlias, s.Host, s.RefCount, s.IdleTime)
 				}
 				w.Flush()
 			} else {

@@ -14,11 +14,16 @@ func (d *Daemon) handleStatusRequest(conn net.Conn) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
+	memUsage := getRSS()
+	if memUsage == 0 {
+		memUsage = m.Sys
+	}
+
 	stats := protocol.StatusResponse{
 		DaemonPID:      os.Getpid(),
 		Uptime:         time.Since(d.startTime).Round(time.Second).String(),
 		UDSPath:        d.socketPath,
-		MemoryUsage:    m.Alloc,
+		MemoryUsage:    memUsage,
 		PoolStats:      d.pool.GetStats(),
 		ActiveSessions: d.sm.Count(),
 		CryptoProvider: d.crypto.Name(),
