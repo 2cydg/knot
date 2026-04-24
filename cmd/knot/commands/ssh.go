@@ -200,6 +200,9 @@ var sshCmd = &cobra.Command{
 						fmt.Printf("Warning: failed to save updated credentials: %v\n", err)
 					}
 				}
+				if req.IsInteractive && term.IsTerminal(outFd) && cfg.Settings.GetClearScreenOnConnect() {
+					fmt.Print("\033[2J\033[H")
+				}
 				break
 			}
 			return fmt.Errorf("daemon error: %s", resp)
@@ -264,18 +267,18 @@ var sshCmd = &cobra.Command{
 					outMu.Lock()
 					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
 					outMu.Unlock()
-					
+
 					// Force restore terminal and exit immediately to avoid blocking on stdin
 					if term.IsTerminal(fd) {
 						term.Restore(fd, oldState)
 					}
-					
+
 					// Use non-zero exit code for disconnects unless it seems like a normal end
 					exitCode := 1
 					msgLower := strings.ToLower(string(msg.Payload))
-					if strings.Contains(msgLower, "finished") || 
-					   strings.Contains(msgLower, "closed") ||
-					   strings.Contains(msgLower, "normally") {
+					if strings.Contains(msgLower, "finished") ||
+						strings.Contains(msgLower, "closed") ||
+						strings.Contains(msgLower, "normally") {
 						exitCode = 0
 					}
 					exitStatusCh <- exitCode

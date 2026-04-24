@@ -27,9 +27,8 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 	fmt.Println("1) Password")
 	fmt.Println("2) Private Key (managed)")
 	fmt.Println("3) SSH Agent")
-	
-	rl.SetPrompt("Choice (1-3, default 1): ")
-	choice, err := rl.Readline()
+
+	choice, err := readLineWithPrompt(rl, "Choice (1-3, default 1): ")
 	if err != nil {
 		return err
 	}
@@ -51,26 +50,24 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 		srv.Password = string(pass)
 		srv.KeyAlias = ""
 	case "2":
+		fmt.Println()
 		srv.AuthMethod = config.AuthMethodKey
 		srv.Password = ""
 		if len(cfg.Keys) == 0 {
-			fmt.Print("No keys configured. Add one now? (Y/n): ")
-			rl.SetPrompt("")
-			resp, _ := rl.Readline()
+			resp, _ := readLineWithPrompt(rl, "No keys configured. Add one now? (Y/n): ")
 			if resp != "" && strings.ToLower(resp) != "y" {
 				return fmt.Errorf("no keys available")
 			}
-			
+
 			// Add key on the fly
 			kb, pass, err := PromptForKey(rl)
 			if err != nil {
 				return err
 			}
-			
+
 			var kAlias string
 			for {
-				rl.SetPrompt("New Key Alias: ")
-				kAlias, err = rl.Readline()
+				kAlias, err = readLineWithPrompt(rl, "New Key Alias: ")
 				if err != nil {
 					return err
 				}
@@ -105,8 +102,7 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 				if challenge != nil && srv.KeyAlias != "" {
 					prompt = fmt.Sprintf("Select key (current: %s)", srv.KeyAlias)
 				}
-				rl.SetPrompt(fmt.Sprintf("%s (1-%d): ", prompt, len(keyAliases)))
-				kChoice, _ := rl.Readline()
+				kChoice, _ := readLineWithPrompt(rl, fmt.Sprintf("%s (1-%d): ", prompt, len(keyAliases)))
 				idx, err := strconv.Atoi(kChoice)
 				if err == nil && idx > 0 && idx <= len(keyAliases) {
 					srv.KeyAlias = keyAliases[idx-1]
@@ -118,9 +114,7 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 	case "3":
 		if sshpool.GetAgentPath() == "" {
 			fmt.Println("Warning: SSH Agent (SSH_AUTH_SOCK) not detected. Please ensure your agent is running.")
-			fmt.Print("Continue anyway? (y/N): ")
-			rl.SetPrompt("")
-			resp, _ := rl.Readline()
+			resp, _ := readLineWithPrompt(rl, "Continue anyway? (y/N): ")
 			if strings.ToLower(resp) != "y" {
 				return fmt.Errorf("ssh agent not available")
 			}

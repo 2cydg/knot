@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"knot/internal/logger"
+	"knot/internal/paths"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
@@ -34,10 +35,15 @@ var daemonStartCmd = &cobra.Command{
 
 			// Prepare command to run in background
 			backgroundCmd := exec.Command(executable, "daemon", "start", "--foreground")
-			
+
 			// Redirect output to a log file in background mode
-			home, _ := os.UserHomeDir()
-			logPath := filepath.Join(home, ".config/knot/knot.log")
+			logPath, err := paths.GetLogPath()
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+				return fmt.Errorf("failed to create log directory: %w", err)
+			}
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 			if err == nil {
 				backgroundCmd.Stdout = logFile
@@ -70,9 +76,11 @@ var daemonStartCmd = &cobra.Command{
 		}
 
 		// 1. Pre-load config to get log level
-		home, _ := os.UserHomeDir()
-		logPath := filepath.Join(home, ".config/knot/knot.log")
-		
+		logPath, err := paths.GetLogPath()
+		if err != nil {
+			return err
+		}
+
 		// Temporary load to get settings
 		tmpProvider, _ := crypto.NewProvider() // We don't care if this fails/fallbacks yet
 		cfg, _ := config.Load(tmpProvider)

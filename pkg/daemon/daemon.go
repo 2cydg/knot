@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"knot/internal/logger"
+	"knot/internal/paths"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -42,13 +43,18 @@ type Daemon struct {
 
 // NewDaemon creates a new Daemon instance.
 func NewDaemon(provider crypto.Provider) (*Daemon, error) {
-	home, err := os.UserHomeDir()
+	socketPath, err := paths.GetSocketPath()
 	if err != nil {
 		return nil, err
 	}
-	socketPath := filepath.Join(home, ".config/knot/knot.sock")
-	pidPath := socketPath + ".pid"
-	configPath := filepath.Join(home, ".config/knot/config.toml")
+	pidPath, err := paths.GetPIDPath()
+	if err != nil {
+		return nil, err
+	}
+	configPath, err := paths.GetConfigPath()
+	if err != nil {
+		return nil, err
+	}
 
 	// Create directory if not exists
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
@@ -82,7 +88,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 	d.pool.ConnectCallback = func(poolKey string, client *ssh.Client) {
 		alias := strings.SplitN(poolKey, ":", 2)[0]
 		logger.Info("SSH client connected. Starting forwarding rules.", "alias", alias, "pool_key", poolKey)
-		
+
 		cfg, err := config.Load(d.crypto)
 		if err != nil {
 			return
@@ -250,7 +256,7 @@ func (d *Daemon) syncConfig(targetAlias string) error {
 		}
 
 		newForwards := []config.ForwardConfig{}
-		
+
 		// Get all rules for this alias from ForwardManager
 		allRules := d.fm.ListRules()
 		for _, r := range allRules {
@@ -260,7 +266,7 @@ func (d *Daemon) syncConfig(targetAlias string) error {
 				r.mu.RUnlock()
 			}
 		}
-		
+
 		srv.Forwards = newForwards
 		cfg.Servers[alias] = srv
 	}
@@ -336,7 +342,7 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 
 // dialWithRetry handles the authentication retry loop for SSH/SFTP connections.
 func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerConfig, cfg *config.Config,
-    isInteractive bool, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
+	isInteractive bool, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
 
 	var authRetries int
 	const maxAuthRetries = 3

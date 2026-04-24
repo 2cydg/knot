@@ -87,7 +87,7 @@ func TestSSHRequest(t *testing.T) {
 	defer os.Remove(cfgPath)
 
 	provider, _ := crypto.NewProvider()
-	
+
 	user := os.Getenv("USER")
 	if user == "" {
 		user = "clax"
@@ -164,7 +164,7 @@ func TestSSHRequest(t *testing.T) {
 		t.Fatalf("expected TypeData, got %d", msg.Header.Type)
 	}
 
-	// We don't necessarily know what the shell will output, 
+	// We don't necessarily know what the shell will output,
 	// but it should be non-empty for a login shell.
 	if len(msg.Payload) == 0 {
 		t.Fatalf("expected non-empty payload from shell")

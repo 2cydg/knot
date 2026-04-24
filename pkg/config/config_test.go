@@ -1,8 +1,8 @@
 package config
 
 import (
-	"knot/pkg/crypto"
 	"knot/internal/paths"
+	"knot/pkg/crypto"
 	"os"
 	"runtime"
 	"strings"
@@ -29,6 +29,9 @@ func TestConfigLoadSave(t *testing.T) {
 	}
 
 	cfg := &Config{
+		Settings: SettingsConfig{
+			ClearScreenOnConnect: func() *bool { v := false; return &v }(),
+		},
 		Servers: map[string]ServerConfig{
 			"test": {
 				Alias:    "test",
@@ -61,6 +64,9 @@ func TestConfigLoadSave(t *testing.T) {
 
 	if loadedCfg.Servers["test"].Password != "password123" {
 		t.Fatalf("expected password to be password123, got %s", loadedCfg.Servers["test"].Password)
+	}
+	if loadedCfg.Settings.GetClearScreenOnConnect() {
+		t.Fatal("expected clear_screen_on_connect to stay false after save/load")
 	}
 }
 
@@ -104,4 +110,3 @@ func TestHasCycle(t *testing.T) {
 		t.Errorf("expected no cycle for X -> Y (non-existent), got %v", err)
 	}
 }
-

@@ -41,8 +41,7 @@ var exportCmd = &cobra.Command{
 
 		// Check if file exists
 		if _, err := os.Stat(path); err == nil {
-			line.SetPrompt(fmt.Sprintf("File %s already exists. Overwrite? (y/N): ", path))
-			resp, err := line.Readline()
+			resp, err := readLineWithPrompt(line, fmt.Sprintf("File %s already exists. Overwrite? (y/N): ", path))
 			if err != nil {
 				return err
 			}
@@ -130,11 +129,10 @@ var importCmd = &cobra.Command{
 		fmt.Println("1) Full Overwrite (Replace local config with imported)")
 		fmt.Println("2) Merge (Local-first: Keep local, add new aliases from imported)")
 		fmt.Println("3) Merge (Import-first: Overwrite local with imported on alias conflict)")
-		
+
 		var mode int
 		for {
-			line.SetPrompt("Selection (1-3): ")
-			choice, err := line.Readline()
+			choice, err := readLineWithPrompt(line, "Selection (1-3): ")
 			if err != nil {
 				return err
 			}

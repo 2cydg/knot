@@ -67,8 +67,7 @@ func PromptForKey(rl *readline.Instance) ([]byte, string, error) {
 	var passphrase string
 
 	for {
-		rl.SetPrompt("> ")
-		lineStr, err := rl.Readline()
+		lineStr, err := readLineWithPrompt(rl, "> ")
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -177,8 +176,7 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 
 		if alias == "" {
 			for {
-				line.SetPrompt("Key Alias: ")
-				aliasStr, err := line.Readline()
+				aliasStr, err := readLineWithPrompt(line, "Key Alias: ")
 				if err != nil {
 					return err
 				}
@@ -191,9 +189,7 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 		}
 
 		if _, exists := cfg.Keys[alias]; exists {
-			fmt.Printf("Key alias '%s' already exists. Overwrite? (y/N): ", alias)
-			line.SetPrompt("")
-			resp, _ := line.Readline()
+			resp, _ := readLineWithPrompt(line, fmt.Sprintf("Key alias '%s' already exists. Overwrite? (y/N): ", alias))
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
@@ -252,14 +248,12 @@ var keyRemoveCmd = &cobra.Command{
 			for _, s := range usedBy {
 				fmt.Printf("- %s\n", s)
 			}
-			fmt.Print("If you delete it, these servers' key settings will be cleared. Continue? (y/N): ")
 			line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
 			if err != nil {
 				return err
 			}
 			defer line.Close()
-			line.SetPrompt("")
-			resp, _ := line.Readline()
+			resp, _ := readLineWithPrompt(line, "If you delete it, these servers' key settings will be cleared. Continue? (y/N): ")
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}

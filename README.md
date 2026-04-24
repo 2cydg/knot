@@ -26,8 +26,10 @@ Build from source (requires Go 1.20+):
 
 ```bash
 go build -o knot cmd/knot/main.go
-# Move to your PATH, e.g., /usr/local/bin/
-sudo mv knot /usr/local/bin/
+# Install for the current user
+mkdir -p ~/.local/bin
+mv knot ~/.local/bin/
+# Ensure ~/.local/bin is in your PATH
 ```
 
 ### Shell Completion
@@ -101,6 +103,12 @@ Sensitive data in `~/.config/knot/config.toml` is encrypted with an `ENC:` prefi
 - **Windows**: DPAPI
 - **macOS**: Keychain
 - **Linux**: AES-256-GCM (Derived from `/etc/machine-id` + Salt)
+
+Default filesystem layout:
+- Config: `~/.config/knot/`
+- Known hosts: `~/.config/knot/known_hosts`
+- Logs and state: `~/.local/state/knot/`
+- Runtime files (`sock`, `pid`): `$XDG_RUNTIME_DIR/knot/`
 
 ---
 

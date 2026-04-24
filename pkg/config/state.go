@@ -19,11 +19,10 @@ type State struct {
 }
 
 func LoadState() (*State, error) {
-	configPath, err := paths.GetConfigPath()
+	statePath, err := paths.GetStatePath()
 	if err != nil {
 		return nil, err
 	}
-	statePath := filepath.Join(filepath.Dir(configPath), "state.json")
 
 	if _, err := os.Stat(statePath); os.IsNotExist(err) {
 		return &State{Recent: []RecentEntry{}}, nil
@@ -42,17 +41,19 @@ func LoadState() (*State, error) {
 }
 
 func (s *State) Save() error {
-	configPath, err := paths.GetConfigPath()
+	statePath, err := paths.GetStatePath()
 	if err != nil {
 		return err
 	}
-	statePath := filepath.Join(filepath.Dir(configPath), "state.json")
 
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
 
+	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
+		return err
+	}
 	return os.WriteFile(statePath, data, 0600)
 }
 

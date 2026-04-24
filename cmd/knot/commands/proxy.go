@@ -55,8 +55,7 @@ var proxyListCmd = &cobra.Command{
 func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (*config.ProxyConfig, error) {
 	if alias == "" {
 		for {
-			line.SetPrompt("Proxy Alias: ")
-			aliasStr, err := line.Readline()
+			aliasStr, err := readLineWithPrompt(line, "Proxy Alias: ")
 			if err != nil {
 				return nil, err
 			}
@@ -69,9 +68,7 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 	}
 
 	if _, exists := cfg.Proxies[alias]; exists {
-		fmt.Printf("Proxy alias '%s' already exists. Overwrite? (y/N): ", alias)
-		line.SetPrompt("")
-		resp, _ := line.Readline()
+		resp, _ := readLineWithPrompt(line, fmt.Sprintf("Proxy alias '%s' already exists. Overwrite? (y/N): ", alias))
 		if strings.ToLower(resp) != "y" {
 			return nil, nil
 		}
@@ -82,8 +79,7 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 	fmt.Println("2) HTTP")
 	var pType string
 	for {
-		line.SetPrompt("Choice (1-2, default 1): ")
-		choice, err := line.Readline()
+		choice, err := readLineWithPrompt(line, "Choice (1-2, default 1): ")
 		if err != nil {
 			return nil, err
 		}
@@ -97,17 +93,15 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 		fmt.Println("Invalid choice.")
 	}
 
-	line.SetPrompt("Proxy Host: ")
-	host, err := line.Readline()
+	host, err := readLineWithPrompt(line, "Proxy Host: ")
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(host) == "" {
 		return nil, fmt.Errorf("host cannot be empty")
 	}
-	
-	line.SetPrompt("Proxy Port: ")
-	portStr, err := line.Readline()
+
+	portStr, err := readLineWithPrompt(line, "Proxy Port: ")
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +110,7 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 		return nil, fmt.Errorf("invalid port number: %v", err)
 	}
 
-	line.SetPrompt("Proxy Username (optional): ")
-	username, err := line.Readline()
+	username, err := readLineWithPrompt(line, "Proxy Username (optional): ")
 	if err != nil {
 		return nil, err
 	}
@@ -247,14 +240,12 @@ var proxyRemoveCmd = &cobra.Command{
 			for _, s := range usedBy {
 				fmt.Printf("- %s\n", s)
 			}
-			fmt.Print("If you delete it, these servers' proxy settings will be cleared. Continue? (y/N): ")
 			line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
 			if err != nil {
 				return err
 			}
 			defer line.Close()
-			line.SetPrompt("")
-			resp, _ := line.Readline()
+			resp, _ := readLineWithPrompt(line, "If you delete it, these servers' proxy settings will be cleared. Continue? (y/N): ")
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
@@ -307,23 +298,17 @@ var proxyEditCmd = &cobra.Command{
 
 		fmt.Printf("Editing proxy '%s' (leave blank to keep current value)\n", alias)
 
-		fmt.Printf("Proxy Type [%s]: ", p.Type)
-		line.SetPrompt("")
-		pType, _ := line.Readline()
+		pType, _ := readLineWithPrompt(line, fmt.Sprintf("Proxy Type [%s]: ", p.Type))
 		if pType != "" {
 			p.Type = pType
 		}
 
-		fmt.Printf("Proxy Host [%s]: ", p.Host)
-		line.SetPrompt("")
-		host, _ := line.Readline()
+		host, _ := readLineWithPrompt(line, fmt.Sprintf("Proxy Host [%s]: ", p.Host))
 		if host != "" {
 			p.Host = host
 		}
 
-		fmt.Printf("Proxy Port [%d]: ", p.Port)
-		line.SetPrompt("")
-		portStr, _ := line.Readline()
+		portStr, _ := readLineWithPrompt(line, fmt.Sprintf("Proxy Port [%d]: ", p.Port))
 		if portStr != "" {
 			newPort, err := strconv.Atoi(portStr)
 			if err != nil {
@@ -332,15 +317,12 @@ var proxyEditCmd = &cobra.Command{
 			p.Port = newPort
 		}
 
-		fmt.Printf("Proxy Username [%s]: ", p.Username)
-		line.SetPrompt("")
-		user, _ := line.Readline()
+		user, _ := readLineWithPrompt(line, fmt.Sprintf("Proxy Username [%s]: ", p.Username))
 		if user != "" {
 			p.Username = user
 		}
 
-		fmt.Print("Proxy Password (hidden, leave blank to keep current): ")
-		pass, _ := line.ReadPassword("")
+		pass, _ := line.ReadPassword("Proxy Password (hidden, leave blank to keep current): ")
 		if len(pass) > 0 {
 			p.Password = string(pass)
 		}

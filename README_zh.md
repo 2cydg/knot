@@ -27,8 +27,10 @@
 
 ```bash
 go build -o knot cmd/knot/main.go
-# 移动到 PATH 目录，例如 /usr/local/bin/
-sudo mv knot /usr/local/bin/
+# 安装到当前用户目录
+mkdir -p ~/.local/bin
+mv knot ~/.local/bin/
+# 确保 ~/.local/bin 已加入 PATH
 ```
 
 ### Shell 补全
@@ -101,6 +103,12 @@ Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
 - **Windows**: DPAPI
 - **macOS**: Keychain
 - **Linux**: AES-256-GCM (密钥存储于 Secret Service / D-Bus，降级方案为 `/etc/machine-id` + 盐值)
+
+默认目录布局：
+- 配置：`~/.config/knot/`
+- `known_hosts`：`~/.config/knot/known_hosts`
+- 日志与状态：`~/.local/state/knot/`
+- 运行时文件（`sock`、`pid`）：`$XDG_RUNTIME_DIR/knot/`
 
 ---
 

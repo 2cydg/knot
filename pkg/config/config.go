@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	encPrefix      = "ENC:"
+	encPrefix = "ENC:"
 
 	AuthMethodPassword = "password"
 	AuthMethodKey      = "key"
@@ -63,11 +63,12 @@ type ServerConfig struct {
 }
 
 type SettingsConfig struct {
-	ForwardAgent      *bool  `toml:"forward_agent"`
-	IdleTimeout       string `toml:"idle_timeout"`
-	KeepaliveInterval string `toml:"keepalive_interval"`
-	LogLevel          string `toml:"log_level"`
-	RecentLimit       int    `toml:"recent_limit"`
+	ForwardAgent         *bool  `toml:"forward_agent"`
+	ClearScreenOnConnect *bool  `toml:"clear_screen_on_connect"`
+	IdleTimeout          string `toml:"idle_timeout"`
+	KeepaliveInterval    string `toml:"keepalive_interval"`
+	LogLevel             string `toml:"log_level"`
+	RecentLimit          int    `toml:"recent_limit"`
 }
 
 func (s SettingsConfig) GetForwardAgent() bool {
@@ -75,6 +76,13 @@ func (s SettingsConfig) GetForwardAgent() bool {
 		return true
 	}
 	return *s.ForwardAgent
+}
+
+func (s SettingsConfig) GetClearScreenOnConnect() bool {
+	if s.ClearScreenOnConnect == nil {
+		return true
+	}
+	return *s.ClearScreenOnConnect
 }
 
 type Config struct {
@@ -199,11 +207,12 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		defaultTrue := true
 		return &Config{
 			Settings: SettingsConfig{
-				ForwardAgent:      &defaultTrue,
-				IdleTimeout:       "30m",
-				KeepaliveInterval: "20s",
-				LogLevel:          "error",
-				RecentLimit:       5,
+				ForwardAgent:         &defaultTrue,
+				ClearScreenOnConnect: &defaultTrue,
+				IdleTimeout:          "30m",
+				KeepaliveInterval:    "20s",
+				LogLevel:             "error",
+				RecentLimit:          5,
 			},
 			Servers: make(map[string]ServerConfig),
 			Proxies: make(map[string]ProxyConfig),
@@ -228,6 +237,10 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 	}
 	if cfg.Settings.RecentLimit <= 0 {
 		cfg.Settings.RecentLimit = 5
+	}
+	if cfg.Settings.ClearScreenOnConnect == nil {
+		defaultTrue := true
+		cfg.Settings.ClearScreenOnConnect = &defaultTrue
 	}
 
 	if cfg.Servers == nil {

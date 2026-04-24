@@ -3,11 +3,11 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"knot/internal/paths"
 	"knot/internal/protocol"
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,11 +20,10 @@ type Client struct {
 
 // NewClient creates a new Client instance.
 func NewClient() (*Client, error) {
-	homeDir, err := os.UserHomeDir()
+	socketPath, err := paths.GetSocketPath()
 	if err != nil {
 		return nil, err
 	}
-	socketPath := filepath.Join(homeDir, ".config/knot/knot.sock")
 	return &Client{socketPath: socketPath}, nil
 }
 

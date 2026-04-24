@@ -112,9 +112,9 @@ var addCmd = &cobra.Command{
 
 		// Interactive mode
 		line, err := readline.NewEx(&readline.Config{
-			Prompt:          "> ",
-			InterruptPrompt: "^C",
-			EOFPrompt:       "exit",
+			Prompt:            "> ",
+			InterruptPrompt:   "^C",
+			EOFPrompt:         "exit",
 			HistorySearchFold: true,
 		})
 		if err != nil {
@@ -124,8 +124,7 @@ var addCmd = &cobra.Command{
 
 		if alias == "" {
 			for {
-				line.SetPrompt("Alias: ")
-				aliasStr, err := line.Readline()
+				aliasStr, err := readLineWithPrompt(line, "Alias: ")
 				if err != nil {
 					return err
 				}
@@ -142,16 +141,13 @@ var addCmd = &cobra.Command{
 		}
 
 		if _, exists := cfg.Servers[alias]; exists {
-			fmt.Printf("Alias '%s' already exists. Overwrite? (y/N): ", alias)
-			line.SetPrompt("")
-			resp, _ := line.Readline()
+			resp, _ := readLineWithPrompt(line, fmt.Sprintf("Alias '%s' already exists. Overwrite? (y/N): ", alias))
 			if strings.ToLower(resp) != "y" {
 				return nil
 			}
 		}
 
-		line.SetPrompt("Host: ")
-		host, err := line.Readline()
+		host, err := readLineWithPrompt(line, "Host: ")
 		if err != nil {
 			return err
 		}
@@ -159,8 +155,7 @@ var addCmd = &cobra.Command{
 			return fmt.Errorf("host cannot be empty")
 		}
 
-		line.SetPrompt("Port (default 22): ")
-		portStr, err := line.Readline()
+		portStr, err := readLineWithPrompt(line, "Port (default 22): ")
 		if err != nil {
 			return err
 		}
@@ -172,8 +167,7 @@ var addCmd = &cobra.Command{
 			return fmt.Errorf("invalid port number: %v", err)
 		}
 
-		line.SetPrompt("User: ")
-		user, err := line.Readline()
+		user, err := readLineWithPrompt(line, "User: ")
 		if err != nil {
 			return err
 		}
@@ -197,8 +191,7 @@ var addCmd = &cobra.Command{
 		if len(existingTags) > 0 {
 			fmt.Printf("Existing Tags: %s\n", strings.Join(existingTags, ", "))
 		}
-		line.SetPrompt("Tag: ")
-		tagsStr, _ := line.Readline()
+		tagsStr, _ := readLineWithPrompt(line, "Tag: ")
 
 		var finalTags []string
 		if tagsStr != "" {
@@ -225,8 +218,7 @@ var addCmd = &cobra.Command{
 			fmt.Println("1) Configure Proxy (from managed proxies)")
 			fmt.Println("2) Configure Jump Host(s)")
 			fmt.Println("0) Finish/Done")
-			line.SetPrompt("Selection (0-2): ")
-			choice, err := line.Readline()
+			choice, err := readLineWithPrompt(line, "Selection (0-2): ")
 			if err != nil {
 				return err
 			}
@@ -236,9 +228,7 @@ var addCmd = &cobra.Command{
 
 			if choice == "1" {
 				if len(jumpHosts) > 0 {
-					fmt.Print("Configuring Proxy will clear existing Jump Host(s). Continue? (y/N): ")
-					line.SetPrompt("")
-					resp, err := line.Readline()
+					resp, err := readLineWithPrompt(line, "Configuring Proxy will clear existing Jump Host(s). Continue? (y/N): ")
 					if err != nil {
 						return err
 					}
@@ -249,9 +239,7 @@ var addCmd = &cobra.Command{
 				}
 
 				if len(cfg.Proxies) == 0 {
-					fmt.Print("No proxies configured. Add one now? (Y/n): ")
-					line.SetPrompt("")
-					resp, _ := line.Readline()
+					resp, _ := readLineWithPrompt(line, "No proxies configured. Add one now? (Y/n): ")
 					if resp == "" || strings.ToLower(resp) == "y" {
 						p, err := PromptForProxy(line, cfg, "")
 						if err != nil {
@@ -278,8 +266,7 @@ var addCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, p)
 					}
 					for {
-						line.SetPrompt(fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
-						pChoice, _ := line.Readline()
+						pChoice, _ := readLineWithPrompt(line, fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
 						if pChoice == "0" || pChoice == "" {
 							proxyAlias = ""
 							break
@@ -294,9 +281,7 @@ var addCmd = &cobra.Command{
 				}
 			} else if choice == "2" {
 				if proxyAlias != "" {
-					fmt.Print("Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
-					line.SetPrompt("")
-					resp, err := line.Readline()
+					resp, err := readLineWithPrompt(line, "Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
 					if err != nil {
 						return err
 					}
@@ -335,8 +320,7 @@ var addCmd = &cobra.Command{
 						fmt.Printf("%d) %s\n", i+1, a)
 					}
 
-					line.SetPrompt(fmt.Sprintf("Selection (0-%d): ", len(available)))
-					jhChoice, err := line.Readline()
+					jhChoice, err := readLineWithPrompt(line, fmt.Sprintf("Selection (0-%d): ", len(available)))
 					if err != nil {
 						return err
 					}
@@ -362,16 +346,16 @@ var addCmd = &cobra.Command{
 		}
 
 		cfg.Servers[alias] = config.ServerConfig{
-			Alias:          alias,
-			Host:           host,
-			Port:           port,
-			User:           user,
-			AuthMethod:     authMethod,
-			Password:       password,
-			KeyAlias:       keyAlias,
-			ProxyAlias:     proxyAlias,
-			JumpHost:       jumpHosts,
-			Tags:           finalTags,
+			Alias:      alias,
+			Host:       host,
+			Port:       port,
+			User:       user,
+			AuthMethod: authMethod,
+			Password:   password,
+			KeyAlias:   keyAlias,
+			ProxyAlias: proxyAlias,
+			JumpHost:   jumpHosts,
+			Tags:       finalTags,
 		}
 
 		if err := cfg.Save(provider); err != nil {

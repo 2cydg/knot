@@ -3,8 +3,8 @@ package commands
 import (
 	"bufio"
 	"fmt"
+	"knot/internal/paths"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -26,11 +26,10 @@ var logsCmd = &cobra.Command{
   knot logs -f               # Follow log output
   knot logs --tail=20 -f     # Show last 20 lines and follow`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home, err := os.UserHomeDir()
+		logPath, err := paths.GetLogPath()
 		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
+			return err
 		}
-		logPath := filepath.Join(home, ".config/knot/knot.log")
 
 		if logsFollow {
 			return followLogs(logPath)

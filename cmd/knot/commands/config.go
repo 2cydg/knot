@@ -17,7 +17,7 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage global settings",
-	Long:  `View and modify global settings like forward_agent, idle_timeout, keepalive_interval, and log_level.`,
+	Long:  `View and modify global settings like forward_agent, clear_screen_on_connect, idle_timeout, keepalive_interval, and log_level.`,
 }
 
 var configInitCmd = &cobra.Command{
@@ -56,7 +56,7 @@ var configInitCmd = &cobra.Command{
 			}
 			defer line.Close()
 
-			resp, _ := line.Readline()
+			resp, _ := readLineWithPrompt(line, "Configuration file already exists. Reset global settings to defaults? (y/N): ")
 			if strings.ToLower(resp) != "y" {
 				fmt.Println("Initialization cancelled.")
 				return nil
@@ -67,11 +67,12 @@ var configInitCmd = &cobra.Command{
 		// Set default settings
 		defaultTrue := true
 		cfg.Settings = config.SettingsConfig{
-			ForwardAgent:      &defaultTrue,
-			IdleTimeout:       "30m",
-			KeepaliveInterval: "20s",
-			LogLevel:          "error",
-			RecentLimit:       5,
+			ForwardAgent:         &defaultTrue,
+			ClearScreenOnConnect: &defaultTrue,
+			IdleTimeout:          "30m",
+			KeepaliveInterval:    "20s",
+			LogLevel:             "error",
+			RecentLimit:          5,
 		}
 
 		if err := cfg.Save(provider); err != nil {
@@ -100,10 +101,11 @@ var configListCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("forward_agent:      %t\n", cfg.Settings.GetForwardAgent())
-		fmt.Printf("idle_timeout:       %s\n", cfg.Settings.IdleTimeout)
-		fmt.Printf("keepalive_interval: %s\n", cfg.Settings.KeepaliveInterval)
-		fmt.Printf("log_level:          %s\n", cfg.Settings.LogLevel)
+		fmt.Printf("forward_agent:           %t\n", cfg.Settings.GetForwardAgent())
+		fmt.Printf("clear_screen_on_connect: %t\n", cfg.Settings.GetClearScreenOnConnect())
+		fmt.Printf("idle_timeout:            %s\n", cfg.Settings.IdleTimeout)
+		fmt.Printf("keepalive_interval:      %s\n", cfg.Settings.KeepaliveInterval)
+		fmt.Printf("log_level:               %s\n", cfg.Settings.LogLevel)
 		return nil
 	},
 }
@@ -126,6 +128,8 @@ var configGetCmd = &cobra.Command{
 		switch key {
 		case "forward_agent":
 			fmt.Println(cfg.Settings.GetForwardAgent())
+		case "clear_screen_on_connect":
+			fmt.Println(cfg.Settings.GetClearScreenOnConnect())
 		case "idle_timeout":
 			fmt.Println(cfg.Settings.IdleTimeout)
 		case "keepalive_interval":
@@ -157,12 +161,16 @@ var configSetCmd = &cobra.Command{
 		}
 
 		switch key {
-		case "forward_agent":
+		case "forward_agent", "clear_screen_on_connect":
 			val, err := strconv.ParseBool(value)
 			if err != nil {
-				return fmt.Errorf("invalid value for forward_agent: %s (use true/false, 1/0, t/f)", value)
+				return fmt.Errorf("invalid value for %s: %s (use true/false, 1/0, t/f)", key, value)
 			}
-			cfg.Settings.ForwardAgent = &val
+			if key == "forward_agent" {
+				cfg.Settings.ForwardAgent = &val
+			} else {
+				cfg.Settings.ClearScreenOnConnect = &val
+			}
 		case "idle_timeout", "keepalive_interval":
 			if _, err := time.ParseDuration(value); err != nil {
 				return fmt.Errorf("invalid duration format for %s: %w", key, err)

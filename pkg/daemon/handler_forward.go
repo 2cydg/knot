@@ -16,7 +16,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 	logger.Info("Forward request received", "action", req.Action, "alias", req.Alias, "type", req.Config.Type, "port", req.Config.LocalPort)
 
 	var err error
-	
+
 	// C6/N3: Input Validation
 	if !isValidAlias(req.Alias) {
 		err = fmt.Errorf("invalid alias format")
@@ -34,7 +34,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 				// We call GetClient here. If it's already in the pool, it returns immediately.
 				// If not, it may dial if we are in "enable" or "add" action with enabled=true.
 				// But we should only dial if we really need it.
-				
+
 				switch req.Action {
 				case "enable", "add":
 					if req.Action == "enable" || (req.Action == "add" && req.Config.Enabled) {
@@ -108,7 +108,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 			} else {
 				err = fmt.Errorf("rule not found")
 			}
-		
+
 		default:
 			err = fmt.Errorf("unknown action: %s", req.Action)
 		}
