@@ -6,6 +6,7 @@ import (
 	"io"
 	"knot/internal/logger"
 	"knot/pkg/config"
+	"knot/pkg/sshpool"
 	"net"
 	"sync"
 	"time"
@@ -13,18 +14,22 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const maxConcurrentForwardDials = 32
+
 // ForwardRule represents an active or inactive forwarding rule.
 type ForwardRule struct {
-	mu        sync.RWMutex
-	Config    config.ForwardConfig
-	Alias     string
-	IsTemp    bool
-	Enabled   bool
-	Status    string // Active, Inactive, Error
-	Error     string
-	listener  net.Listener
-	ctx       context.Context
-	cancel    context.CancelFunc
+	mu       sync.RWMutex
+	Config   config.ForwardConfig
+	Alias    string
+	IsTemp   bool
+	Enabled  bool
+	Status   string // Active, Inactive, Error
+	Error    string
+	listener net.Listener
+	ctx      context.Context
+	cancel   context.CancelFunc
+	poolKeys []string
+	pool     *sshpool.Pool
 }
 
 // GetStatus returns a snapshot of the rule status.
@@ -36,15 +41,19 @@ func (r *ForwardRule) GetStatus() (string, string, bool) {
 
 // ForwardManager manages all port forwarding rules.
 type ForwardManager struct {
-	mu     sync.RWMutex
-	rules  map[string]*ForwardRule // key is "Alias:Type:LocalPort"
-	crypto interface{}             // Placeholder for crypto provider if needed for saving
+	mu        sync.RWMutex
+	rules     map[string]*ForwardRule // key is "Alias:Type:LocalPort"
+	pool      *sshpool.Pool
+	dialSlots chan struct{}
+	crypto    interface{} // Placeholder for crypto provider if needed for saving
 }
 
 // NewForwardManager creates a new ForwardManager.
-func NewForwardManager() *ForwardManager {
+func NewForwardManager(pool *sshpool.Pool) *ForwardManager {
 	return &ForwardManager{
-		rules: make(map[string]*ForwardRule),
+		rules:     make(map[string]*ForwardRule),
+		pool:      pool,
+		dialSlots: make(chan struct{}, maxConcurrentForwardDials),
 	}
 }
 
@@ -53,9 +62,9 @@ func (fm *ForwardManager) GetRuleKey(alias string, fType string, port int) strin
 }
 
 // AddRule adds a new rule. If it's enabled and a connection exists, it starts it.
-func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enabled bool, isTemp bool, sshClient *ssh.Client) error {
+func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enabled bool, isTemp bool, sshClient *ssh.Client, poolKeys []string) error {
 	key := fm.GetRuleKey(alias, cfg.Type, cfg.LocalPort)
-	
+
 	fm.mu.Lock()
 	rule, exists := fm.rules[key]
 	if !exists {
@@ -65,6 +74,7 @@ func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enable
 			IsTemp:  isTemp,
 			Enabled: enabled,
 			Status:  "Inactive",
+			pool:    fm.pool,
 		}
 		fm.rules[key] = rule
 	}
@@ -82,7 +92,7 @@ func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enable
 	}
 
 	if enabled && sshClient != nil {
-		return fm.StartRule(rule, sshClient)
+		return fm.StartRule(rule, sshClient, poolKeys)
 	}
 	return nil
 }
@@ -112,7 +122,7 @@ func (fm *ForwardManager) RemoveRule(alias string, fType string, port int) {
 }
 
 // StartRule starts a forwarding rule on the given SSH client.
-func (fm *ForwardManager) StartRule(rule *ForwardRule, sshClient *ssh.Client) error {
+func (fm *ForwardManager) StartRule(rule *ForwardRule, sshClient *ssh.Client, poolKeys []string) error {
 	rule.mu.Lock()
 	defer rule.mu.Unlock()
 
@@ -122,6 +132,12 @@ func (fm *ForwardManager) StartRule(rule *ForwardRule, sshClient *ssh.Client) er
 
 	rule.ctx, rule.cancel = context.WithCancel(context.Background())
 	rule.Enabled = true // Mark as enabled when starting
+	rule.poolKeys = poolKeys
+
+	// Increment references for all keys in the chain
+	for _, k := range poolKeys {
+		rule.pool.IncRef(k)
+	}
 
 	var err error
 	switch rule.Config.Type {
@@ -138,6 +154,10 @@ func (fm *ForwardManager) StartRule(rule *ForwardRule, sshClient *ssh.Client) er
 	if err != nil {
 		rule.Status = "Error"
 		rule.Error = err.Error()
+		// Decrement references on failure
+		for _, k := range poolKeys {
+			rule.pool.DecRef(k)
+		}
 		if rule.cancel != nil {
 			rule.cancel()
 			rule.cancel = nil
@@ -163,26 +183,47 @@ func (fm *ForwardManager) StopRule(rule *ForwardRule) {
 		rule.cancel()
 		rule.cancel = nil
 	}
+
+	// Decrement references when stopping
+	if rule.Status == "Active" {
+		for _, k := range rule.poolKeys {
+			rule.pool.DecRef(k)
+		}
+	}
+	rule.poolKeys = nil
 	rule.Status = "Inactive"
-	// Note: We don't set Enabled = false here because StopRule 
-	// might be called during disconnect, where we want to keep it enabled for reconnect.
-	// Use SetEnabled(false) for manual disable.
 }
 
 // SetEnabled updates the enabled state of a rule.
-func (fm *ForwardManager) SetEnabled(rule *ForwardRule, enabled bool, sshClient *ssh.Client) error {
+func (fm *ForwardManager) SetEnabled(rule *ForwardRule, enabled bool, sshClient *ssh.Client, poolKeys []string) error {
 	rule.mu.Lock()
 	rule.Enabled = enabled
 	rule.mu.Unlock()
 
 	if enabled {
 		if sshClient != nil {
-			return fm.StartRule(rule, sshClient)
+			return fm.StartRule(rule, sshClient, poolKeys)
 		}
 		return nil
 	}
 	fm.StopRule(rule)
 	return nil
+}
+
+func (fm *ForwardManager) acquireDialSlot(ctx context.Context) bool {
+	select {
+	case fm.dialSlots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (fm *ForwardManager) releaseDialSlot() {
+	select {
+	case <-fm.dialSlots:
+	default:
+	}
 }
 
 func (fm *ForwardManager) startLocalForward(rule *ForwardRule, sshClient *ssh.Client) error {
@@ -199,28 +240,43 @@ func (fm *ForwardManager) startLocalForward(rule *ForwardRule, sshClient *ssh.Cl
 			if err != nil {
 				return
 			}
-			go fm.handleLocalConn(conn, sshClient, rule.Config.RemoteAddr, rule.ctx)
+			go fm.handleLocalConn(rule, conn, sshClient, rule.Config.RemoteAddr, rule.ctx)
 		}
 	}()
 	return nil
 }
 
-func (fm *ForwardManager) handleLocalConn(localConn net.Conn, sshClient *ssh.Client, remoteAddr string, ctx context.Context) {
+func (fm *ForwardManager) handleLocalConn(rule *ForwardRule, localConn net.Conn, sshClient *ssh.Client, remoteAddr string, ctx context.Context) {
 	defer localConn.Close()
-	
+
+	// Touch the pool to prevent idle timeout
+	for _, k := range rule.poolKeys {
+		rule.pool.Touch(k)
+	}
+
 	// Create a dial context with timeout
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	if !fm.acquireDialSlot(dialCtx) {
+		logger.Error("Local forward: dial cancelled before slot acquired", "remote", remoteAddr)
+		return
+	}
 
-	// ssh.Client doesn't have DialContext yet in older versions, but we can use a channel
 	type dialRes struct {
 		conn net.Conn
 		err  error
 	}
 	resCh := make(chan dialRes, 1)
 	go func() {
+		defer fm.releaseDialSlot()
 		conn, err := sshClient.Dial("tcp", remoteAddr)
-		resCh <- dialRes{conn, err}
+		select {
+		case resCh <- dialRes{conn, err}:
+		case <-dialCtx.Done():
+			if err == nil {
+				conn.Close()
+			}
+		}
 	}()
 
 	var remoteConn net.Conn
@@ -232,12 +288,12 @@ func (fm *ForwardManager) handleLocalConn(localConn net.Conn, sshClient *ssh.Cli
 		}
 		remoteConn = res.conn
 	case <-dialCtx.Done():
-		logger.Error("Local forward: dial remote timeout", "remote", remoteAddr)
+		logger.Error("Local forward: dial remote timeout or rule stopped", "remote", remoteAddr)
 		return
 	}
 	defer remoteConn.Close()
 
-	fm.proxy(localConn, remoteConn, ctx)
+	fm.proxy(rule, localConn, remoteConn, ctx)
 }
 
 func (fm *ForwardManager) startRemoteForward(rule *ForwardRule, sshClient *ssh.Client) error {
@@ -253,15 +309,20 @@ func (fm *ForwardManager) startRemoteForward(rule *ForwardRule, sshClient *ssh.C
 			if err != nil {
 				return
 			}
-			go fm.handleRemoteConn(conn, rule.Config.RemoteAddr, rule.ctx)
+			go fm.handleRemoteConn(rule, conn, rule.Config.RemoteAddr, rule.ctx)
 		}
 	}()
 	return nil
 }
 
-func (fm *ForwardManager) handleRemoteConn(remoteConn net.Conn, localAddr string, ctx context.Context) {
+func (fm *ForwardManager) handleRemoteConn(rule *ForwardRule, remoteConn net.Conn, localAddr string, ctx context.Context) {
 	defer remoteConn.Close()
-	
+
+	// Touch the pool to prevent idle timeout
+	for _, k := range rule.poolKeys {
+		rule.pool.Touch(k)
+	}
+
 	d := net.Dialer{Timeout: 15 * time.Second}
 	localConn, err := d.DialContext(ctx, "tcp", localAddr)
 	if err != nil {
@@ -270,7 +331,7 @@ func (fm *ForwardManager) handleRemoteConn(remoteConn net.Conn, localAddr string
 	}
 	defer localConn.Close()
 
-	fm.proxy(remoteConn, localConn, ctx)
+	fm.proxy(rule, remoteConn, localConn, ctx)
 }
 
 func (fm *ForwardManager) startDynamicForward(rule *ForwardRule, sshClient *ssh.Client) error {
@@ -287,15 +348,20 @@ func (fm *ForwardManager) startDynamicForward(rule *ForwardRule, sshClient *ssh.
 			if err != nil {
 				return
 			}
-			go fm.handleDynamicConn(conn, sshClient, rule.ctx)
+			go fm.handleDynamicConn(rule, conn, sshClient, rule.ctx)
 		}
 	}()
 	return nil
 }
 
-func (fm *ForwardManager) handleDynamicConn(conn net.Conn, sshClient *ssh.Client, ctx context.Context) {
+func (fm *ForwardManager) handleDynamicConn(rule *ForwardRule, conn net.Conn, sshClient *ssh.Client, ctx context.Context) {
 	defer conn.Close()
-	
+
+	// Touch the pool to prevent idle timeout
+	for _, k := range rule.poolKeys {
+		rule.pool.Touch(k)
+	}
+
 	// Set initial deadlines for handshake
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 
@@ -376,9 +442,36 @@ func (fm *ForwardManager) handleDynamicConn(conn net.Conn, sshClient *ssh.Client
 	// Reset deadline for dial
 	conn.SetDeadline(time.Now().Add(30 * time.Second))
 
-	destConn, err := sshClient.Dial("tcp", destAddr)
-	if err != nil {
-		conn.Write([]byte{0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+	// SOCKS5 dial logic also needs context awareness to avoid leaks
+	type dialRes struct {
+		conn net.Conn
+		err  error
+	}
+	resCh := make(chan dialRes, 1)
+	if !fm.acquireDialSlot(ctx) {
+		return
+	}
+	go func() {
+		defer fm.releaseDialSlot()
+		destConn, err := sshClient.Dial("tcp", destAddr)
+		select {
+		case resCh <- dialRes{destConn, err}:
+		case <-ctx.Done():
+			if err == nil {
+				destConn.Close()
+			}
+		}
+	}()
+
+	var destConn net.Conn
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			conn.Write([]byte{0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+			return
+		}
+		destConn = res.conn
+	case <-ctx.Done():
 		return
 	}
 	defer destConn.Close()
@@ -390,13 +483,13 @@ func (fm *ForwardManager) handleDynamicConn(conn net.Conn, sshClient *ssh.Client
 
 	// Remove deadlines for proxying
 	conn.SetDeadline(time.Time{})
-	fm.proxy(conn, destConn, ctx)
+	fm.proxy(rule, conn, destConn, ctx)
 }
 
-func (fm *ForwardManager) proxy(c1, c2 net.Conn, ctx context.Context) {
+func (fm *ForwardManager) proxy(rule *ForwardRule, c1, c2 net.Conn, ctx context.Context) {
 	// Better proxy with context awareness and dual-close
 	done := make(chan struct{})
-	
+
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -407,10 +500,25 @@ func (fm *ForwardManager) proxy(c1, c2 net.Conn, ctx context.Context) {
 	}()
 
 	cp := func(dst, src net.Conn) {
-		io.Copy(dst, src)
-		// Close the other side to break its io.Copy
-		dst.Close()
-		src.Close()
+		defer dst.Close()
+		defer src.Close()
+
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := src.Read(buf)
+			if n > 0 {
+				// Touch pool activity during data transfer
+				for _, k := range rule.poolKeys {
+					rule.pool.Touch(k)
+				}
+				if _, werr := dst.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
 	}
 
 	go cp(c1, c2)

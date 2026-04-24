@@ -27,3 +27,4 @@
 /knot
 !cmd/knot/
 .claude/settings.local.json
+.codex

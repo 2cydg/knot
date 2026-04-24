@@ -102,13 +102,19 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(host) == "" {
+		return nil, fmt.Errorf("host cannot be empty")
+	}
 	
 	line.SetPrompt("Proxy Port: ")
 	portStr, err := line.Readline()
 	if err != nil {
 		return nil, err
 	}
-	port, _ := strconv.Atoi(portStr)
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port number: %v", err)
+	}
 
 	line.SetPrompt("Proxy Username (optional): ")
 	username, err := line.Readline()
@@ -120,15 +126,19 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 		return nil, err
 	}
 
-	return &config.ProxyConfig{
+	p := &config.ProxyConfig{
 		Alias:    alias,
 		Type:     pType,
 		Host:     host,
 		Port:     port,
 		Username: username,
 		Password: string(password),
-	}, nil
 	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
 
 var proxyAddCmd = &cobra.Command{
 	Use:   "add [alias]",
@@ -158,7 +168,7 @@ var proxyAddCmd = &cobra.Command{
 			if alias == "" {
 				return fmt.Errorf("alias is required in non-interactive mode")
 			}
-			cfg.Proxies[alias] = config.ProxyConfig{
+			p := config.ProxyConfig{
 				Alias:    alias,
 				Type:     typeFlag,
 				Host:     hostFlag,
@@ -166,6 +176,10 @@ var proxyAddCmd = &cobra.Command{
 				Username: userFlag,
 				Password: passFlag,
 			}
+			if err := p.Validate(); err != nil {
+				return err
+			}
+			cfg.Proxies[alias] = p
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
@@ -311,7 +325,11 @@ var proxyEditCmd = &cobra.Command{
 		line.SetPrompt("")
 		portStr, _ := line.Readline()
 		if portStr != "" {
-			p.Port, _ = strconv.Atoi(portStr)
+			newPort, err := strconv.Atoi(portStr)
+			if err != nil {
+				return fmt.Errorf("invalid port: %v", err)
+			}
+			p.Port = newPort
 		}
 
 		fmt.Printf("Proxy Username [%s]: ", p.Username)
@@ -325,6 +343,10 @@ var proxyEditCmd = &cobra.Command{
 		pass, _ := line.ReadPassword("")
 		if len(pass) > 0 {
 			p.Password = string(pass)
+		}
+
+		if err := p.Validate(); err != nil {
+			return err
 		}
 
 		cfg.Proxies[alias] = p

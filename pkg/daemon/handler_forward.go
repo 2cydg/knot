@@ -28,10 +28,39 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 		// Load config to get server info for exact pool key lookup
 		cfg, loadErr := config.Load(d.crypto)
 		var sshClient *ssh.Client
+		var poolKeys []string
 		if loadErr == nil {
 			if srv, ok := cfg.Servers[req.Alias]; ok {
-				poolKey := sshpool.GetConnKey(srv)
-				sshClient, _ = d.pool.GetClientForKey(poolKey)
+				// We call GetClient here. If it's already in the pool, it returns immediately.
+				// If not, it may dial if we are in "enable" or "add" action with enabled=true.
+				// But we should only dial if we really need it.
+				
+				switch req.Action {
+				case "enable", "add":
+					if req.Action == "enable" || (req.Action == "add" && req.Config.Enabled) {
+						// Only dial if we are explicitly enabling
+						// Forwarding confirmation callback is non-interactive here
+						sshClient, poolKeys, _, err = d.pool.GetClient(srv, cfg, func(string) bool { return false })
+						if err != nil {
+							// Return the dial error to CLI
+							protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte(fmt.Sprintf("failed to establish SSH connection for forwarding: %v", err)))
+							return
+						}
+					} else {
+						// Just check if it's already in pool
+						pk := sshpool.GetConnKey(srv)
+						sshClient, _ = d.pool.GetClientForKey(pk)
+						if sshClient != nil {
+							// If it's in pool, we still want the keys.
+							// GetClient will handle it fast.
+							_, poolKeys, _, _ = d.pool.GetClient(srv, cfg, func(string) bool { return false })
+						}
+					}
+				case "disable", "remove":
+					// We don't need poolKeys to disable/remove, but let's see
+					pk := sshpool.GetConnKey(srv)
+					sshClient, _ = d.pool.GetClientForKey(pk)
+				}
 			}
 		}
 
@@ -48,7 +77,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 					LocalPort:  req.Config.LocalPort,
 					RemoteAddr: req.Config.RemoteAddr,
 				}
-				err = d.fm.AddRule(req.Alias, fConfig, req.Config.Enabled, req.IsTemp, sshClient)
+				err = d.fm.AddRule(req.Alias, fConfig, req.Config.Enabled, req.IsTemp, sshClient, poolKeys)
 				if err == nil && !req.IsTemp {
 					d.syncConfig(req.Alias)
 				}
@@ -67,7 +96,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 		case "enable":
 			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
 			if ok {
-				err = d.fm.SetEnabled(rule, true, sshClient)
+				err = d.fm.SetEnabled(rule, true, sshClient, poolKeys)
 			} else {
 				err = fmt.Errorf("rule not found")
 			}
@@ -75,7 +104,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 		case "disable":
 			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
 			if ok {
-				err = d.fm.SetEnabled(rule, false, sshClient)
+				err = d.fm.SetEnabled(rule, false, sshClient, poolKeys)
 			} else {
 				err = fmt.Errorf("rule not found")
 			}

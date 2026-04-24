@@ -310,6 +310,74 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 	return toml.NewEncoder(f).Encode(cfgToSave)
 }
 
+func IsValidAlias(alias string) bool {
+	if len(alias) == 0 || len(alias) > 255 {
+		return false
+	}
+	for _, r := range alias {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *ServerConfig) Validate(cfg *Config) error {
+	if !IsValidAlias(s.Alias) {
+		return fmt.Errorf("invalid server alias format")
+	}
+	if s.Host == "" {
+		return fmt.Errorf("host cannot be empty")
+	}
+	if s.Port <= 0 || s.Port > 65535 {
+		return fmt.Errorf("invalid port number: %d", s.Port)
+	}
+	if s.User == "" {
+		return fmt.Errorf("user cannot be empty")
+	}
+	if s.AuthMethod != AuthMethodPassword && s.AuthMethod != AuthMethodKey && s.AuthMethod != AuthMethodAgent {
+		return fmt.Errorf("invalid auth method: %s", s.AuthMethod)
+	}
+	if s.AuthMethod == AuthMethodKey && s.KeyAlias == "" {
+		return fmt.Errorf("key alias is required for key authentication")
+	}
+	if s.KeyAlias != "" {
+		if _, ok := cfg.Keys[s.KeyAlias]; !ok {
+			return fmt.Errorf("key '%s' not found in config", s.KeyAlias)
+		}
+	}
+	if s.ProxyAlias != "" {
+		if _, ok := cfg.Proxies[s.ProxyAlias]; !ok {
+			return fmt.Errorf("proxy '%s' not found in config", s.ProxyAlias)
+		}
+	}
+	for _, jh := range s.JumpHost {
+		if jh == s.Alias {
+			return fmt.Errorf("server cannot use itself as a jump host")
+		}
+		if _, ok := cfg.Servers[jh]; !ok {
+			return fmt.Errorf("jump host '%s' not found in config", jh)
+		}
+	}
+	return nil
+}
+
+func (p *ProxyConfig) Validate() error {
+	if !IsValidAlias(p.Alias) {
+		return fmt.Errorf("invalid proxy alias format")
+	}
+	if p.Type != ProxyTypeSOCKS5 && p.Type != ProxyTypeHTTP {
+		return fmt.Errorf("invalid proxy type: %s", p.Type)
+	}
+	if p.Host == "" {
+		return fmt.Errorf("proxy host cannot be empty")
+	}
+	if p.Port <= 0 || p.Port > 65535 {
+		return fmt.Errorf("invalid proxy port: %d", p.Port)
+	}
+	return nil
+}
+
 func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {
 	if len(jumpHostAliases) == 0 {
 		return nil

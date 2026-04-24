@@ -168,9 +168,10 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 	}
 
 	result := &Config{
-		Servers: make(map[string]ServerConfig),
-		Proxies: make(map[string]ProxyConfig),
-		Keys:    make(map[string]KeyConfig),
+		Settings: local.Settings, // Default to local settings
+		Servers:  make(map[string]ServerConfig),
+		Proxies:  make(map[string]ProxyConfig),
+		Keys:     make(map[string]KeyConfig),
 	}
 
 	// Copy local first
@@ -202,6 +203,7 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 			}
 		}
 	} else if mode == MergeModeImportFirst {
+		result.Settings = imported.Settings // Use imported settings
 		for k, v := range imported.Servers {
 			result.Servers[k] = v
 		}

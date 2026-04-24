@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"knot/internal/logger"
-	"knot/pkg/config"
-	"knot/internal/protocol"
 	"knot/internal/paths"
+	"knot/internal/protocol"
+	"knot/pkg/config"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/net/proxy"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -33,7 +35,7 @@ func IsAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	msg := err.Error()
 
 	// Explicitly exclude host key verification errors - these are not auth failures
@@ -43,12 +45,12 @@ func IsAuthError(err error) bool {
 	}
 
 	// x/crypto/ssh specific error identification
-	if strings.Contains(msg, "ssh: unable to authenticate") || 
-	   strings.Contains(msg, "no authentication methods provided") ||
-	   strings.Contains(msg, "handshake failed: ssh: unable to authenticate") {
+	if strings.Contains(msg, "ssh: unable to authenticate") ||
+		strings.Contains(msg, "no authentication methods provided") ||
+		strings.Contains(msg, "handshake failed: ssh: unable to authenticate") {
 		return true
 	}
-	
+
 	if errors.Is(err, ErrAuthFailed) {
 		return true
 	}
@@ -62,12 +64,14 @@ type clientEntry struct {
 	refCount   int
 	remoteHost string
 	alias      string
+	chainKeys  []string // Stores all keys in the jump host chain including the final key
 }
 
 // Pool manages a pool of SSH clients for connection multiplexing.
 type Pool struct {
 	entries            map[string]*clientEntry
 	mu                 sync.Mutex
+	sf                 singleflight.Group
 	idleTimeout        time.Duration
 	ConnectCallback    func(string, *ssh.Client)
 	DisconnectCallback func(string)
@@ -100,9 +104,94 @@ func (p *Pool) SetIdleTimeout(d time.Duration) {
 	p.idleTimeout = d
 }
 
+type getClientResult struct {
+	client *ssh.Client
+	keys   []string
+	isNew  bool
+}
+
+func getRouteConnKey(srv config.ServerConfig, viaAliases []string) string {
+	key := GetConnKey(srv)
+	if len(viaAliases) == 0 {
+		return key
+	}
+	return fmt.Sprintf("%s|via=%s", key, strings.Join(viaAliases, "->"))
+}
+
+func cloneKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	cloned := make([]string, len(keys))
+	copy(cloned, keys)
+	return cloned
+}
+
+func appendChainKey(parentKeys []string, key string) []string {
+	keys := make([]string, 0, len(parentKeys)+1)
+	keys = append(keys, parentKeys...)
+	keys = append(keys, key)
+	return keys
+}
+
+func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, parentKeys []string, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
+	res, err, shared := p.sf.Do(key, func() (interface{}, error) {
+		p.mu.Lock()
+		if entry, ok := p.entries[key]; ok {
+			_, _, err := entry.client.SendRequest("keepalive@knot", true, nil)
+			if err == nil {
+				entry.lastAccess = time.Now()
+				client := entry.client
+				keys := cloneKeys(entry.chainKeys)
+				p.mu.Unlock()
+				return &getClientResult{client: client, keys: keys, isNew: false}, nil
+			}
+			entry.client.Close()
+			delete(p.entries, key)
+		}
+		p.mu.Unlock()
+
+		client, err := dial(srv, cfg, jumpClient, confirmCallback)
+		if err != nil {
+			return nil, err
+		}
+
+		allKeys := appendChainKey(parentKeys, key)
+
+		p.mu.Lock()
+		p.entries[key] = &clientEntry{
+			client:     client,
+			lastAccess: time.Now(),
+			refCount:   0,
+			remoteHost: srv.Host,
+			alias:      srv.Alias,
+			chainKeys:  cloneKeys(allKeys),
+		}
+		p.mu.Unlock()
+
+		go p.keepAliveLoop(key, client, cfg)
+
+		if p.ConnectCallback != nil {
+			go p.ConnectCallback(key, client)
+		}
+
+		return &getClientResult{client: client, keys: allKeys, isNew: true}, nil
+	})
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	r := res.(*getClientResult)
+	isNew := r.isNew
+	if shared {
+		isNew = false
+	}
+	return r.client, cloneKeys(r.keys), isNew, nil
+}
+
 // GetClient returns a cached ssh.Client for the given server config, or dials a new one.
-// If jump host is specified, it will recursively dial jump hosts first.
-func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, string, bool, error) {
+// It returns the client, a list of all pool keys in the chain (for ref counting), and whether a new connection was created.
+func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
 	// Update pool-wide idle timeout from config if available
 	if cfg != nil && cfg.Settings.IdleTimeout != "" {
 		if d, err := time.ParseDuration(cfg.Settings.IdleTimeout); err == nil {
@@ -110,89 +199,46 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		}
 	}
 
-	key := GetConnKey(srv)
-
-	// Try to get from cache first
-	p.mu.Lock()
-	if entry, ok := p.entries[key]; ok {
-		// Ping the server to check if the connection is still alive.
-		_, _, err := entry.client.SendRequest("keepalive@knot", true, nil)
-		if err == nil {
-			entry.lastAccess = time.Now()
-			client := entry.client
-			p.mu.Unlock()
-			return client, key, false, nil
-		}
-		// Connection is dead, close and remove it.
-		entry.client.Close()
-		delete(p.entries, key)
+	if len(srv.JumpHost) == 0 {
+		return p.getClientForRoute(GetConnKey(srv), srv, cfg, nil, nil, confirmCallback)
 	}
-	p.mu.Unlock()
 
-	// Handle Jump Hosts chain
+	if cfg == nil {
+		return nil, nil, false, fmt.Errorf("config is required for jump host connections")
+	}
+
 	var jumpClient *ssh.Client
-	var privateJumpRoot *ssh.Client // Root of the chain that needs manual cleanup on error
-	var finalErr error
-
-	defer func() {
-		if finalErr != nil && privateJumpRoot != nil {
-			privateJumpRoot.Close()
-		}
-	}()
+	var chainKeys []string
+	viaAliases := make([]string, 0, len(srv.JumpHost))
 
 	for i, jhAlias := range srv.JumpHost {
 		jhSrv, ok := cfg.Servers[jhAlias]
 		if !ok {
-			finalErr = fmt.Errorf("jump host %s not found in config", jhAlias)
-			return nil, "", false, finalErr
+			return nil, nil, false, fmt.Errorf("jump host %s not found in config", jhAlias)
 		}
 
-		var client *ssh.Client
-		var err error
-		if i == 0 && cfg != nil {
-			// First hop: leverage pool for multiplexing and recursive jump hosts
-			client, _, _, err = p.GetClient(jhSrv, cfg, confirmCallback)
+		var (
+			client *ssh.Client
+			keys   []string
+			err    error
+		)
+
+		if i == 0 {
+			client, keys, _, err = p.GetClient(jhSrv, cfg, confirmCallback)
 		} else {
-			// Subsequent hops: dial through the current chain
-			client, err = dial(jhSrv, cfg, jumpClient, confirmCallback)
-			if err == nil && privateJumpRoot == nil {
-				privateJumpRoot = client
-			}
+			routeKey := getRouteConnKey(jhSrv, viaAliases)
+			client, keys, _, err = p.getClientForRoute(routeKey, jhSrv, cfg, jumpClient, chainKeys, confirmCallback)
 		}
-
 		if err != nil {
-			finalErr = fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
-			return nil, "", false, finalErr
+			return nil, nil, false, fmt.Errorf("failed to connect to jump host %s: %w", jhAlias, err)
 		}
+
 		jumpClient = client
+		chainKeys = keys
+		viaAliases = append(viaAliases, jhAlias)
 	}
 
-	// Dial the final connection.
-	client, err := dial(srv, cfg, jumpClient, confirmCallback)
-	if err != nil {
-		finalErr = err
-		return nil, "", false, finalErr
-	}
-
-	// Cache the new connection
-	p.mu.Lock()
-	p.entries[key] = &clientEntry{
-		client:     client,
-		lastAccess: time.Now(),
-		refCount:   0,
-		remoteHost: srv.Host,
-		alias:      srv.Alias,
-	}
-	p.mu.Unlock()
-
-	// Start active keep-alive
-	go p.keepAliveLoop(key, client, cfg)
-
-	if p.ConnectCallback != nil {
-		go p.ConnectCallback(key, client)
-	}
-
-	return client, key, true, nil
+	return p.getClientForRoute(getRouteConnKey(srv, viaAliases), srv, cfg, jumpClient, chainKeys, confirmCallback)
 }
 
 func (p *Pool) keepAliveLoop(key string, client *ssh.Client, cfg *config.Config) {
@@ -318,7 +364,7 @@ func (p *Pool) GetClientForKey(key string) (*ssh.Client, bool) {
 func (p *Pool) GetClientForAlias(alias string) (*ssh.Client, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	
+
 	prefix := alias + ":"
 	for key, entry := range p.entries {
 		if strings.HasPrefix(key, prefix) {
@@ -346,7 +392,6 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	}
 	return stats
 }
-
 
 // CloseAll closes all active SSH clients in the pool and returns the count.
 func (p *Pool) CloseAll() int {
@@ -385,15 +430,27 @@ func (p *Pool) autoCleanup() {
 
 func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, confirmCallback func(string) bool) (*ssh.Client, error) {
 	authMethods := []ssh.AuthMethod{}
+	var agentConn net.Conn
 
 	// Handle Authentication based on srv.AuthMethod
 	switch srv.AuthMethod {
 	case config.AuthMethodAgent:
-		agentAuth, err := getAgentAuthMethod()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get SSH agent auth: %w", err)
+		socket := GetAgentPath()
+		if socket == "" {
+			return nil, fmt.Errorf("SSH_AUTH_SOCK not set")
 		}
-		authMethods = append(authMethods, agentAuth)
+		var err error
+		agentConn, err = net.Dial("unix", socket)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
+		}
+		agentClient := agent.NewClient(agentConn)
+		signers, err := agentClient.Signers()
+		if err != nil {
+			agentConn.Close()
+			return nil, fmt.Errorf("failed to get signers from SSH agent: %w", err)
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(signers...))
 	case config.AuthMethodKey:
 		if srv.KeyAlias != "" && cfg != nil {
 			keyCfg, ok := cfg.Keys[srv.KeyAlias]
@@ -413,6 +470,9 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	}
 
 	if len(authMethods) == 0 {
+		if agentConn != nil {
+			agentConn.Close()
+		}
 		return nil, fmt.Errorf("no authentication methods provided for %s: %w", srv.Alias, ErrAuthFailed)
 	}
 
@@ -421,6 +481,9 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	if khPath == "" {
 		dir, err := paths.GetConfigDir()
 		if err != nil {
+			if agentConn != nil {
+				agentConn.Close()
+			}
 			return nil, err
 		}
 		khPath = filepath.Join(dir, "known_hosts")
@@ -450,15 +513,18 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 			return nil
 		}
 
-		// Handle key mismatch or unknown host
-		if strings.Contains(err.Error(), "known_hosts:") && strings.Contains(err.Error(), "mismatch") {
-			// Key mismatch - security risk!
-			return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
-				"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
-				"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
-				"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
-		} else {
-			// Unknown host
+		// Handle key mismatch or unknown host using proper error types
+		var keyErr *knownhosts.KeyError
+		if errors.As(err, &keyErr) {
+			if len(keyErr.Want) > 0 {
+				// Key mismatch - security risk!
+				return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+					"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
+					"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+					"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
+			}
+
+			// Unknown host (keyErr.Want is empty)
 			if confirmCallback != nil {
 				prompt := fmt.Sprintf("The authenticity of host '%s' can't be established.\n"+
 					"%s key fingerprint is %s.\n"+
@@ -480,8 +546,8 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 				}
 				return fmt.Errorf("host key verification failed (user rejected): %w", ErrHostKeyReject)
 			}
-			return fmt.Errorf("host key verification failed: %w", ErrHostKeyReject)
 		}
+		return fmt.Errorf("host key verification failed: %w", ErrHostKeyReject)
 	}
 
 	clientConfig := &ssh.ClientConfig{
@@ -510,10 +576,20 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 	}
 
 	if err != nil {
+		if agentConn != nil {
+			agentConn.Close()
+		}
 		return nil, err
 	}
 
+	// Handshake
 	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, clientConfig)
+
+	// Authentication is complete, we can close the agent connection
+	if agentConn != nil {
+		agentConn.Close()
+	}
+
 	if err != nil {
 		conn.Close()
 		if strings.Contains(err.Error(), "ssh: unable to authenticate") {
@@ -522,17 +598,7 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 		return nil, err
 	}
 
-	// Ensure ncc is closed if we fail before NewClient takes ownership.
-	// Although NewClient currently doesn't fail, this is defensive.
-	success := false
-	defer func() {
-		if !success {
-			ncc.Close()
-		}
-	}()
-
 	client := ssh.NewClient(ncc, chans, reqs)
-	success = true
 	return client, nil
 }
 
@@ -594,7 +660,7 @@ func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer)
 		conn.Close()
 		return nil, fmt.Errorf("failed to read response from HTTP proxy: %w", err)
 	}
-	
+
 	statusLine = strings.TrimSpace(statusLine)
 	parts := strings.SplitN(statusLine, " ", 3)
 	if len(parts) < 2 || parts[1] != "200" || !strings.HasPrefix(parts[0], "HTTP/") {

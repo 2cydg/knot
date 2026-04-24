@@ -14,6 +14,33 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+type limitedWriter struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+	totalSize int
+}
+
+func (w *limitedWriter) Write(p []byte) (n int, err error) {
+	w.totalSize += len(p)
+	if w.buf.Len() < w.limit {
+		remaining := w.limit - w.buf.Len()
+		if len(p) <= remaining {
+			n, err = w.buf.Write(p)
+		} else {
+			n, err = w.buf.Write(p[:remaining])
+			w.truncated = true
+		}
+	} else {
+		w.truncated = true
+	}
+	return len(p), nil
+}
+
+func (w *limitedWriter) String() string {
+	return w.buf.String()
+}
+
 func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 	var req protocol.ExecRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -25,11 +52,19 @@ func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 	logger.Info("Executing command", "alias", req.Alias, "command", req.Command)
 
 	// 1. Get SSH client
-	client, err := d.getSSHClient(req.Alias)
+	client, poolKeys, err := d.getSSHClient(req.Alias)
 	if err != nil {
 		d.sendExecResponse(conn, -1, "", "", err.Error(), false, 0)
 		return
 	}
+	for _, k := range poolKeys {
+		d.pool.IncRef(k)
+	}
+	defer func() {
+		for _, k := range poolKeys {
+			d.pool.DecRef(k)
+		}
+	}()
 
 	// 2. Create session
 	session, err := client.NewSession()
@@ -39,10 +74,12 @@ func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 	}
 	defer session.Close()
 
-	// 3. Set up buffers
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
+	// 3. Set up limited buffers
+	const maxOutputPerStream = protocol.MaxPayloadSize / 4 // Total max output is protocol.MaxPayloadSize / 2
+	stdout := &limitedWriter{limit: maxOutputPerStream}
+	stderr := &limitedWriter{limit: maxOutputPerStream}
+	session.Stdout = stdout
+	session.Stderr = stderr
 
 	// 4. Run command with timeout
 	ctx := context.Background()
@@ -61,8 +98,6 @@ func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 
 	var exitCode int
 	var runErr error
-	var truncated bool
-	var truncatedSize int
 
 	select {
 	case runErr = <-done:
@@ -84,20 +119,18 @@ func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 		runErr = fmt.Errorf("daemon stopping")
 	}
 
-	// 5. Handle truncation if needed
+	// 5. Prepare response
 	stdoutStr := stdout.String()
 	stderrStr := stderr.String()
-	
-	const maxOutput = protocol.MaxPayloadSize / 2 // Leave room for other fields
-	if len(stdoutStr) > maxOutput {
-		truncatedSize += len(stdoutStr)
-		stdoutStr = stdoutStr[:maxOutput] + "\n[stdout truncated]"
-		truncated = true
+	truncated := stdout.truncated || stderr.truncated
+	truncatedSize := 0
+	if stdout.truncated {
+		truncatedSize += stdout.totalSize - stdout.buf.Len()
+		stdoutStr += "\n[stdout truncated]"
 	}
-	if len(stderrStr) > maxOutput {
-		truncatedSize += len(stderrStr)
-		stderrStr = stderrStr[:maxOutput] + "\n[stderr truncated]"
-		truncated = true
+	if stderr.truncated {
+		truncatedSize += stderr.totalSize - stderr.buf.Len()
+		stderrStr += "\n[stderr truncated]"
 	}
 
 	errMsg := ""
@@ -121,35 +154,29 @@ func (d *Daemon) sendExecResponse(conn net.Conn, exitCode int, stdout, stderr, e
 	_ = protocol.WriteMessage(conn, protocol.TypeExecResp, 0, payload)
 }
 
-func (d *Daemon) getSSHClient(alias string) (*ssh.Client, error) {
-	// Try pool first
-	client, ok := d.pool.GetClientForAlias(alias)
-	if ok {
-		return client, nil
-	}
-
+func (d *Daemon) getSSHClient(alias string) (*ssh.Client, []string, error) {
 	// Load config to connect
 	cfg, err := d.loadConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	srv, ok := cfg.Servers[alias]
 	if !ok {
-		return nil, fmt.Errorf("server alias '%s' not found", alias)
+		return nil, nil, fmt.Errorf("server alias '%s' not found", alias)
 	}
 
 	// Connect using pool
-	client, _, _, err = d.pool.GetClient(srv, cfg, func(msg string) bool {
+	client, keys, _, err := d.pool.GetClient(srv, cfg, func(msg string) bool {
 		// exec is non-interactive
 		return false
 	})
 	if err != nil {
 		// If it's a host key verification failure, give a helpful message
 		if strings.Contains(err.Error(), "host key") {
-			return nil, fmt.Errorf("host key verification failed for '%s'. Run 'knot ssh %s' first to accept the key", alias, alias)
+			return nil, nil, fmt.Errorf("host key verification failed for '%s'. Run 'knot ssh %s' first to accept the key", alias, alias)
 		}
-		return nil, err
+		return nil, nil, err
 	}
-	return client, nil
+	return client, keys, nil
 }

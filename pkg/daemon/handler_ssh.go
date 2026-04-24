@@ -56,7 +56,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKey, isNew, err := d.dialWithRetry(conn, req.Alias, srv, cfg, req.IsInteractive, confirmCallback)
+	client, poolKeys, isNew, err := d.dialWithRetry(conn, req.Alias, srv, cfg, req.IsInteractive, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return
@@ -124,10 +124,14 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 
 	// Register session in SessionManager
 	s := d.sm.Add(req.Alias, conn)
-	d.pool.IncRef(poolKey)
+	for _, k := range poolKeys {
+		d.pool.IncRef(k)
+	}
 	defer func() {
 		d.sm.Remove(s.ID)
-		d.pool.DecRef(poolKey)
+		for _, k := range poolKeys {
+			d.pool.DecRef(k)
+		}
 	}()
 
 	// Send success response with session ID
@@ -212,7 +216,9 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			if err != nil {
 				return
 			}
-			d.pool.Touch(poolKey)
+			for _, k := range poolKeys {
+				d.pool.Touch(k)
+			}
 			switch msg.Header.Type {
 			case protocol.TypeData:
 				if msg.Header.Reserved == protocol.DataStdin {
@@ -268,7 +274,14 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 
 	// Final check: only send "lost" message if the session didn't exit normally AND the connection is dead
 	if !normalExit {
-		if !d.pool.IsAlive(poolKey, client) {
+		isAlive := false
+		for _, k := range poolKeys {
+			if d.pool.IsAlive(k, client) {
+				isAlive = true
+				break
+			}
+		}
+		if !isAlive {
 			protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
 		}
 	}

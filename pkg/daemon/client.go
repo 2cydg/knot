@@ -155,7 +155,7 @@ func (c *Client) GetForwardList(alias string) (*protocol.ForwardListResponse, er
 
 // Signal sends a signal to the daemon.
 func (c *Client) Signal(signal string) error {
-	conn, err := c.ConnectWithAutoStart()
+	conn, err := c.Connect()
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (c *Client) Signal(signal string) error {
 
 // Clear sends a clear request to the daemon to disconnect all SSH connections.
 func (c *Client) Clear() (int, error) {
-	conn, err := c.ConnectWithAutoStart()
+	conn, err := c.Connect()
 	if err != nil {
 		return 0, err
 	}

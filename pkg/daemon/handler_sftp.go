@@ -55,14 +55,20 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKey, _, err := d.dialWithRetry(conn, alias, srv, cfg, sftpReq.IsInteractive, confirmCallback)
+	client, poolKeys, _, err := d.dialWithRetry(conn, alias, srv, cfg, sftpReq.IsInteractive, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return
 	}
 
-	d.pool.IncRef(poolKey)
-	defer d.pool.DecRef(poolKey)
+	for _, k := range poolKeys {
+		d.pool.IncRef(k)
+	}
+	defer func() {
+		for _, k := range poolKeys {
+			d.pool.DecRef(k)
+		}
+	}()
 
 	// 3. Create session
 	session, err := client.NewSession()
@@ -151,7 +157,9 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 			if err != nil {
 				return
 			}
-			d.pool.Touch(poolKey)
+			for _, k := range poolKeys {
+				d.pool.Touch(k)
+			}
 			if msg.Header.Type == protocol.TypeData {
 				if _, err := stdin.Write(msg.Payload); err != nil {
 					return
@@ -182,7 +190,14 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 
 	// Final check: if client is no longer in the pool, the connection was lost
 	if !normalExit {
-		if !d.pool.IsAlive(poolKey, client) {
+		isAlive := false
+		for _, k := range poolKeys {
+			if d.pool.IsAlive(k, client) {
+				isAlive = true
+				break
+			}
+		}
+		if !isAlive {
 			protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
 		}
 	}

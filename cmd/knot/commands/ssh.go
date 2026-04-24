@@ -247,6 +247,7 @@ var sshCmd = &cobra.Command{
 		}()
 
 		// daemon -> stdout/stderr
+		exitStatusCh := make(chan int, 1)
 		go func() {
 			for {
 				msg, err := protocol.ReadMessage(conn)
@@ -268,7 +269,17 @@ var sshCmd = &cobra.Command{
 					if term.IsTerminal(fd) {
 						term.Restore(fd, oldState)
 					}
-					os.Exit(0)
+					
+					// Use non-zero exit code for disconnects unless it seems like a normal end
+					exitCode := 1
+					msgLower := strings.ToLower(string(msg.Payload))
+					if strings.Contains(msgLower, "finished") || 
+					   strings.Contains(msgLower, "closed") ||
+					   strings.Contains(msgLower, "normally") {
+						exitCode = 0
+					}
+					exitStatusCh <- exitCode
+					return
 				case protocol.TypeForwardNotify:
 					outMu.Lock()
 					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
@@ -288,7 +299,15 @@ var sshCmd = &cobra.Command{
 			}
 		}()
 
-		return <-errCh
+		select {
+		case err := <-errCh:
+			return err
+		case code := <-exitStatusCh:
+			if code != 0 {
+				os.Exit(code)
+			}
+			return nil
+		}
 	},
 }
 

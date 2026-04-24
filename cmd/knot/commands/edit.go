@@ -115,6 +115,10 @@ var editCmd = &cobra.Command{
 				srv.Password = ""
 			}
 
+			if err := srv.Validate(cfg); err != nil {
+				return err
+			}
+
 			cfg.Servers[alias] = srv
 			if err := cfg.Save(provider); err != nil {
 				return err

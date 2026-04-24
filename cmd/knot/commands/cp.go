@@ -76,7 +76,7 @@ Similar to docker cp, suffixing a source directory with '/.' copies its contents
 	},
 }
 
-var aliasRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var aliasRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 func parsePath(p string) (string, string) {
 	idx := strings.Index(p, ":")

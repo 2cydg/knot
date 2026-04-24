@@ -295,6 +295,16 @@ func WriteMessage(w io.Writer, msgType uint8, reserved uint8, payload []byte) er
 		copy(fullMsg[HeaderSize:], payload)
 	}
 
-	_, err := w.Write(fullMsg)
-	return err
+	totalWritten := 0
+	for totalWritten < totalLen {
+		n, err := w.Write(fullMsg[totalWritten:])
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		totalWritten += n
+	}
+	return nil
 }

@@ -64,16 +64,17 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		pool:       sshpool.NewPool(),
 		crypto:     provider,
 		sm:         NewSessionManager(),
-		fm:         NewForwardManager(),
 		startTime:  time.Now(),
 	}
+	d.fm = NewForwardManager(d.pool)
 
 	// Load permanent rules from config at startup
 	if cfg, err := config.Load(d.crypto); err == nil {
 		for alias, srv := range cfg.Servers {
 			for _, f := range srv.Forwards {
 				// All permanent rules are enabled by default on start
-				d.fm.AddRule(alias, f, true, false, nil)
+				// We don't have a client yet, so nil
+				d.fm.AddRule(alias, f, true, false, nil, nil)
 			}
 		}
 	}
@@ -81,13 +82,29 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 	d.pool.ConnectCallback = func(poolKey string, client *ssh.Client) {
 		alias := strings.SplitN(poolKey, ":", 2)[0]
 		logger.Info("SSH client connected. Starting forwarding rules.", "alias", alias, "pool_key", poolKey)
+		
+		cfg, err := config.Load(d.crypto)
+		if err != nil {
+			return
+		}
+		srv, ok := cfg.Servers[alias]
+		if !ok {
+			return
+		}
+
+		// Re-get client via pool to get ALL keys in the chain
+		_, poolKeys, _, err := d.pool.GetClient(srv, cfg, func(string) bool { return false })
+		if err != nil {
+			return
+		}
+
 		// Start any existing rules that are enabled for this alias
 		for _, rule := range d.fm.ListRules() {
 			rule.mu.RLock()
 			shouldStart := rule.Alias == alias && rule.Status != "Active" && rule.Enabled
 			rule.mu.RUnlock()
 			if shouldStart {
-				d.fm.StartRule(rule, client)
+				d.fm.StartRule(rule, client, poolKeys)
 			}
 		}
 	}
@@ -318,18 +335,17 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 }
 
 // dialWithRetry handles the authentication retry loop for SSH/SFTP connections.
-func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerConfig, cfg *config.Config, 
-    isInteractive bool, confirmCallback func(string) bool) (*ssh.Client, string, bool, error) {
-	
+func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerConfig, cfg *config.Config,
+    isInteractive bool, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
+
 	var authRetries int
 	const maxAuthRetries = 3
 
 	for {
-		client, poolKey, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
+		client, poolKeys, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
 		if err == nil {
-			return client, poolKey, isNew, nil
+			return client, poolKeys, isNew, nil
 		}
-
 		if isInteractive && sshpool.IsAuthError(err) && authRetries < maxAuthRetries {
 			authRetries++
 			logger.Warn("Authentication failed, challenging CLI for new credentials", "alias", alias, "attempt", authRetries)
@@ -343,25 +359,25 @@ func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerCon
 			}
 			challengePayload, _ := json.Marshal(challenge)
 			if err := protocol.WriteMessage(conn, protocol.TypeAuthChallenge, 0, challengePayload); err != nil {
-				return nil, "", false, err
+				return nil, nil, false, err
 			}
 
 			// Wait for response
 			msg, err := protocol.ReadMessage(conn)
 			if err != nil {
 				logger.Warn("Connection lost during auth retry", "alias", alias, "error", err)
-				return nil, "", false, err
+				return nil, nil, false, err
 			}
 
 			if msg.Header.Type == protocol.TypeAuthRetryAbort {
 				logger.Info("Authentication retry aborted by user", "alias", alias)
-				return nil, "", false, fmt.Errorf("authentication aborted")
+				return nil, nil, false, fmt.Errorf("authentication aborted")
 			}
 
 			if msg.Header.Type == protocol.TypeAuthResponse {
 				var resp protocol.AuthResponsePayload
 				if err := json.Unmarshal(msg.Payload, &resp); err != nil {
-					return nil, "", false, fmt.Errorf("invalid auth response")
+					return nil, nil, false, fmt.Errorf("invalid auth response")
 				}
 				// Update server config in memory for retry
 				srv.AuthMethod = resp.AuthMethod
@@ -371,9 +387,9 @@ func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerCon
 				continue
 			}
 
-			return nil, "", false, fmt.Errorf("unexpected protocol message during auth retry")
+			return nil, nil, false, fmt.Errorf("unexpected protocol message during auth retry")
 		}
 
-		return nil, "", false, err
+		return nil, nil, false, err
 	}
 }

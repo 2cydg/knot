@@ -83,7 +83,8 @@ var addCmd = &cobra.Command{
 					authFlag = config.AuthMethodPassword
 				}
 			}
-			cfg.Servers[alias] = config.ServerConfig{
+
+			newSrv := config.ServerConfig{
 				Alias:          alias,
 				Host:           hostFlag,
 				Port:           portFlag,
@@ -96,6 +97,12 @@ var addCmd = &cobra.Command{
 				JumpHost:       jumpHosts,
 				Tags:           tags,
 			}
+
+			if err := newSrv.Validate(cfg); err != nil {
+				return err
+			}
+
+			cfg.Servers[alias] = newSrv
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
