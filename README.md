@@ -121,7 +121,7 @@ Default filesystem layout:
 | **Files** | `knot cp [src] [dst]` | High-speed file transfer (Local ↔ Remote) |
 | **Remote** | `knot exec [alias] [cmd]` | Non-interactive command execution |
 | **Network** | `knot forward` | Manage L/R/D port forwarding rules |
-| **Manager** | `knot list [pattern]` | List servers grouped by tags |
+| **Manager** | `knot list [pattern]` | List servers by alias, target, tags, and recent usage |
 | | `knot status` | Check daemon and connection pool health |
 | | `knot export/import` | Encrypted configuration backup |
 

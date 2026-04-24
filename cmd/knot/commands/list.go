@@ -10,15 +10,65 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
+func boldText(s string) string {
+	return "\033[1m" + s + "\033[0m"
+}
+
+func padStyledText(raw, styled string, width int) string {
+	if len(raw) >= width {
+		return styled
+	}
+	return styled + strings.Repeat(" ", width-len(raw))
+}
+
+func buildTarget(s config.ServerConfig) string {
+	target := s.Host
+	if s.User != "" {
+		target = s.User + "@" + target
+	}
+	if s.Port > 0 && s.Port != 22 {
+		target = fmt.Sprintf("%s:%d", target, s.Port)
+	}
+	return target
+}
+
+func joinTags(tags []string) string {
+	if len(tags) == 0 {
+		return "-"
+	}
+	return strings.Join(tags, ",")
+}
+
+func formatLastUsed(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return t.Local().Format("2006-01-02")
+	}
+}
+
 var listCmd = &cobra.Command{
 	Use:     "list [pattern]",
 	Aliases: []string{"ls"},
-	Short:   "List all server configurations",
+	Short:   "List servers by alias, target, tags, and recent usage",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider, err := crypto.NewProvider()
 		if err != nil {
@@ -40,57 +90,36 @@ var listCmd = &cobra.Command{
 			pattern = strings.ToLower(args[0])
 		}
 
-		// Filter and Group servers
 		var filteredServers []config.ServerConfig
-		groups := make(map[string][]config.ServerConfig)
-		var untagged []config.ServerConfig
-
-		maxTagW := 3   // "TAG"
-		maxAliasW := 5 // "ALIAS"
-		maxUserW := 4  // "USER"
-		maxHostW := 4  // "HOST"
 
 		for _, s := range cfg.Servers {
-		        // Filtering
-		        if pattern != "" {
-		                match := strings.Contains(strings.ToLower(s.Alias), pattern)
-		                if !match {
-		                        for _, t := range s.Tags {
-		                                if strings.Contains(strings.ToLower(t), pattern) {
-		                                        match = true
-		                                        break
-		                                }
-		                        }
-		                }
-		                if !match {
-		                        continue
-		                }
-		        }
+			if pattern != "" {
+				fields := []string{
+					strings.ToLower(s.Alias),
+					strings.ToLower(s.User),
+					strings.ToLower(s.Host),
+				}
+				match := false
+				for _, f := range fields {
+					if strings.Contains(f, pattern) {
+						match = true
+						break
+					}
+				}
+				if !match {
+					for _, t := range s.Tags {
+						if strings.Contains(strings.ToLower(t), pattern) {
+							match = true
+							break
+						}
+					}
+				}
+				if !match {
+					continue
+				}
+			}
 
-		        filteredServers = append(filteredServers, s)
-
-		        // Grouping (Main Tag Only to avoid duplicates)
-		        if len(s.Tags) == 0 {
-		                untagged = append(untagged, s)
-		        } else {
-		                groups[s.Tags[0]] = append(groups[s.Tags[0]], s)
-		        }
-
-		        // Width calculation (Only for filtered servers)
-		        for _, t := range s.Tags {
-		                if len(t) > maxTagW {
-		                        maxTagW = len(t)
-		                }
-		        }
-		        if len(s.Alias) > maxAliasW {
-		                maxAliasW = len(s.Alias)
-		        }
-		        if len(s.User) > maxUserW {
-		                maxUserW = len(s.User)
-		        }
-		        if len(s.Host) > maxHostW {
-		                maxHostW = len(s.Host)
-		        }
+			filteredServers = append(filteredServers, s)
 		}
 
 		// Prepare data for JSON output (stripping sensitive info)
@@ -134,91 +163,101 @@ var listCmd = &cobra.Command{
 			})
 		}
 
+		type serverRow struct {
+			server    config.ServerConfig
+			target    string
+			tags      string
+			lastUsed  time.Time
+			lastUsedS string
+		}
+
+		recentByAlias := make(map[string]time.Time)
+		state, err := config.LoadState()
+		if err == nil {
+			for _, entry := range state.Recent {
+				recentByAlias[entry.Alias] = entry.LastUsed
+			}
+		}
+
+		var rows []serverRow
+		maxAliasW := len("ALIAS")
+		maxTargetW := len("TARGET")
+		maxTagsW := len("TAGS")
+		lastUsedHeader := "LAST USED"
+
+		for _, s := range filteredServers {
+			target := buildTarget(s)
+			tags := joinTags(s.Tags)
+			lastUsed := recentByAlias[s.Alias]
+			lastUsedS := formatLastUsed(lastUsed)
+
+			rows = append(rows, serverRow{
+				server:    s,
+				target:    target,
+				tags:      tags,
+				lastUsed:  lastUsed,
+				lastUsedS: lastUsedS,
+			})
+
+			if len(s.Alias) > maxAliasW {
+				maxAliasW = len(s.Alias)
+			}
+			if len(target) > maxTargetW {
+				maxTargetW = len(target)
+			}
+			if len(tags) > maxTagsW {
+				maxTagsW = len(tags)
+			}
+		}
+
+		sort.Slice(rows, func(i, j int) bool {
+			left := rows[i]
+			right := rows[j]
+
+			switch {
+			case left.lastUsed.IsZero() && !right.lastUsed.IsZero():
+				return false
+			case !left.lastUsed.IsZero() && right.lastUsed.IsZero():
+				return true
+			case !left.lastUsed.Equal(right.lastUsed):
+				return left.lastUsed.After(right.lastUsed)
+			default:
+				return left.server.Alias < right.server.Alias
+			}
+		})
+
+		sort.Slice(jsonServers, func(i, j int) bool {
+			left := recentByAlias[jsonServers[i].Alias]
+			right := recentByAlias[jsonServers[j].Alias]
+
+			switch {
+			case left.IsZero() && !right.IsZero():
+				return false
+			case !left.IsZero() && right.IsZero():
+				return true
+			case !left.Equal(right):
+				return left.After(right)
+			default:
+				return jsonServers[i].Alias < jsonServers[j].Alias
+			}
+		})
+
 		return formatter.Render(map[string]interface{}{"servers": jsonServers}, func() error {
-			if len(untagged) > 0 && maxTagW < len("untagged") {
-				maxTagW = len("untagged")
-			}
-
-			// Sort tag names
-			var tags []string
-			for t := range groups {
-				tags = append(tags, t)
-			}
-			sort.Strings(tags)
 			var buf bytes.Buffer
+			fmt.Fprintf(&buf, "%-*s   %-*s   %-*s   %s\n",
+				maxAliasW, "ALIAS", maxTargetW, "TARGET", maxTagsW, "TAGS", lastUsedHeader)
+			fmt.Fprintf(&buf, "%s   %s   %s   %s\n",
+				strings.Repeat("-", maxAliasW),
+				strings.Repeat("-", maxTargetW),
+				strings.Repeat("-", maxTagsW),
+				strings.Repeat("-", len(lastUsedHeader)))
 
-			// 1. RECENT section
-			if pattern == "" {
-				state, err := config.LoadState()
-				if err == nil && len(state.Recent) > 0 {
-					var recentServers []config.ServerConfig
-					var lastUsedTimes []string
-					for _, entry := range state.Recent {
-						if srv, ok := cfg.Servers[entry.Alias]; ok {
-							recentServers = append(recentServers, srv)
-							lastUsedTimes = append(lastUsedTimes, entry.LastUsed.Local().Format("2006-01-02 15:04"))
-						}
-					}
-
-					if len(recentServers) > 0 {
-						fmt.Fprintln(&buf, "\033[1;32m[RECENT]\033[0m")
-						fmt.Fprintf(&buf, "%-*s   %-*s   %-*s   %-*s   %s\n",
-							maxAliasW, "ALIAS", maxUserW, "USER", maxHostW, "HOST", 4, "PORT", "LAST USED")
-						fmt.Fprintf(&buf, "%s   %s   %s   %s   %s\n",
-							strings.Repeat("-", maxAliasW), strings.Repeat("-", maxUserW),
-							strings.Repeat("-", maxHostW), strings.Repeat("-", 4),
-							strings.Repeat("-", 16))
-
-						for i, s := range recentServers {
-							fmt.Fprintf(&buf, "%-*s   %-*s   %-*s   %-*d   %s\n",
-								maxAliasW, s.Alias, maxUserW, s.User, maxHostW, s.Host, 4, s.Port, lastUsedTimes[i])
-						}
-						fmt.Fprintln(&buf)
-					}
-				}
-			}
-
-			// 2. TAGS section (Main Server List)
-			fmt.Fprintln(&buf, "\033[1;34m[SERVERS]\033[0m")
-			fmt.Fprintf(&buf, "%-*s   %-*s   %-*s   %-*s   %s\n",
-				maxTagW, "TAG", maxAliasW, "ALIAS", maxUserW, "USER", maxHostW, "HOST", "PORT")
-			fmt.Fprintf(&buf, "%s   %s   %s   %s   %s\n",
-				strings.Repeat("-", maxTagW), strings.Repeat("-", maxAliasW),
-				strings.Repeat("-", maxUserW), strings.Repeat("-", maxHostW),
-				strings.Repeat("-", 4))
-
-			// Helper to render servers for a tag
-			renderServers := func(tagName string, servers []config.ServerConfig, isUntagged bool) {
-				sort.Slice(servers, func(i, j int) bool {
-					return servers[i].Alias < servers[j].Alias
-				})
-
-				displayTag := tagName
-				if isUntagged {
-					displayTag = "untagged"
-				}
-
-				// Colorize tag: \033[1;34m (7 chars) + tag + \033[0m (4 chars) = 11 chars extra
-				tagOutput := fmt.Sprintf("\033[1;34m%s\033[0m", displayTag)
-				colorOffset := 11
-
-				for i, s := range servers {
-					if i == 0 {
-						fmt.Fprintf(&buf, "%-*s   %-*s   %-*s   %-*s   %d\n",
-							maxTagW+colorOffset, tagOutput, maxAliasW, s.Alias, maxUserW, s.User, maxHostW, s.Host, s.Port)
-					} else {
-						fmt.Fprintf(&buf, "%-*s   %-*s   %-*s   %-*s   %d\n",
-							maxTagW, "", maxAliasW, s.Alias, maxUserW, s.User, maxHostW, s.Host, s.Port)
-					}
-				}
-			}
-
-			for _, t := range tags {
-				renderServers(t, groups[t], false)
-			}
-
-			if len(untagged) > 0 {
-				renderServers("", untagged, true)
+			for _, row := range rows {
+				fmt.Fprintf(&buf, "%s   %-*s   %-*s   %s\n",
+					padStyledText(row.server.Alias, boldText(row.server.Alias), maxAliasW),
+					maxTargetW, row.target,
+					maxTagsW, row.tags,
+					row.lastUsedS)
 			}
 
 			output := buf.String()

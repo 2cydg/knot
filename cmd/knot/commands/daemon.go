@@ -36,6 +36,9 @@ var daemonStartCmd = &cobra.Command{
 			// Prepare command to run in background
 			backgroundCmd := exec.Command(executable, "daemon", "start", "--foreground")
 
+			// Platform-specific process detaching
+			setupBackgroundProcess(backgroundCmd)
+
 			// Redirect output to a log file in background mode
 			logPath, err := paths.GetLogPath()
 			if err != nil {
@@ -242,4 +245,9 @@ func init() {
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(restartCmd)
 	rootCmd.AddCommand(clearCmd)
+}
+
+func setupBackgroundProcess(cmd *exec.Cmd) {
+	// Platform specific background process setup
+	setupBackgroundProcessOS(cmd)
 }
