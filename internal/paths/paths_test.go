@@ -1,8 +1,8 @@
 package paths
 
 import (
-	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -78,11 +78,9 @@ func TestRuntimeDirFallbackUsesTempDir(t *testing.T) {
 
 func TestHomeFallbacks(t *testing.T) {
 	tmp := t.TempDir()
-	oldHome := os.Getenv("HOME")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("XDG_STATE_HOME", "")
-	t.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", oldHome)
+	setTestHomeDir(t, tmp)
 
 	configDir, err := GetConfigDir()
 	if err != nil {
@@ -98,5 +96,16 @@ func TestHomeFallbacks(t *testing.T) {
 	}
 	if want := filepath.Join(tmp, ".local", "state", "knot"); stateDir != want {
 		t.Fatalf("unexpected state fallback dir: got %q want %q", stateDir, want)
+	}
+}
+
+func setTestHomeDir(t *testing.T, dir string) {
+	t.Helper()
+
+	t.Setenv("HOME", dir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+		t.Setenv("HOMEDRIVE", "")
+		t.Setenv("HOMEPATH", "")
 	}
 }

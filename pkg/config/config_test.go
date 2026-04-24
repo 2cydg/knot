@@ -4,6 +4,7 @@ import (
 	"knot/internal/paths"
 	"knot/pkg/crypto"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -15,18 +16,17 @@ func TestConfigLoadSave(t *testing.T) {
 		t.Skip("Skipping TestConfigLoadSave on macOS in CI (Keychain restricted)")
 	}
 
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
 	provider, err := crypto.NewProvider()
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
 
-	// Backup existing config if any
 	configPath, _ := paths.GetConfigPath()
-	var backup []byte
-	if _, err := os.Stat(configPath); err == nil {
-		backup, _ = os.ReadFile(configPath)
-		defer os.WriteFile(configPath, backup, 0600)
-	}
 
 	cfg := &Config{
 		Settings: SettingsConfig{
