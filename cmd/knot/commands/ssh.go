@@ -88,6 +88,13 @@ var sshCmd = &cobra.Command{
 		// Connection animation
 		stopSpinner := make(chan struct{})
 		spinnerDone := make(chan struct{})
+		var stopSpinnerOnce sync.Once
+		stopSpinnerAndWait := func() {
+			stopSpinnerOnce.Do(func() {
+				close(stopSpinner)
+				<-spinnerDone
+			})
+		}
 		go func() {
 			defer close(spinnerDone)
 			spinner := []string{"|", "/", "-", "\\"}
@@ -104,14 +111,7 @@ var sshCmd = &cobra.Command{
 				}
 			}
 		}()
-		defer func() {
-			select {
-			case <-stopSpinner:
-			default:
-				close(stopSpinner)
-				<-spinnerDone
-			}
-		}()
+		defer stopSpinnerAndWait()
 
 		// Wait for response (handling interactive host key confirmation and auth challenge)
 		var authUpdated bool
@@ -125,14 +125,12 @@ var sshCmd = &cobra.Command{
 		for {
 			msg, err := protocol.ReadMessage(conn)
 			if err != nil {
-				close(stopSpinner)
-				<-spinnerDone
+				stopSpinnerAndWait()
 				return fmt.Errorf("failed to read response: %w", err)
 			}
 
 			if msg.Header.Type == protocol.TypeHostKeyConfirm {
-				close(stopSpinner)
-				<-spinnerDone
+				stopSpinnerAndWait()
 				fmt.Printf("\n%s ", string(msg.Payload))
 				var response string
 				if _, err := fmt.Scanln(&response); err != nil {
@@ -145,8 +143,7 @@ var sshCmd = &cobra.Command{
 			}
 
 			if msg.Header.Type == protocol.TypeAuthChallenge {
-				close(stopSpinner)
-				<-spinnerDone
+				stopSpinnerAndWait()
 				var challenge protocol.AuthChallengePayload
 				if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
 					return fmt.Errorf("failed to unmarshal auth challenge: %w", err)
@@ -186,8 +183,7 @@ var sshCmd = &cobra.Command{
 
 			resp := string(msg.Payload)
 			if resp == "ok" || strings.HasPrefix(resp, "ok:") {
-				close(stopSpinner)
-				<-spinnerDone
+				stopSpinnerAndWait()
 				// Update recent history
 				state, err := config.LoadState()
 				if err == nil {
@@ -206,6 +202,13 @@ var sshCmd = &cobra.Command{
 				break
 			}
 			return fmt.Errorf("daemon error: %s", resp)
+		}
+
+		var titleMgr *terminalTitleManager
+		if req.IsInteractive && term.IsTerminal(outFd) {
+			titleMgr = newTerminalTitleManager(os.Stdout)
+			titleMgr.PushAndSet(alias)
+			defer titleMgr.Restore()
 		}
 
 		// Set terminal to raw mode
@@ -307,7 +310,7 @@ var sshCmd = &cobra.Command{
 			return err
 		case code := <-exitStatusCh:
 			if code != 0 {
-				os.Exit(code)
+				return &ExitCodeError{Code: code}
 			}
 			return nil
 		}
