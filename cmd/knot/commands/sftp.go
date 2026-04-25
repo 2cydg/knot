@@ -8,6 +8,7 @@ import (
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	knotsftp "knot/pkg/sftp"
+	"knot/pkg/sshpool"
 
 	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
@@ -66,6 +67,7 @@ paths support ~/... expansion.`,
 		// Send SFTP request
 		sftpReq := protocol.SFTPRequest{
 			Alias:         alias,
+			SSHAuthSock:   sshpool.GetAgentPath(),
 			IsInteractive: true,
 		}
 		sftpReqPayload, err := json.Marshal(sftpReq)

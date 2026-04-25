@@ -10,13 +10,24 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-func buildAuthMethods(srv config.ServerConfig, cfg *config.Config) ([]ssh.AuthMethod, io.Closer, error) {
+type DialOptions struct {
+	AgentSocket string
+}
+
+func (o DialOptions) agentSocketPath() string {
+	if o.AgentSocket != "" {
+		return o.AgentSocket
+	}
+	return GetAgentPath()
+}
+
+func buildAuthMethods(srv config.ServerConfig, cfg *config.Config, opts DialOptions) ([]ssh.AuthMethod, io.Closer, error) {
 	authMethods := []ssh.AuthMethod{}
 	var agentConn net.Conn
 
 	switch srv.AuthMethod {
 	case config.AuthMethodAgent:
-		socket := GetAgentPath()
+		socket := opts.agentSocketPath()
 		if socket == "" {
 			return nil, nil, fmt.Errorf("SSH_AUTH_SOCK not set")
 		}

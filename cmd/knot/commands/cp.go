@@ -8,6 +8,7 @@ import (
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	ksftp "knot/pkg/sftp"
+	"knot/pkg/sshpool"
 	"regexp"
 	"strings"
 
@@ -109,6 +110,7 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 	// 1. Send SFTP request
 	sftpReq := protocol.SFTPRequest{
 		Alias:         alias,
+		SSHAuthSock:   sshpool.GetAgentPath(),
 		IsInteractive: false,
 	}
 	sftpReqPayload, err := json.Marshal(sftpReq)
@@ -160,7 +162,7 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 func init() {
 	cpCmd.Flags().BoolVarP(&cpRecursive, "recursive", "r", true, "Recursive copy")
 	cpCmd.Flags().BoolVarP(&cpForce, "force", "f", false, "Overwrite existing files")
-	
+
 	cpCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(cpCmd)
 }

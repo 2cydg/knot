@@ -14,7 +14,14 @@ type getClientResult struct {
 	isNew  bool
 }
 
-func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, parentKeys []string, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
+func firstDialOptions(opts []DialOptions) DialOptions {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return DialOptions{}
+}
+
+func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, parentKeys []string, confirmCallback func(string) bool, opts DialOptions) (*ssh.Client, []string, bool, error) {
 	res, err, shared := p.sf.Do(key, func() (interface{}, error) {
 		p.mu.Lock()
 		if entry, ok := p.entries[key]; ok {
@@ -31,7 +38,7 @@ func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *confi
 		}
 		p.mu.Unlock()
 
-		client, err := dial(srv, cfg, jumpClient, confirmCallback)
+		client, err := dial(srv, cfg, jumpClient, confirmCallback, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -67,12 +74,14 @@ func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *confi
 
 // GetClient returns a cached ssh.Client for the given server config, or dials a new one.
 // It returns the client, a list of all pool keys in the chain (for ref counting), and whether a new connection was created.
-func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
+func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCallback func(string) bool, opts ...DialOptions) (*ssh.Client, []string, bool, error) {
 	if cfg != nil && cfg.Settings.IdleTimeout != "" {
 		if d, err := time.ParseDuration(cfg.Settings.IdleTimeout); err == nil {
 			p.SetIdleTimeout(d)
 		}
 	}
+
+	dialOptions := firstDialOptions(opts)
 
 	routes, err := buildRouteChain(srv, cfg)
 	if err != nil {
@@ -80,7 +89,7 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	}
 	if len(routes) == 1 {
 		route := routes[0]
-		return p.getClientForRoute(route.key, route.server, cfg, nil, nil, confirmCallback)
+		return p.getClientForRoute(route.key, route.server, cfg, nil, nil, confirmCallback, dialOptions)
 	}
 
 	var jumpClient *ssh.Client
@@ -93,9 +102,9 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 		)
 
 		if i == 0 {
-			client, keys, _, err = p.GetClient(route.server, cfg, confirmCallback)
+			client, keys, _, err = p.GetClient(route.server, cfg, confirmCallback, dialOptions)
 		} else {
-			client, keys, _, err = p.getClientForRoute(route.key, route.server, cfg, jumpClient, chainKeys, confirmCallback)
+			client, keys, _, err = p.getClientForRoute(route.key, route.server, cfg, jumpClient, chainKeys, confirmCallback, dialOptions)
 		}
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("failed to connect to jump host %s: %w", route.server.Alias, err)
@@ -106,5 +115,5 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	}
 
 	targetRoute := routes[len(routes)-1]
-	return p.getClientForRoute(targetRoute.key, targetRoute.server, cfg, jumpClient, chainKeys, confirmCallback)
+	return p.getClientForRoute(targetRoute.key, targetRoute.server, cfg, jumpClient, chainKeys, confirmCallback, dialOptions)
 }

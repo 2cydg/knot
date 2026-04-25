@@ -1,6 +1,9 @@
 package commands
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"sort"
@@ -131,4 +134,108 @@ func filterAndSortCompletions(values []string, toComplete string) []string {
 
 	sort.Strings(filtered)
 	return filtered
+}
+
+func generateZshCompletion(cmd *cobra.Command, out io.Writer, noDesc bool) error {
+	var buf bytes.Buffer
+
+	var err error
+	if noDesc {
+		err = cmd.Root().GenZshCompletionNoDesc(&buf)
+	} else {
+		err = cmd.Root().GenZshCompletion(&buf)
+	}
+	if err != nil {
+		return err
+	}
+
+	_, err = io.WriteString(out, ensureZshCompinit(buf.String(), cmd.Root().Name()))
+	return err
+}
+
+func ensureZshCompinit(script string, commandName string) string {
+	compdefLine := fmt.Sprintf("compdef _%[1]s %[1]s\n", commandName)
+	if !strings.Contains(script, compdefLine) {
+		return script
+	}
+
+	bootstrap := fmt.Sprintf(`if ! (( $+functions[compdef] )); then
+  autoload -U compinit
+  compinit
+fi
+
+%s`, compdefLine)
+
+	return strings.Replace(script, compdefLine, bootstrap, 1)
+}
+
+func newCompletionCmd() *cobra.Command {
+	var noDesc bool
+
+	completionCmd := &cobra.Command{
+		Use:                   "completion",
+		Short:                 "Generate shell completion scripts",
+		Args:                  cobra.NoArgs,
+		DisableFlagsInUseLine: true,
+		ValidArgsFunction:     cobra.NoFileCompletions,
+	}
+
+	addNoDescFlag := func(cmd *cobra.Command) {
+		cmd.Flags().BoolVar(&noDesc, "no-descriptions", false, "Disable completion descriptions")
+	}
+
+	bashCmd := &cobra.Command{
+		Use:               "bash",
+		Short:             "Generate the autocompletion script for bash",
+		Args:              cobra.NoArgs,
+		ValidArgsFunction: cobra.NoFileCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenBashCompletionV2(cmd.OutOrStdout(), !noDesc)
+		},
+	}
+	addNoDescFlag(bashCmd)
+
+	zshCmd := &cobra.Command{
+		Use:               "zsh",
+		Short:             "Generate the autocompletion script for zsh",
+		Args:              cobra.NoArgs,
+		ValidArgsFunction: cobra.NoFileCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return generateZshCompletion(cmd, cmd.OutOrStdout(), noDesc)
+		},
+	}
+	addNoDescFlag(zshCmd)
+
+	fishCmd := &cobra.Command{
+		Use:               "fish",
+		Short:             "Generate the autocompletion script for fish",
+		Args:              cobra.NoArgs,
+		ValidArgsFunction: cobra.NoFileCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenFishCompletion(cmd.OutOrStdout(), !noDesc)
+		},
+	}
+	addNoDescFlag(fishCmd)
+
+	powershellCmd := &cobra.Command{
+		Use:               "powershell",
+		Short:             "Generate the autocompletion script for PowerShell",
+		Args:              cobra.NoArgs,
+		ValidArgsFunction: cobra.NoFileCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if noDesc {
+				return cmd.Root().GenPowerShellCompletion(cmd.OutOrStdout())
+			}
+			return cmd.Root().GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
+		},
+	}
+	addNoDescFlag(powershellCmd)
+
+	completionCmd.AddCommand(bashCmd, zshCmd, fishCmd, powershellCmd)
+	return completionCmd
+}
+
+func init() {
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	rootCmd.AddCommand(newCompletionCmd())
 }

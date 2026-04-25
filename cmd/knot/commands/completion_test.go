@@ -2,6 +2,7 @@ package commands
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -72,5 +73,27 @@ func TestConfigValueCandidates(t *testing.T) {
 				t.Fatalf("configValueCandidates(%q) = %#v, want %#v", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEnsureZshCompinit(t *testing.T) {
+	script := "#compdef knot\ncompdef _knot knot\n\n_knot() {\n  return 0\n}\n"
+
+	got := ensureZshCompinit(script, "knot")
+
+	if !strings.HasPrefix(got, "#compdef knot\n") {
+		t.Fatalf("ensureZshCompinit() should preserve #compdef header, got %q", got)
+	}
+
+	if !strings.Contains(got, "autoload -U compinit\n  compinit\n") {
+		t.Fatalf("ensureZshCompinit() should inject compinit bootstrap, got %q", got)
+	}
+
+	if !strings.Contains(got, "if ! (( $+functions[compdef] )); then\n") {
+		t.Fatalf("ensureZshCompinit() should guard on compdef availability, got %q", got)
+	}
+
+	if strings.Count(got, "compdef _knot knot\n") != 1 {
+		t.Fatalf("ensureZshCompinit() should keep a single compdef line, got %q", got)
 	}
 }

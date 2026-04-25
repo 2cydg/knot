@@ -6,6 +6,7 @@ import (
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"knot/pkg/daemon"
+	"knot/pkg/sshpool"
 	"os"
 	"sort"
 	"strconv"
@@ -22,8 +23,8 @@ var forwardCmd = &cobra.Command{
 }
 
 var forwardAddCmd = &cobra.Command{
-	Use:   "add [alias]",
-	Short: "Add a new port forwarding rule",
+	Use:               "add [alias]",
+	Short:             "Add a new port forwarding rule",
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var alias string
@@ -142,7 +143,7 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 	fmt.Println("1) Local (L) - Access remote service locally")
 	fmt.Println("2) Remote (R) - Access local service remotely")
 	fmt.Println("3) Dynamic (D) - SOCKS5 proxy")
-	
+
 	line.SetPrompt("Choice (1-3): ")
 	choice, err := line.Readline()
 	if err != nil {
@@ -222,8 +223,9 @@ func sendForwardAdd(alias, fType string, localPort int, remoteAddr string, isTem
 	}
 
 	req := protocol.ForwardRequest{
-		Action: "add",
-		Alias:  alias,
+		Action:      "add",
+		Alias:       alias,
+		SSHAuthSock: sshpool.GetAgentPath(),
 		Config: protocol.ForwardProtocolConfig{
 			Type:       fType,
 			LocalPort:  localPort,
@@ -243,9 +245,9 @@ func sendForwardAdd(alias, fType string, localPort int, remoteAddr string, isTem
 }
 
 var forwardRemoveCmd = &cobra.Command{
-	Use:   "remove [alias] [type:port]",
-	Short: "Remove a port forwarding rule",
-	Args:  cobra.ExactArgs(2),
+	Use:               "remove [alias] [type:port]",
+	Short:             "Remove a port forwarding rule",
+	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
@@ -266,8 +268,9 @@ var forwardRemoveCmd = &cobra.Command{
 		}
 
 		req := protocol.ForwardRequest{
-			Action: "remove",
-			Alias:  alias,
+			Action:      "remove",
+			Alias:       alias,
+			SSHAuthSock: sshpool.GetAgentPath(),
 			Config: protocol.ForwardProtocolConfig{
 				Type:      fType,
 				LocalPort: port,
@@ -284,8 +287,8 @@ var forwardRemoveCmd = &cobra.Command{
 }
 
 var forwardListCmd = &cobra.Command{
-	Use:   "list [alias]",
-	Short: "List port forwarding rules",
+	Use:               "list [alias]",
+	Short:             "List port forwarding rules",
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := ""
@@ -322,9 +325,9 @@ var forwardListCmd = &cobra.Command{
 }
 
 var forwardEnableCmd = &cobra.Command{
-	Use:   "enable [alias] [type:port]",
-	Short: "Enable a port forwarding rule",
-	Args:  cobra.ExactArgs(2),
+	Use:               "enable [alias] [type:port]",
+	Short:             "Enable a port forwarding rule",
+	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return handleForwardToggle(args[0], args[1], true)
@@ -332,9 +335,9 @@ var forwardEnableCmd = &cobra.Command{
 }
 
 var forwardDisableCmd = &cobra.Command{
-	Use:   "disable [alias] [type:port]",
-	Short: "Disable a port forwarding rule",
-	Args:  cobra.ExactArgs(2),
+	Use:               "disable [alias] [type:port]",
+	Short:             "Disable a port forwarding rule",
+	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return handleForwardToggle(args[0], args[1], false)
@@ -363,8 +366,9 @@ func handleForwardToggle(alias, target string, enable bool) error {
 	}
 
 	req := protocol.ForwardRequest{
-		Action: action,
-		Alias:  alias,
+		Action:      action,
+		Alias:       alias,
+		SSHAuthSock: sshpool.GetAgentPath(),
 		Config: protocol.ForwardProtocolConfig{
 			Type:      fType,
 			LocalPort: port,
@@ -394,7 +398,7 @@ func init() {
 	forwardCmd.AddCommand(forwardListCmd)
 	forwardCmd.AddCommand(forwardEnableCmd)
 	forwardCmd.AddCommand(forwardDisableCmd)
-	
+
 	forwardCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(forwardCmd)
 }

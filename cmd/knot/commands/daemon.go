@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"knot/internal/logger"
 	"knot/internal/paths"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -131,6 +134,10 @@ var daemonStopCmd = &cobra.Command{
 		}
 
 		if err := client.Signal("stop"); err != nil {
+			if isDaemonNotRunningError(err) {
+				fmt.Println("Daemon is already stopped.")
+				return nil
+			}
 			return fmt.Errorf("failed to send stop signal: %w", err)
 		}
 
@@ -250,4 +257,17 @@ func init() {
 func setupBackgroundProcess(cmd *exec.Cmd) {
 	// Platform specific background process setup
 	setupBackgroundProcessOS(cmd)
+}
+
+func isDaemonNotRunningError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such file or directory") || strings.Contains(message, "connection refused")
 }

@@ -18,7 +18,7 @@ var rootCmd = &cobra.Command{
 
 var (
 	jsonOutput bool
-	coreGroup = &cobra.Group{
+	coreGroup  = &cobra.Group{
 		ID:    "core",
 		Title: "Core Commands:",
 	}
@@ -29,48 +29,13 @@ var (
 )
 
 func Execute() error {
-	// Intercept 'knot [alias]' before Cobra handles it
-	if len(os.Args) > 1 {
-		firstArg := os.Args[1]
-
-		// If it starts with -, it's a flag for knot root (like -h)
-		// We let Cobra handle flags on the root command.
-		if !strings.HasPrefix(firstArg, "-") {
-			// Check if first arg matches a known subcommand or built-in Cobra command.
-			isKnown := false
-			if firstArg == "help" || firstArg == "completion" {
-				isKnown = true
-			} else {
-				for _, c := range rootCmd.Commands() {
-					if c.Name() == firstArg || c.HasAlias(firstArg) {
-						isKnown = true
-						break
-					}
-				}
-			}
-
-			// If not a known command, treat as alias for 'ssh'
-			if !isKnown {
-				// Validation for alias
-				if len(firstArg) > 255 {
-					return fmt.Errorf("alias too long")
-				}
-				// disallow common shell metacharacters and directory separators
-				if strings.ContainsAny(firstArg, " \t\n\r/;\"'|&<>") {
-					return fmt.Errorf("invalid alias format: '%s' (contains disallowed characters)", firstArg)
-				}
-
-				// Treat as alias, rewrite args to 'knot ssh [alias]'
-				// We insert 'ssh' as the first command.
-				newArgs := make([]string, 0, len(os.Args)+1)
-				newArgs = append(newArgs, os.Args[0], "ssh")
-				newArgs = append(newArgs, os.Args[1:]...)
-				os.Args = newArgs
-			}
-		}
+	rewrittenArgs, err := rewriteArgsForAlias(os.Args, rootCmd)
+	if err != nil {
+		return err
 	}
+	os.Args = rewrittenArgs
 
-	err := rootCmd.Execute()
+	err = rootCmd.Execute()
 	if err != nil {
 		exitCode := 1
 		var displayErr error = err
@@ -86,6 +51,41 @@ func Execute() error {
 		os.Exit(exitCode)
 	}
 	return nil
+}
+
+func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
+	if len(args) <= 1 {
+		return args, nil
+	}
+
+	firstArg := args[1]
+
+	// Let Cobra handle root flags and built-in completion commands.
+	if strings.HasPrefix(firstArg, "-") ||
+		firstArg == cobra.ShellCompRequestCmd ||
+		firstArg == cobra.ShellCompNoDescRequestCmd {
+		return args, nil
+	}
+
+	for _, c := range root.Commands() {
+		if c.Name() == firstArg || c.HasAlias(firstArg) {
+			return args, nil
+		}
+	}
+
+	if len(firstArg) > 255 {
+		return nil, fmt.Errorf("alias too long")
+	}
+
+	// Disallow common shell metacharacters and directory separators.
+	if strings.ContainsAny(firstArg, " \t\n\r/;\"'|&<>") {
+		return nil, fmt.Errorf("invalid alias format: '%s' (contains disallowed characters)", firstArg)
+	}
+
+	newArgs := make([]string, 0, len(args)+1)
+	newArgs = append(newArgs, args[0], "ssh")
+	newArgs = append(newArgs, args[1:]...)
+	return newArgs, nil
 }
 
 func init() {

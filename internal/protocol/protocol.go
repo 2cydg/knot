@@ -24,26 +24,26 @@ var (
 )
 
 const (
-	TypeReq    uint8 = 0x01
-	TypeResp   uint8 = 0x02
-	TypeData   uint8 = 0x03
-	TypeSignal uint8 = 0x04
-	TypeHostKeyConfirm uint8 = 0x05
-	TypeSFTPReq uint8 = 0x06
-	TypeDisconnect uint8 = 0x09
-	TypeStatusReq uint8 = 0x0A
-	TypeStatusResp uint8 = 0x0B
-	TypeForwardReq uint8 = 0x0C
-	TypeForwardListReq uint8 = 0x0D
+	TypeReq             uint8 = 0x01
+	TypeResp            uint8 = 0x02
+	TypeData            uint8 = 0x03
+	TypeSignal          uint8 = 0x04
+	TypeHostKeyConfirm  uint8 = 0x05
+	TypeSFTPReq         uint8 = 0x06
+	TypeDisconnect      uint8 = 0x09
+	TypeStatusReq       uint8 = 0x0A
+	TypeStatusResp      uint8 = 0x0B
+	TypeForwardReq      uint8 = 0x0C
+	TypeForwardListReq  uint8 = 0x0D
 	TypeForwardListResp uint8 = 0x0E
 	TypeForwardNotify   uint8 = 0x0F
 	TypeClearReq        uint8 = 0x10
 	TypeClearResp       uint8 = 0x11
 	TypeExecReq         uint8 = 0x12
 	TypeExecResp        uint8 = 0x13
-	TypeAuthChallenge  uint8 = 0x14 // Daemon -> CLI: Request new credentials
-	TypeAuthResponse   uint8 = 0x15 // CLI -> Daemon: New credentials
-	TypeAuthRetryAbort uint8 = 0x16 // CLI -> Daemon: Abort retry
+	TypeAuthChallenge   uint8 = 0x14 // Daemon -> CLI: Request new credentials
+	TypeAuthResponse    uint8 = 0x15 // CLI -> Daemon: New credentials
+	TypeAuthRetryAbort  uint8 = 0x16 // CLI -> Daemon: Abort retry
 )
 
 // SubTypes for TypeData (using Reserved field)
@@ -61,11 +61,11 @@ const (
 
 // AuthChallengePayload defines the payload for an authentication challenge.
 type AuthChallengePayload struct {
-	Alias           string `json:"alias"`
-	AuthMethod      string `json:"auth_method"` // Current auth method
-	Error           string `json:"error"`       // Specific error message
-	Attempt         int    `json:"attempt"`
-	MaxAttempts     int    `json:"max_attempts"`
+	Alias       string `json:"alias"`
+	AuthMethod  string `json:"auth_method"` // Current auth method
+	Error       string `json:"error"`       // Specific error message
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
 }
 
 // AuthResponsePayload defines the payload for an authentication response.
@@ -89,14 +89,16 @@ type SSHRequest struct {
 // SFTPRequest defines the payload for an SFTP session request.
 type SFTPRequest struct {
 	Alias         string `json:"alias"`
+	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
 	IsInteractive bool   `json:"is_interactive"`
 }
 
 // ExecRequest defines the payload for an SSH exec request.
 type ExecRequest struct {
-	Alias   string `json:"alias"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout"` // seconds
+	Alias       string `json:"alias"`
+	Command     string `json:"command"`
+	Timeout     int    `json:"timeout"` // seconds
+	SSHAuthSock string `json:"ssh_auth_sock,omitempty"`
 }
 
 // ExecResponse defines the payload for an SSH exec response.
@@ -149,10 +151,11 @@ type ForwardProtocolConfig struct {
 
 // ForwardRequest defines the payload for a port forwarding management request.
 type ForwardRequest struct {
-	Action string                `json:"action"` // add, remove, enable, disable
-	Alias  string                `json:"alias"`
-	Config ForwardProtocolConfig `json:"config"`
-	IsTemp bool                  `json:"is_temp"`
+	Action      string                `json:"action"` // add, remove, enable, disable
+	Alias       string                `json:"alias"`
+	Config      ForwardProtocolConfig `json:"config"`
+	IsTemp      bool                  `json:"is_temp"`
+	SSHAuthSock string                `json:"ssh_auth_sock,omitempty"`
 }
 
 // ForwardStatus defines the status of a single port forward.
@@ -182,7 +185,7 @@ type Header struct {
 	Magic    [2]byte
 	Version  uint8
 	Type     uint8
-	Reserved uint8 // Now correctly mapped as Subtype/Reserved
+	Reserved uint8  // Now correctly mapped as Subtype/Reserved
 	Length   uint32 // Using 3 bytes for length in wire format
 }
 

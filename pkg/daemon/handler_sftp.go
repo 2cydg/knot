@@ -55,7 +55,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKeys, _, err := d.dialWithRetry(conn, alias, srv, cfg, sftpReq.IsInteractive, confirmCallback)
+	client, poolKeys, _, err := d.dialWithRetry(conn, alias, srv, cfg, sftpReq.IsInteractive, sftpReq.SSHAuthSock, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

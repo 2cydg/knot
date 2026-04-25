@@ -40,7 +40,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 					if req.Action == "enable" || (req.Action == "add" && req.Config.Enabled) {
 						// Only dial if we are explicitly enabling
 						// Forwarding confirmation callback is non-interactive here
-						sshClient, poolKeys, _, err = d.pool.GetClient(srv, cfg, func(string) bool { return false })
+						sshClient, poolKeys, _, err = d.pool.GetClient(srv, cfg, func(string) bool { return false }, sshpool.DialOptions{AgentSocket: req.SSHAuthSock})
 						if err != nil {
 							// Return the dial error to CLI
 							protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte(fmt.Sprintf("failed to establish SSH connection for forwarding: %v", err)))
@@ -53,7 +53,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 						if sshClient != nil {
 							// If it's in pool, we still want the keys.
 							// GetClient will handle it fast.
-							_, poolKeys, _, _ = d.pool.GetClient(srv, cfg, func(string) bool { return false })
+							_, poolKeys, _, _ = d.pool.GetClient(srv, cfg, func(string) bool { return false }, sshpool.DialOptions{AgentSocket: req.SSHAuthSock})
 						}
 					}
 				case "disable", "remove":

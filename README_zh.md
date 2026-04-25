@@ -45,7 +45,7 @@ source <(knot completion bash)
 mkdir -p ~/.local/share/bash-completion/completions && knot completion bash > ~/.local/share/bash-completion/completions/knot
 
 # Zsh：当前会话立即启用
-source <(knot completion zsh)
+autoload -U compinit && compinit && source <(knot completion zsh)
 
 # Zsh：为当前用户永久启用
 mkdir -p ~/.zfunc && knot completion zsh > ~/.zfunc/_knot && grep -qxF 'fpath=("$HOME/.zfunc" $fpath)' ~/.zshrc || printf '\nfpath=("$HOME/.zfunc" $fpath)\nautoload -U compinit && compinit\n' >> ~/.zshrc

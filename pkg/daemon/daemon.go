@@ -342,13 +342,13 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 
 // dialWithRetry handles the authentication retry loop for SSH/SFTP connections.
 func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerConfig, cfg *config.Config,
-	isInteractive bool, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
+	isInteractive bool, agentSocket string, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
 
 	var authRetries int
 	const maxAuthRetries = 3
 
 	for {
-		client, poolKeys, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback)
+		client, poolKeys, isNew, err := d.pool.GetClient(srv, cfg, confirmCallback, sshpool.DialOptions{AgentSocket: agentSocket})
 		if err == nil {
 			return client, poolKeys, isNew, nil
 		}

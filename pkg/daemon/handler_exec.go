@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"knot/internal/logger"
 	"knot/internal/protocol"
+	"knot/pkg/sshpool"
 	"net"
 	"strings"
 	"time"
@@ -52,7 +53,7 @@ func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 	logger.Info("Executing command", "alias", req.Alias, "command", req.Command)
 
 	// 1. Get SSH client
-	client, poolKeys, err := d.getSSHClient(req.Alias)
+	client, poolKeys, err := d.getSSHClient(req.Alias, req.SSHAuthSock)
 	if err != nil {
 		d.sendExecResponse(conn, -1, "", "", err.Error(), false, 0)
 		return
@@ -154,7 +155,7 @@ func (d *Daemon) sendExecResponse(conn net.Conn, exitCode int, stdout, stderr, e
 	_ = protocol.WriteMessage(conn, protocol.TypeExecResp, 0, payload)
 }
 
-func (d *Daemon) getSSHClient(alias string) (*ssh.Client, []string, error) {
+func (d *Daemon) getSSHClient(alias string, agentSocket string) (*ssh.Client, []string, error) {
 	// Load config to connect
 	cfg, err := d.loadConfig()
 	if err != nil {
@@ -170,7 +171,7 @@ func (d *Daemon) getSSHClient(alias string) (*ssh.Client, []string, error) {
 	client, keys, _, err := d.pool.GetClient(srv, cfg, func(msg string) bool {
 		// exec is non-interactive
 		return false
-	})
+	}, sshpool.DialOptions{AgentSocket: agentSocket})
 	if err != nil {
 		// If it's a host key verification failure, give a helpful message
 		if strings.Contains(err.Error(), "host key") {

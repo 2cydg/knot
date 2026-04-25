@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
+	"knot/pkg/sshpool"
 	"os"
 	"strings"
 
@@ -36,9 +37,10 @@ var execCmd = &cobra.Command{
 		defer conn.Close()
 
 		req := protocol.ExecRequest{
-			Alias:   alias,
-			Command: remoteCmd,
-			Timeout: execTimeout,
+			Alias:       alias,
+			Command:     remoteCmd,
+			Timeout:     execTimeout,
+			SSHAuthSock: sshpool.GetAgentPath(),
 		}
 
 		payload, _ := json.Marshal(req)

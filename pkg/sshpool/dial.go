@@ -11,8 +11,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, confirmCallback func(string) bool) (*ssh.Client, error) {
-	authMethods, authCloser, err := buildAuthMethods(srv, cfg)
+func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, confirmCallback func(string) bool, opts DialOptions) (*ssh.Client, error) {
+	authMethods, authCloser, err := buildAuthMethods(srv, cfg, opts)
 	if err != nil {
 		return nil, err
 	}
