@@ -206,8 +206,9 @@ var proxyAddCmd = &cobra.Command{
 }
 
 var proxyRemoveCmd = &cobra.Command{
-	Use:   "remove [alias]",
-	Short: "Remove a proxy",
+	Use:               "remove [alias]",
+	Short:             "Remove a proxy",
+	ValidArgsFunction: proxyAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("alias is required")
@@ -268,8 +269,9 @@ var proxyRemoveCmd = &cobra.Command{
 }
 
 var proxyEditCmd = &cobra.Command{
-	Use:   "edit [alias]",
-	Short: "Edit a proxy",
+	Use:               "edit [alias]",
+	Short:             "Edit a proxy",
+	ValidArgsFunction: proxyAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("alias is required")

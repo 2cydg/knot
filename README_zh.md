@@ -35,14 +35,37 @@ mv knot ~/.local/bin/
 
 ### Shell 补全
 
-Knot 内置了对 Bash, Zsh, 和 Fish 的补全支持。
+Knot 内置了对 Bash、Zsh、Fish 和 PowerShell 的补全支持。
 
 ```bash
-# Zsh 示例
-knot completion zsh > ~/.zfunc/_knot
-# Bash 示例
-knot completion bash > /etc/bash_completion.d/knot
+# Bash：当前会话立即启用
+source <(knot completion bash)
+
+# Bash：为当前用户永久启用
+mkdir -p ~/.local/share/bash-completion/completions && knot completion bash > ~/.local/share/bash-completion/completions/knot
+
+# Zsh：当前会话立即启用
+source <(knot completion zsh)
+
+# Zsh：为当前用户永久启用
+mkdir -p ~/.zfunc && knot completion zsh > ~/.zfunc/_knot && grep -qxF 'fpath=("$HOME/.zfunc" $fpath)' ~/.zshrc || printf '\nfpath=("$HOME/.zfunc" $fpath)\nautoload -U compinit && compinit\n' >> ~/.zshrc
+
+# Fish：当前会话立即启用
+knot completion fish | source
+
+# Fish：为当前用户永久启用
+mkdir -p ~/.config/fish/completions && knot completion fish > ~/.config/fish/completions/knot.fish
 ```
+
+```powershell
+# PowerShell：当前会话立即启用
+knot completion powershell | Out-String | Invoke-Expression
+
+# PowerShell：为当前用户永久启用
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }; if (-not (Select-String -Path $PROFILE -SimpleMatch 'knot completion powershell | Out-String | Invoke-Expression' -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`nknot completion powershell | Out-String | Invoke-Expression" }
+```
+
+对于 Bash，请确认系统已安装并加载 `bash-completion`。
 
 ---
 

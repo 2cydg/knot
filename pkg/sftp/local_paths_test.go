@@ -2,12 +2,18 @@ package sftp
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestExpandLocalHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("HOMEDRIVE", "")
+		t.Setenv("HOMEPATH", "")
+	}
 
 	tests := []struct {
 		name  string

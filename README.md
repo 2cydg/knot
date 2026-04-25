@@ -34,14 +34,37 @@ mv knot ~/.local/bin/
 
 ### Shell Completion
 
-Knot provides built-in completion for Bash, Zsh, and Fish.
+Knot provides built-in completion for Bash, Zsh, Fish, and PowerShell.
 
 ```bash
-# For Zsh
-knot completion zsh > ~/.zfunc/_knot
-# For Bash
-knot completion bash > /etc/bash_completion.d/knot
+# Bash: enable for the current session
+source <(knot completion bash)
+
+# Bash: enable permanently for the current user
+mkdir -p ~/.local/share/bash-completion/completions && knot completion bash > ~/.local/share/bash-completion/completions/knot
+
+# Zsh: enable for the current session
+source <(knot completion zsh)
+
+# Zsh: enable permanently for the current user
+mkdir -p ~/.zfunc && knot completion zsh > ~/.zfunc/_knot && grep -qxF 'fpath=("$HOME/.zfunc" $fpath)' ~/.zshrc || printf '\nfpath=("$HOME/.zfunc" $fpath)\nautoload -U compinit && compinit\n' >> ~/.zshrc
+
+# Fish: enable for the current session
+knot completion fish | source
+
+# Fish: enable permanently for the current user
+mkdir -p ~/.config/fish/completions && knot completion fish > ~/.config/fish/completions/knot.fish
 ```
+
+```powershell
+# PowerShell: enable for the current session
+knot completion powershell | Out-String | Invoke-Expression
+
+# PowerShell: enable permanently for the current user
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }; if (-not (Select-String -Path $PROFILE -SimpleMatch 'knot completion powershell | Out-String | Invoke-Expression' -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`nknot completion powershell | Out-String | Invoke-Expression" }
+```
+
+For Bash, make sure `bash-completion` is installed and loaded by your shell.
 
 ---
 

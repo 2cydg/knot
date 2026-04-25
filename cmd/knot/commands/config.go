@@ -111,9 +111,10 @@ var configListCmd = &cobra.Command{
 }
 
 var configGetCmd = &cobra.Command{
-	Use:   "get [key]",
-	Short: "Get a specific global setting",
-	Args:  cobra.ExactArgs(1),
+	Use:               "get [key]",
+	Short:             "Get a specific global setting",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: configKeyCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := strings.ToLower(args[0])
 		provider, err := crypto.NewProvider()
@@ -144,9 +145,10 @@ var configGetCmd = &cobra.Command{
 }
 
 var configSetCmd = &cobra.Command{
-	Use:   "set [key] [value]",
-	Short: "Set a global setting",
-	Args:  cobra.ExactArgs(2),
+	Use:               "set [key] [value]",
+	Short:             "Set a global setting",
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: configKeyValueCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := strings.ToLower(args[0])
 		value := args[1]
