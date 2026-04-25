@@ -168,7 +168,7 @@ func TestLocalPathCompletion(t *testing.T) {
 			line:       "put ~/De",
 			pos:        len("put ~/De"),
 			wantOffset: len("~/De"),
-			want:       []string{localCompletionSuffix(t, "~/De", "~"+string(os.PathSeparator)+"Desktop"+string(os.PathSeparator), quoteModeNone, false)},
+			want:       []string{localCompletionSuffix(t, "~/De", "~/Desktop"+string(os.PathSeparator), quoteModeNone, false)},
 		},
 		{
 			name:       "put second arg is remote and skipped",
