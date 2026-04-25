@@ -14,6 +14,11 @@ import (
 
 // Upload uploads a local file or directory to the remote server.
 func Upload(client *sftp.Client, localPath, remotePath string, recursive, overwrite bool, quiet bool) error {
+	localPath, err := expandLocalHome(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve local path: %w", err)
+	}
+
 	stat, err := os.Stat(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to stat local path: %w", err)
@@ -102,6 +107,11 @@ func uploadDir(client *sftp.Client, localDir, remoteDir string, overwrite bool, 
 
 // Download downloads a remote file or directory to the local machine.
 func Download(client *sftp.Client, remotePath, localPath string, recursive, overwrite bool, quiet bool) error {
+	localPath, err := expandLocalHome(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve local path: %w", err)
+	}
+
 	stat, err := client.Stat(remotePath)
 	if err != nil {
 		return fmt.Errorf("failed to stat remote path: %w", err)
@@ -201,6 +211,11 @@ func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool
 
 // MGet downloads multiple remote files matching a pattern. (Keeping for compatibility)
 func MGet(client *sftp.Client, remotePattern, localDir string, overwrite bool) error {
+	localDir, err := expandLocalHome(localDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve local path: %w", err)
+	}
+
 	remoteDir := path.Dir(remotePattern)
 	pattern := path.Base(remotePattern)
 
@@ -235,6 +250,11 @@ func MGet(client *sftp.Client, remotePattern, localDir string, overwrite bool) e
 
 // MPut uploads multiple local files matching a pattern. (Keeping for compatibility)
 func MPut(client *sftp.Client, localPattern, remoteDir string, overwrite bool) error {
+	localPattern, err := expandLocalHome(localPattern)
+	if err != nil {
+		return fmt.Errorf("failed to resolve local path: %w", err)
+	}
+
 	matches, err := filepath.Glob(localPattern)
 	if err != nil {
 		return err

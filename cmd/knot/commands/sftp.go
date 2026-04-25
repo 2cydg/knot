@@ -15,8 +15,19 @@ import (
 )
 
 var sftpCmd = &cobra.Command{
-	Use:               "sftp [alias] [remote_path]",
-	Short:             "Interactive SFTP shell",
+	Use:   "sftp [alias] [remote_path]",
+	Short: "Interactive SFTP shell",
+	Long: `Open an interactive SFTP shell for a configured server.
+
+Inside the REPL, command names and local/remote paths support Tab completion.
+Paths with spaces can be entered with quotes or backslash escaping, and local
+paths support ~/... expansion.`,
+	Example: `  knot sftp prod
+  knot sftp prod /var/www
+  knot sftp prod
+  sftp:/var/www> get "release notes.txt" ~/Downloads/
+  sftp:/var/www> put ./dist/app.tar.gz /tmp/
+  sftp:/var/www> mget logs/ng* ./logs/`,
 	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: serverAliasCompleter,
 	SilenceUsage:      true,

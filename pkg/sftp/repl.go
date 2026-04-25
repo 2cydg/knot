@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 
 	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
@@ -15,18 +14,21 @@ import (
 // RunREPL starts an interactive SFTP shell.
 func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 	historyPath := filepath.Join(os.TempDir(), ".knot_sftp_history")
+	cwd := "/"
+	remoteCache := newRemoteDirCache(client, remoteCompletionCacheTTL)
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          "",
 		HistoryFile:     historyPath,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
+		AutoComplete:    newREPLAutoCompleter(remoteCache, func() string { return cwd }),
 	})
 	if err != nil {
 		return err
 	}
 	defer rl.Close()
 
-	cwd, err := client.Getwd()
+	cwd, err = client.Getwd()
 	if err != nil {
 		cwd = "/"
 	}
@@ -34,7 +36,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 		cwd = initialDir
 	}
 
-	fmt.Printf("Connected to %s via SFTP. Type 'help' for commands.\n", alias)
+	fmt.Printf("Connected to %s via SFTP. Type 'help' for commands, press Tab for completion.\n", alias)
 
 	for {
 		rl.SetPrompt(fmt.Sprintf("sftp:%s> ", cwd))
@@ -47,12 +49,21 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 			continue
 		}
 
-		input = strings.TrimSpace(input)
-		if input == "" {
+		parsed := ParseLine(input, -1)
+		if len(parsed.Tokens) == 0 {
+			continue
+		}
+		if parsed.Incomplete() {
+			switch {
+			case parsed.UnterminatedQuote != 0:
+				fmt.Printf("Error: unterminated quote %q\n", string(parsed.UnterminatedQuote))
+			case parsed.DanglingEscape:
+				fmt.Println("Error: dangling escape at end of line")
+			}
 			continue
 		}
 
-		args := strings.Fields(input)
+		args := parsed.Values()
 		cmd := args[0]
 
 		switch cmd {
@@ -95,6 +106,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 				continue
 			}
 			cwd = newPath
+			remoteCache.Invalidate(newPath)
 		case "get":
 			if len(args) < 2 {
 				fmt.Println("Usage: get <remote_path> [local_path]")
@@ -123,6 +135,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 			if err := Upload(client, localPath, remotePath, false, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
+				invalidateRemoteMutation(remoteCache, remotePath)
 				fmt.Println("Upload complete.")
 			}
 		case "mget":
@@ -150,6 +163,8 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 			}
 			if err := MPut(client, localPattern, remoteDir, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
+			} else {
+				remoteCache.Invalidate(remoteDir)
 			}
 		case "rm":
 			if len(args) < 2 {
@@ -159,6 +174,8 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 			p := resolvePath(cwd, args[1])
 			if err := client.Remove(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
+			} else {
+				invalidateRemoteMutation(remoteCache, p)
 			}
 		case "mkdir":
 			if len(args) < 2 {
@@ -168,6 +185,8 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 			p := resolvePath(cwd, args[1])
 			if err := client.MkdirAll(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
+			} else {
+				remoteCache.Invalidate(path.Dir(p), p)
 			}
 		case "rmdir":
 			if len(args) < 2 {
@@ -177,11 +196,20 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 			p := resolvePath(cwd, args[1])
 			if err := client.RemoveDirectory(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
+			} else {
+				remoteCache.Invalidate(path.Dir(p), p)
 			}
 		default:
 			fmt.Printf("Unknown command: %s. Type 'help' for assistance.\n", cmd)
 		}
 	}
+}
+
+func invalidateRemoteMutation(cache *remoteDirCache, remotePath string) {
+	if cache == nil {
+		return
+	}
+	cache.Invalidate(path.Dir(remotePath), remotePath)
 }
 
 func resolvePath(cwd, p string) string {
@@ -205,4 +233,7 @@ func printHelp() {
 	fmt.Println("  rmdir <path>       Remove remote directory")
 	fmt.Println("  exit/quit/bye      Exit SFTP shell")
 	fmt.Println("  help/?             Show this help")
+	fmt.Println("  Tip: press Tab to complete command names and local/remote paths")
+	fmt.Println("  Tip: paths with spaces can be quoted or escaped; local paths support ~")
+	fmt.Println("  Tip: mget/mput keep wildcard input and can complete matching dir prefixes")
 }
