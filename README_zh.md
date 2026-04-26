@@ -23,7 +23,21 @@
 
 ## 📦 安装
 
-从源码编译（需要 Go 1.20+）：
+Linux/macOS：
+
+```bash
+curl -fsSL https://knot.clay.li/i/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://knot.clay.li/i/install.ps1 | iex
+```
+
+默认安装到 `~/.local/bin`。请确保该目录已加入 `PATH`。
+
+如需本地构建，也可以从源码编译（需要 Go 1.20+）：
 
 ```bash
 go build -o knot cmd/knot/main.go

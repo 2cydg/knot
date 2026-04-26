@@ -22,7 +22,21 @@
 
 ## 📦 Installation
 
-Build from source (requires Go 1.20+):
+Linux/macOS:
+
+```bash
+curl -fsSL https://knot.clay.li/i/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://knot.clay.li/i/install.ps1 | iex
+```
+
+By default, Knot is installed to `~/.local/bin`. Make sure that directory is in your `PATH`.
+
+Build from source if you prefer a local build (requires Go 1.20+):
 
 ```bash
 go build -o knot cmd/knot/main.go
