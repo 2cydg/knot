@@ -11,7 +11,8 @@ import (
 )
 
 type DialOptions struct {
-	AgentSocket string
+	AgentSocket   string
+	HostKeyPolicy string
 }
 
 func (o DialOptions) agentSocketPath() string {

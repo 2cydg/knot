@@ -112,6 +112,7 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 		Alias:         alias,
 		SSHAuthSock:   sshpool.GetAgentPath(),
 		IsInteractive: false,
+		HostKeyPolicy: hostKeyPolicy,
 	}
 	sftpReqPayload, err := json.Marshal(sftpReq)
 	if err != nil {

@@ -84,6 +84,7 @@ type SSHRequest struct {
 	ForwardAgent  bool   `json:"forward_agent"`
 	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
 	IsInteractive bool   `json:"is_interactive"`
+	HostKeyPolicy string `json:"host_key_policy,omitempty"`
 }
 
 // SFTPRequest defines the payload for an SFTP session request.
@@ -91,14 +92,16 @@ type SFTPRequest struct {
 	Alias         string `json:"alias"`
 	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
 	IsInteractive bool   `json:"is_interactive"`
+	HostKeyPolicy string `json:"host_key_policy,omitempty"`
 }
 
 // ExecRequest defines the payload for an SSH exec request.
 type ExecRequest struct {
-	Alias       string `json:"alias"`
-	Command     string `json:"command"`
-	Timeout     int    `json:"timeout"` // seconds
-	SSHAuthSock string `json:"ssh_auth_sock,omitempty"`
+	Alias         string `json:"alias"`
+	Command       string `json:"command"`
+	Timeout       int    `json:"timeout"` // seconds
+	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
+	HostKeyPolicy string `json:"host_key_policy,omitempty"`
 }
 
 // ExecResponse defines the payload for an SSH exec response.
@@ -151,11 +154,12 @@ type ForwardProtocolConfig struct {
 
 // ForwardRequest defines the payload for a port forwarding management request.
 type ForwardRequest struct {
-	Action      string                `json:"action"` // add, remove, enable, disable
-	Alias       string                `json:"alias"`
-	Config      ForwardProtocolConfig `json:"config"`
-	IsTemp      bool                  `json:"is_temp"`
-	SSHAuthSock string                `json:"ssh_auth_sock,omitempty"`
+	Action        string                `json:"action"` // add, remove, enable, disable
+	Alias         string                `json:"alias"`
+	Config        ForwardProtocolConfig `json:"config"`
+	IsTemp        bool                  `json:"is_temp"`
+	SSHAuthSock   string                `json:"ssh_auth_sock,omitempty"`
+	HostKeyPolicy string                `json:"host_key_policy,omitempty"`
 }
 
 // ForwardStatus defines the status of a single port forward.

@@ -82,10 +82,16 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 	}
 
 	dialOptions := firstDialOptions(opts)
+	if _, err := normalizeHostKeyPolicy(dialOptions.HostKeyPolicy); err != nil {
+		return nil, nil, false, err
+	}
 
 	routes, err := buildRouteChain(srv, cfg)
 	if err != nil {
 		return nil, nil, false, err
+	}
+	if dialOptions.HostKeyPolicy != "" {
+		routes = routeChainWithHostKeyPolicy(routes, dialOptions.HostKeyPolicy)
 	}
 	if len(routes) == 1 {
 		route := routes[0]
@@ -116,4 +122,13 @@ func (p *Pool) GetClient(srv config.ServerConfig, cfg *config.Config, confirmCal
 
 	targetRoute := routes[len(routes)-1]
 	return p.getClientForRoute(targetRoute.key, targetRoute.server, cfg, jumpClient, chainKeys, confirmCallback, dialOptions)
+}
+
+func routeChainWithHostKeyPolicy(routes []routeStep, policy string) []routeStep {
+	res := make([]routeStep, len(routes))
+	for i, route := range routes {
+		route.key = fmt.Sprintf("%s|host-key-policy=%s", route.key, policy)
+		res[i] = route
+	}
+	return res
 }

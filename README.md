@@ -14,8 +14,8 @@
 
 *   ⚡ **Instant Connectivity**: Connection multiplexing via a background daemon. No more waiting for SSH handshakes.
 *   🔒 **Native Security**: Passwords and keys are never stored in plaintext. Uses OS-level encryption (Windows DPAPI, macOS Keychain, Linux Machine-ID).
-*   🤖 **AI & Scripting Ready**: Built-in `--json` support for all commands and non-interactive modes for seamless automation.
-*   🛠️ **Modern SFTP**: Interactive REPL for efficient remote file management.
+*   🤖 **AI & Scripting Ready**: Structured `--json` output and non-interactive workflows for automation.
+*   🛠️ **Modern SFTP**: Interactive REPL plus scriptable file-management commands.
 *   🔌 **Powerful Forwarding**: Easy management of local, remote, and dynamic (SOCKS5) port forwarding.
 
 ---
@@ -105,6 +105,8 @@ knot cp web-prod:/var/log/nginx/access.log ./
 knot exec web-prod "uptime" --json
 ```
 
+For automation, `--json` keeps failure exit codes meaningful while returning machine-readable output. Use `--host-key-policy accept-new` or `fail` when host key prompts must be controlled explicitly.
+
 ---
 
 ## 🏗️ Architecture
@@ -133,6 +135,8 @@ Default filesystem layout:
 - Logs and state: `~/.local/state/knot/`
 - Runtime files (`sock`, `pid`): `$XDG_RUNTIME_DIR/knot/`
 
+Knot stores host keys in its own `known_hosts` file. Non-interactive commands can control host key behavior with `--host-key-policy` when needed.
+
 ---
 
 ## ⌨️ Command Reference
@@ -141,6 +145,7 @@ Default filesystem layout:
 | :--- | :--- | :--- |
 | **Sessions** | `knot [alias]` | Shortcut for `knot ssh [alias]` |
 | | `knot sftp [alias]` | Interactive SFTP shell |
+| | `knot sftp ls/stat/rm/mkdir/rmdir/mv` | Scriptable SFTP operations |
 | **Files** | `knot cp [src] [dst]` | High-speed file transfer (Local ↔ Remote) |
 | **Remote** | `knot exec [alias] [cmd]` | Non-interactive command execution |
 | **Network** | `knot forward` | Manage L/R/D port forwarding rules |

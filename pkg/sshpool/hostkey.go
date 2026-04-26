@@ -12,7 +12,32 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) bool) (ssh.HostKeyCallback, error) {
+const (
+	HostKeyPolicyAsk          = ""
+	HostKeyPolicyFail         = "fail"
+	HostKeyPolicyAcceptNew    = "accept-new"
+	HostKeyPolicyStrict       = "strict"
+	HostKeyPolicyInsecureSkip = "insecure-skip"
+)
+
+func normalizeHostKeyPolicy(policy string) (string, error) {
+	switch policy {
+	case HostKeyPolicyAsk, HostKeyPolicyFail, HostKeyPolicyAcceptNew, HostKeyPolicyStrict, HostKeyPolicyInsecureSkip:
+		return policy, nil
+	default:
+		return "", fmt.Errorf("invalid host key policy %q (expected fail, accept-new, strict, or insecure-skip)", policy)
+	}
+}
+
+func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) bool, policy string) (ssh.HostKeyCallback, error) {
+	policy, err := normalizeHostKeyPolicy(policy)
+	if err != nil {
+		return nil, err
+	}
+	if policy == HostKeyPolicyInsecureSkip {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
 	khPath, err := resolveKnownHostsPath(srv)
 	if err != nil {
 		return nil, err
@@ -50,6 +75,14 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 					"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
 			}
 
+			if policy == HostKeyPolicyAcceptNew {
+				return appendKnownHost(khPath, hostname, key)
+			}
+
+			if policy == HostKeyPolicyFail || policy == HostKeyPolicyStrict {
+				return fmt.Errorf("host key verification failed (unknown host): %w", ErrHostKeyReject)
+			}
+
 			if confirmCallback != nil {
 				prompt := fmt.Sprintf("The authenticity of host '%s' can't be established.\n"+
 					"%s key fingerprint is %s.\n"+
@@ -57,17 +90,7 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 					hostname, key.Type(), ssh.FingerprintSHA256(key))
 
 				if confirmCallback(prompt) {
-					f, err := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY, 0600)
-					if err != nil {
-						return err
-					}
-					defer f.Close()
-
-					line := knownhosts.Line([]string{hostname}, key)
-					if _, err := f.WriteString(line + "\n"); err != nil {
-						return err
-					}
-					return nil
+					return appendKnownHost(khPath, hostname, key)
 				}
 				return fmt.Errorf("host key verification failed (user rejected): %w", ErrHostKeyReject)
 			}
@@ -75,6 +98,20 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 
 		return fmt.Errorf("host key verification failed: %w", ErrHostKeyReject)
 	}, nil
+}
+
+func appendKnownHost(khPath string, hostname string, key ssh.PublicKey) error {
+	f, err := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	line := knownhosts.Line([]string{hostname}, key)
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func resolveKnownHostsPath(srv config.ServerConfig) (string, error) {

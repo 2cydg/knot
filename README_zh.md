@@ -15,8 +15,8 @@
 *   ⚡ **瞬时连接**: 基于连接复用技术，后台维护物理连接，新建会话无需等待握手。
 *   🔌 **高级网络支持**: 内置跳板机链 (Jump Host) 与 SOCKS5/HTTP 代理支持。
 *   🔒 **原生安全**: 密码与密钥绝不以明文存储。深度集成系统级加密（Windows DPAPI, macOS Keychain, Linux Secret Service 及其 Machine-ID 降级方案）。
-*   🤖 **AI & 脚本友好**: 所有命令原生支持 `--json` 输出，提供完整的非交互模式，完美适配自动化脚本。
-*   🛠️ **现代 SFTP**: 交互式 REPL 环境，高效管理远程文件。
+*   🤖 **AI & 脚本友好**: 提供结构化 `--json` 输出和非交互工作流，适配自动化脚本。
+*   🛠️ **现代 SFTP**: 交互式 REPL 环境，也支持脚本化文件管理命令。
 *   🔌 **强力转发**: 轻松管理本地 (L)、远程 (R) 和动态 (D/SOCKS5) 端口转发。
 
 ---
@@ -106,6 +106,8 @@ knot cp web-prod:/var/log/nginx/access.log ./
 knot exec web-prod "uptime" --json
 ```
 
+自动化场景下，`--json` 只改变输出格式，不吞掉失败退出码。需要显式控制 host key 提示时，可以使用 `--host-key-policy accept-new` 或 `fail`。
+
 ---
 
 ## 🏗️ 架构设计
@@ -133,6 +135,8 @@ Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
 - 日志与状态：`~/.local/state/knot/`
 - 运行时文件（`sock`、`pid`）：`$XDG_RUNTIME_DIR/knot/`
 
+Knot 使用自己的 `known_hosts` 文件保存主机密钥。非交互命令可按需通过 `--host-key-policy` 控制 host key 行为。
+
 ---
 
 ## ⌨️ 常用命令参考
@@ -141,6 +145,7 @@ Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
 | :--- | :--- | :--- |
 | **会话管理** | `knot [别名]` | `knot ssh [别名]` 的快捷方式 |
 | | `knot sftp [alias]` | 交互式 SFTP Shell |
+| | `knot sftp ls/stat/rm/mkdir/rmdir/mv` | 脚本化 SFTP 操作 |
 | **文件操作** | `knot cp [源] [目标]` | 高速文件传输（本地 ↔ 远程） |
 | **远程执行** | `knot exec [别名] [命令]` | 非交互式远程命令执行 |
 | **网络功能** | `knot forward` | 管理 L/R/D 端口转发规则 |

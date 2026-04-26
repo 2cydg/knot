@@ -53,7 +53,7 @@ func (d *Daemon) handleExecRequest(conn net.Conn, payload []byte) {
 	logger.Info("Executing command", "alias", req.Alias, "command", req.Command)
 
 	// 1. Get SSH client
-	client, poolKeys, err := d.getSSHClient(req.Alias, req.SSHAuthSock)
+	client, poolKeys, err := d.getSSHClient(req.Alias, req.SSHAuthSock, req.HostKeyPolicy)
 	if err != nil {
 		d.sendExecResponse(conn, -1, "", "", err.Error(), false, 0)
 		return
@@ -155,7 +155,7 @@ func (d *Daemon) sendExecResponse(conn net.Conn, exitCode int, stdout, stderr, e
 	_ = protocol.WriteMessage(conn, protocol.TypeExecResp, 0, payload)
 }
 
-func (d *Daemon) getSSHClient(alias string, agentSocket string) (*ssh.Client, []string, error) {
+func (d *Daemon) getSSHClient(alias string, agentSocket string, hostKeyPolicy string) (*ssh.Client, []string, error) {
 	// Load config to connect
 	cfg, err := d.loadConfig()
 	if err != nil {
@@ -171,9 +171,15 @@ func (d *Daemon) getSSHClient(alias string, agentSocket string) (*ssh.Client, []
 	client, keys, _, err := d.pool.GetClient(srv, cfg, func(msg string) bool {
 		// exec is non-interactive
 		return false
-	}, sshpool.DialOptions{AgentSocket: agentSocket})
+	}, sshpool.DialOptions{AgentSocket: agentSocket, HostKeyPolicy: hostKeyPolicy})
 	if err != nil {
 		// If it's a host key verification failure, give a helpful message
+		if strings.Contains(err.Error(), "invalid host key policy") {
+			return nil, nil, err
+		}
+		if strings.Contains(err.Error(), "REMOTE HOST IDENTIFICATION HAS CHANGED") {
+			return nil, nil, fmt.Errorf("host key changed for '%s': %w", alias, err)
+		}
 		if strings.Contains(err.Error(), "host key") {
 			return nil, nil, fmt.Errorf("host key verification failed for '%s'. Run 'knot ssh %s' first to accept the key", alias, alias)
 		}

@@ -38,25 +38,37 @@ var keyListCmd = &cobra.Command{
 			return err
 		}
 
-		if len(cfg.Keys) == 0 {
-			fmt.Println("No keys configured.")
-			return nil
-		}
-
-		fmt.Printf("%-20s %-15s %-10s\n", "ALIAS", "TYPE", "BITS")
-		fmt.Println(strings.Repeat("-", 50))
-
 		var aliases []string
 		for alias := range cfg.Keys {
 			aliases = append(aliases, alias)
 		}
 		sort.Strings(aliases)
 
+		type keyInfo struct {
+			Alias string `json:"alias"`
+			Type  string `json:"type"`
+			Bits  int    `json:"bits"`
+		}
+		keys := make([]keyInfo, 0, len(aliases))
 		for _, alias := range aliases {
 			k := cfg.Keys[alias]
-			fmt.Printf("%-20s %-15s %-10d\n", k.Alias, k.Type, k.Length)
+			keys = append(keys, keyInfo{Alias: k.Alias, Type: k.Type, Bits: k.Length})
 		}
-		return nil
+
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{"keys": keys}, func() error {
+			if len(keys) == 0 {
+				fmt.Println("No keys configured.")
+				return nil
+			}
+
+			fmt.Printf("%-20s %-15s %-10s\n", "ALIAS", "TYPE", "BITS")
+			fmt.Println(strings.Repeat("-", 50))
+			for _, k := range keys {
+				fmt.Printf("%-20s %-15s %-10d\n", k.Alias, k.Type, k.Bits)
+			}
+			return nil
+		})
 	},
 }
 

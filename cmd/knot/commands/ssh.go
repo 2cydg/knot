@@ -74,6 +74,7 @@ var sshCmd = &cobra.Command{
 			ForwardAgent:  cfg.Settings.GetForwardAgent(),
 			SSHAuthSock:   sshpool.GetAgentPath(),
 			IsInteractive: term.IsTerminal(fd) && !jsonOutput,
+			HostKeyPolicy: hostKeyPolicy,
 		}
 
 		payload, err := json.Marshal(req)

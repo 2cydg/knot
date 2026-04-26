@@ -223,9 +223,10 @@ func sendForwardAdd(alias, fType string, localPort int, remoteAddr string, isTem
 	}
 
 	req := protocol.ForwardRequest{
-		Action:      "add",
-		Alias:       alias,
-		SSHAuthSock: sshpool.GetAgentPath(),
+		Action:        "add",
+		Alias:         alias,
+		SSHAuthSock:   sshpool.GetAgentPath(),
+		HostKeyPolicy: hostKeyPolicy,
 		Config: protocol.ForwardProtocolConfig{
 			Type:       fType,
 			LocalPort:  localPort,
@@ -240,8 +241,19 @@ func sendForwardAdd(alias, fType string, localPort int, remoteAddr string, isTem
 		return err
 	}
 
-	fmt.Printf("Forward rule %s:%d added successfully.\n", fType, localPort)
-	return nil
+	formatter := NewFormatter()
+	return formatter.Render(map[string]interface{}{
+		"status":      "success",
+		"action":      "add",
+		"alias":       alias,
+		"type":        fType,
+		"local_port":  localPort,
+		"remote_addr": remoteAddr,
+		"is_temp":     isTemp,
+	}, func() error {
+		fmt.Printf("Forward rule %s:%d added successfully.\n", fType, localPort)
+		return nil
+	})
 }
 
 var forwardRemoveCmd = &cobra.Command{
@@ -268,9 +280,10 @@ var forwardRemoveCmd = &cobra.Command{
 		}
 
 		req := protocol.ForwardRequest{
-			Action:      "remove",
-			Alias:       alias,
-			SSHAuthSock: sshpool.GetAgentPath(),
+			Action:        "remove",
+			Alias:         alias,
+			SSHAuthSock:   sshpool.GetAgentPath(),
+			HostKeyPolicy: hostKeyPolicy,
 			Config: protocol.ForwardProtocolConfig{
 				Type:      fType,
 				LocalPort: port,
@@ -281,8 +294,17 @@ var forwardRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Forward rule %s removed.\n", target)
-		return nil
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{
+			"status":     "success",
+			"action":     "remove",
+			"alias":      alias,
+			"type":       fType,
+			"local_port": port,
+		}, func() error {
+			fmt.Printf("Forward rule %s removed.\n", target)
+			return nil
+		})
 	},
 }
 
@@ -366,9 +388,10 @@ func handleForwardToggle(alias, target string, enable bool) error {
 	}
 
 	req := protocol.ForwardRequest{
-		Action:      action,
-		Alias:       alias,
-		SSHAuthSock: sshpool.GetAgentPath(),
+		Action:        action,
+		Alias:         alias,
+		SSHAuthSock:   sshpool.GetAgentPath(),
+		HostKeyPolicy: hostKeyPolicy,
 		Config: protocol.ForwardProtocolConfig{
 			Type:      fType,
 			LocalPort: port,
@@ -383,8 +406,18 @@ func handleForwardToggle(alias, target string, enable bool) error {
 	if enable {
 		state = "enabled"
 	}
-	fmt.Printf("Forward rule %s %s.\n", target, state)
-	return nil
+	formatter := NewFormatter()
+	return formatter.Render(map[string]interface{}{
+		"status":     "success",
+		"action":     action,
+		"alias":      alias,
+		"type":       fType,
+		"local_port": port,
+		"enabled":    enable,
+	}, func() error {
+		fmt.Printf("Forward rule %s %s.\n", target, state)
+		return nil
+	})
 }
 
 func init() {

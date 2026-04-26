@@ -210,6 +210,70 @@ func makePasswordServer(alias string, addr string, user string, password string,
 	}
 }
 
+func TestHostKeyPolicyFailRejectsUnknownHost(t *testing.T) {
+	const (
+		user     = "tester"
+		password = "secret"
+	)
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	server := startTestSSHServer(t, user, password)
+	defer server.Close()
+
+	srv := makePasswordServer("target", server.Addr(), user, password, knownHostsPath)
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+	}
+
+	pool := NewPool()
+	defer pool.CloseAll()
+
+	_, _, _, err := pool.GetClient(srv, cfg, func(string) bool { return true }, DialOptions{HostKeyPolicy: HostKeyPolicyFail})
+	if err == nil {
+		t.Fatal("expected fail policy to reject unknown host key")
+	}
+	if !strings.Contains(err.Error(), "unknown host") {
+		t.Fatalf("expected unknown host error, got %v", err)
+	}
+}
+
+func TestHostKeyPolicyAcceptNewAddsUnknownHost(t *testing.T) {
+	const (
+		user     = "tester"
+		password = "secret"
+	)
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	server := startTestSSHServer(t, user, password)
+	defer server.Close()
+
+	srv := makePasswordServer("target", server.Addr(), user, password, knownHostsPath)
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+	}
+
+	pool := NewPool()
+	defer pool.CloseAll()
+
+	client, _, _, err := pool.GetClient(srv, cfg, nil, DialOptions{HostKeyPolicy: HostKeyPolicyAcceptNew})
+	if err != nil {
+		t.Fatalf("accept-new policy should accept unknown host key: %v", err)
+	}
+	client.Close()
+
+	knownHosts, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to read known_hosts: %v", err)
+	}
+	if len(knownHosts) == 0 {
+		t.Fatal("expected accept-new policy to write known_hosts entry")
+	}
+}
+
 func TestGetClientExplicitJumpChainUsesEachHop(t *testing.T) {
 	const (
 		user     = "tester"

@@ -184,6 +184,31 @@ func getPoolRefCount(pool *sshpool.Pool, key string) int {
 	return -1
 }
 
+func startForwardBannerTarget(t *testing.T) net.Listener {
+	t.Helper()
+
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start target listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := target.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_, _ = c.Write([]byte("SSH-test-banner"))
+			}(conn)
+		}
+	}()
+
+	t.Cleanup(func() { _ = target.Close() })
+	return target
+}
+
 func TestForwardManagerBasicRuleLifecycle(t *testing.T) {
 	pool := sshpool.NewPool()
 	defer pool.CloseAll()
@@ -213,10 +238,11 @@ func TestForwardManagerBasicRuleLifecycle(t *testing.T) {
 func TestStartRuleIncrementsRefsAndStopRuleReleasesRefs(t *testing.T) {
 	pool, client, keys := newForwardTestClient(t)
 	key := keys[0]
+	target := startForwardBannerTarget(t)
 
 	fm := NewForwardManager(pool)
 	rule := &ForwardRule{
-		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: "127.0.0.1:80"},
+		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
 		Alias:   "target",
 		Status:  forwardStatusInactive,
 		pool:    pool,
@@ -239,6 +265,43 @@ func TestStartRuleIncrementsRefsAndStopRuleReleasesRefs(t *testing.T) {
 	}
 	if rule.Status != forwardStatusInactive {
 		t.Fatalf("expected rule status Inactive, got %s", rule.Status)
+	}
+}
+
+func TestLocalForwardProxiesTCPData(t *testing.T) {
+	pool, client, keys := newForwardTestClient(t)
+	target := startForwardBannerTarget(t)
+
+	fm := NewForwardManager(pool)
+	rule := &ForwardRule{
+		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
+		Alias:   "target",
+		Status:  forwardStatusInactive,
+		pool:    pool,
+		Enabled: false,
+	}
+
+	if err := fm.StartRule(rule, client, keys); err != nil {
+		t.Fatalf("StartRule returned error: %v", err)
+	}
+	defer fm.StopRule(rule)
+
+	rule.mu.RLock()
+	localAddr := rule.listener.Addr().String()
+	rule.mu.RUnlock()
+
+	conn, err := net.DialTimeout("tcp", localAddr, time.Second)
+	if err != nil {
+		t.Fatalf("failed to dial local forward: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("failed to read forwarded data: %v", err)
+	}
+	if string(buf) != "SSH-" {
+		t.Fatalf("unexpected forwarded data %q, want %q", string(buf), "SSH-")
 	}
 }
 
@@ -272,10 +335,11 @@ func TestStartRuleFailureRollsBackRefs(t *testing.T) {
 func TestSetEnabledFalseStopsRule(t *testing.T) {
 	pool, client, keys := newForwardTestClient(t)
 	key := keys[0]
+	target := startForwardBannerTarget(t)
 
 	fm := NewForwardManager(pool)
 	rule := &ForwardRule{
-		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: "127.0.0.1:80"},
+		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
 		Alias:   "target",
 		Status:  forwardStatusInactive,
 		pool:    pool,

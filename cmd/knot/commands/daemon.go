@@ -197,12 +197,18 @@ var daemonClearCmd = &cobra.Command{
 			return fmt.Errorf("failed to clear connections: %w", err)
 		}
 
-		if count == 0 {
-			fmt.Println("No active SSH connections to clear.")
-		} else {
-			fmt.Printf("Successfully cleared %d active SSH connection(s).\n", count)
-		}
-		return nil
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{
+			"status":  "success",
+			"cleared": count,
+		}, func() error {
+			if count == 0 {
+				fmt.Println("No active SSH connections to clear.")
+			} else {
+				fmt.Printf("Successfully cleared %d active SSH connection(s).\n", count)
+			}
+			return nil
+		})
 	},
 }
 

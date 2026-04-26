@@ -17,8 +17,9 @@ var rootCmd = &cobra.Command{
 }
 
 var (
-	jsonOutput bool
-	coreGroup  = &cobra.Group{
+	jsonOutput    bool
+	hostKeyPolicy string
+	coreGroup     = &cobra.Group{
 		ID:    "core",
 		Title: "Core Commands:",
 	}
@@ -90,6 +91,7 @@ func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format for scripting and automation")
+	rootCmd.PersistentFlags().StringVar(&hostKeyPolicy, "host-key-policy", "", "Host key policy: fail, accept-new, strict, insecure-skip")
 	rootCmd.AddGroup(coreGroup, managementGroup)
 
 	rootCmd.ValidArgsFunction = serverAliasCompleter

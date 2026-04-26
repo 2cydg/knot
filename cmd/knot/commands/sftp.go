@@ -69,6 +69,7 @@ paths support ~/... expansion.`,
 			Alias:         alias,
 			SSHAuthSock:   sshpool.GetAgentPath(),
 			IsInteractive: true,
+			HostKeyPolicy: hostKeyPolicy,
 		}
 		sftpReqPayload, err := json.Marshal(sftpReq)
 		if err != nil {

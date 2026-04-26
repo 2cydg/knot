@@ -20,7 +20,7 @@ func dial(srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, c
 		defer authCloser.Close()
 	}
 
-	hostKeyCallback, err := buildHostKeyCallback(srv, confirmCallback)
+	hostKeyCallback, err := buildHostKeyCallback(srv, confirmCallback, opts.HostKeyPolicy)
 	if err != nil {
 		return nil, err
 	}

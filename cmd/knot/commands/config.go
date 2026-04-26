@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"knot/internal/paths"
 	"knot/pkg/config"
@@ -101,22 +102,25 @@ var configListCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("forward_agent:           %t\n", cfg.Settings.GetForwardAgent())
-		fmt.Printf("clear_screen_on_connect: %t\n", cfg.Settings.GetClearScreenOnConnect())
-		fmt.Printf("idle_timeout:            %s\n", cfg.Settings.IdleTimeout)
-		fmt.Printf("keepalive_interval:      %s\n", cfg.Settings.KeepaliveInterval)
-		fmt.Printf("log_level:               %s\n", cfg.Settings.LogLevel)
-		return nil
+		settings := sanitizedSettings(cfg)
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{"settings": settings}, func() error {
+			fmt.Printf("forward_agent:           %t\n", cfg.Settings.GetForwardAgent())
+			fmt.Printf("clear_screen_on_connect: %t\n", cfg.Settings.GetClearScreenOnConnect())
+			fmt.Printf("idle_timeout:            %s\n", cfg.Settings.IdleTimeout)
+			fmt.Printf("keepalive_interval:      %s\n", cfg.Settings.KeepaliveInterval)
+			fmt.Printf("log_level:               %s\n", cfg.Settings.LogLevel)
+			return nil
+		})
 	},
 }
 
 var configGetCmd = &cobra.Command{
-	Use:               "get [key]",
-	Short:             "Get a specific global setting",
-	Args:              cobra.ExactArgs(1),
+	Use:               "get [path]",
+	Short:             "Get configuration or a specific configuration path",
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: configKeyCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		key := strings.ToLower(args[0])
 		provider, err := crypto.NewProvider()
 		if err != nil {
 			return err
@@ -126,21 +130,31 @@ var configGetCmd = &cobra.Command{
 			return err
 		}
 
-		switch key {
-		case "forward_agent":
-			fmt.Println(cfg.Settings.GetForwardAgent())
-		case "clear_screen_on_connect":
-			fmt.Println(cfg.Settings.GetClearScreenOnConnect())
-		case "idle_timeout":
-			fmt.Println(cfg.Settings.IdleTimeout)
-		case "keepalive_interval":
-			fmt.Println(cfg.Settings.KeepaliveInterval)
-		case "log_level":
-			fmt.Println(cfg.Settings.LogLevel)
-		default:
-			return fmt.Errorf("unknown setting: %s", key)
+		data := sanitizedConfig(cfg)
+		path := ""
+		if len(args) > 0 {
+			path = strings.TrimSpace(args[0])
 		}
-		return nil
+		value, err := lookupConfigPath(data, path)
+		if err != nil {
+			return err
+		}
+
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{
+			"path":  path,
+			"value": value,
+		}, func() error {
+			switch v := value.(type) {
+			case string, bool, int:
+				fmt.Println(v)
+			default:
+				encoder := json.NewEncoder(os.Stdout)
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(v)
+			}
+			return nil
+		})
 	},
 }
 
@@ -198,10 +212,102 @@ var configSetCmd = &cobra.Command{
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 
-		fmt.Printf("Successfully set %s to %s\n", key, value)
-		fmt.Println("Note: Changes will apply to new connections only.")
-		return nil
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{
+			"status": "success",
+			"key":    key,
+			"value":  value,
+		}, func() error {
+			fmt.Printf("Successfully set %s to %s\n", key, value)
+			fmt.Println("Note: Changes will apply to new connections only.")
+			return nil
+		})
 	},
+}
+
+func sanitizedSettings(cfg *config.Config) map[string]interface{} {
+	return map[string]interface{}{
+		"forward_agent":           cfg.Settings.GetForwardAgent(),
+		"clear_screen_on_connect": cfg.Settings.GetClearScreenOnConnect(),
+		"idle_timeout":            cfg.Settings.IdleTimeout,
+		"keepalive_interval":      cfg.Settings.KeepaliveInterval,
+		"log_level":               cfg.Settings.LogLevel,
+		"recent_limit":            cfg.Settings.RecentLimit,
+	}
+}
+
+func sanitizedConfig(cfg *config.Config) map[string]interface{} {
+	servers := make(map[string]interface{}, len(cfg.Servers))
+	for alias, srv := range cfg.Servers {
+		servers[alias] = map[string]interface{}{
+			"alias":            srv.Alias,
+			"host":             srv.Host,
+			"port":             srv.Port,
+			"user":             srv.User,
+			"auth_method":      srv.AuthMethod,
+			"has_password":     srv.Password != "",
+			"key_alias":        srv.KeyAlias,
+			"known_hosts_path": srv.KnownHostsPath,
+			"proxy_alias":      srv.ProxyAlias,
+			"jump_host":        srv.JumpHost,
+			"forwards":         srv.Forwards,
+			"tags":             srv.Tags,
+		}
+	}
+
+	proxies := make(map[string]interface{}, len(cfg.Proxies))
+	for alias, proxy := range cfg.Proxies {
+		proxies[alias] = map[string]interface{}{
+			"alias":        proxy.Alias,
+			"type":         proxy.Type,
+			"host":         proxy.Host,
+			"port":         proxy.Port,
+			"username":     proxy.Username,
+			"has_password": proxy.Password != "",
+		}
+	}
+
+	keys := make(map[string]interface{}, len(cfg.Keys))
+	for alias, key := range cfg.Keys {
+		keys[alias] = map[string]interface{}{
+			"alias": key.Alias,
+			"type":  key.Type,
+			"bits":  key.Length,
+		}
+	}
+
+	return map[string]interface{}{
+		"settings": sanitizedSettings(cfg),
+		"servers":  servers,
+		"proxies":  proxies,
+		"keys":     keys,
+	}
+}
+
+func lookupConfigPath(data map[string]interface{}, rawPath string) (interface{}, error) {
+	if rawPath == "" {
+		return data, nil
+	}
+
+	if !strings.Contains(rawPath, ".") {
+		if value, ok := data["settings"].(map[string]interface{})[rawPath]; ok {
+			return value, nil
+		}
+	}
+
+	var current interface{} = data
+	for _, part := range strings.Split(rawPath, ".") {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("config path '%s' not found", rawPath)
+		}
+		next, ok := obj[part]
+		if !ok {
+			return nil, fmt.Errorf("config path '%s' not found", rawPath)
+		}
+		current = next
+	}
+	return current, nil
 }
 
 func init() {

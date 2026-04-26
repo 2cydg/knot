@@ -30,25 +30,38 @@ var proxyListCmd = &cobra.Command{
 			return err
 		}
 
-		if len(cfg.Proxies) == 0 {
-			fmt.Println("No proxies configured.")
-			return nil
-		}
-
-		fmt.Printf("%-20s %-10s %-20s %-10s\n", "ALIAS", "TYPE", "HOST", "PORT")
-		fmt.Println(strings.Repeat("-", 65))
-
 		var aliases []string
 		for alias := range cfg.Proxies {
 			aliases = append(aliases, alias)
 		}
 		sort.Strings(aliases)
 
+		type proxyInfo struct {
+			Alias string `json:"alias"`
+			Type  string `json:"type"`
+			Host  string `json:"host"`
+			Port  int    `json:"port"`
+		}
+		proxies := make([]proxyInfo, 0, len(aliases))
 		for _, alias := range aliases {
 			p := cfg.Proxies[alias]
-			fmt.Printf("%-20s %-10s %-20s %-10d\n", p.Alias, p.Type, p.Host, p.Port)
+			proxies = append(proxies, proxyInfo{Alias: p.Alias, Type: p.Type, Host: p.Host, Port: p.Port})
 		}
-		return nil
+
+		formatter := NewFormatter()
+		return formatter.Render(map[string]interface{}{"proxies": proxies}, func() error {
+			if len(proxies) == 0 {
+				fmt.Println("No proxies configured.")
+				return nil
+			}
+
+			fmt.Printf("%-20s %-10s %-20s %-10s\n", "ALIAS", "TYPE", "HOST", "PORT")
+			fmt.Println(strings.Repeat("-", 65))
+			for _, p := range proxies {
+				fmt.Printf("%-20s %-10s %-20s %-10d\n", p.Alias, p.Type, p.Host, p.Port)
+			}
+			return nil
+		})
 	},
 }
 
