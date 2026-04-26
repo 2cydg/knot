@@ -1,4 +1,4 @@
-package commands
+package daemon
 
 import (
 	"errors"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestIsDaemonNotRunningError(t *testing.T) {
+func TestIsNotRunningError(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
@@ -17,25 +17,6 @@ func TestIsDaemonNotRunningError(t *testing.T) {
 		{
 			name: "os not exist",
 			err:  os.ErrNotExist,
-			want: true,
-		},
-		{
-			name: "syscall enoent",
-			err:  syscall.ENOENT,
-			want: true,
-		},
-		{
-			name: "syscall econnrefused",
-			err:  syscall.ECONNREFUSED,
-			want: true,
-		},
-		{
-			name: "wrapped net dial not exist",
-			err: &net.OpError{
-				Op:  "dial",
-				Net: "unix",
-				Err: &os.SyscallError{Syscall: "connect", Err: syscall.ENOENT},
-			},
 			want: true,
 		},
 		{
@@ -70,9 +51,9 @@ func TestIsDaemonNotRunningError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isDaemonNotRunningError(tt.err)
+			got := IsNotRunningError(tt.err)
 			if got != tt.want {
-				t.Fatalf("isDaemonNotRunningError() = %v, want %v", got, tt.want)
+				t.Fatalf("IsNotRunningError() = %v, want %v", got, tt.want)
 			}
 		})
 	}

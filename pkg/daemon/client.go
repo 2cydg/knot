@@ -43,7 +43,7 @@ func (c *Client) ConnectWithAutoStart() (net.Conn, error) {
 	// Connection failed - check if it's because the daemon isn't running
 	// Note: We check if the socket file exists or if connection was refused
 	_, statErr := os.Stat(c.socketPath)
-	isNotRunning := os.IsNotExist(statErr) || strings.Contains(err.Error(), "connection refused")
+	isNotRunning := os.IsNotExist(statErr) || IsNotRunningError(err)
 
 	if !isNotRunning {
 		return nil, err
