@@ -29,6 +29,16 @@ func TestRewriteArgsForAlias(t *testing.T) {
 			want: []string{"knot", "completion", "zsh"},
 		},
 		{
+			name: "preserves default help command",
+			args: []string{"knot", "help"},
+			want: []string{"knot", "help"},
+		},
+		{
+			name: "preserves default help command arguments",
+			args: []string{"knot", "help", "ssh"},
+			want: []string{"knot", "help", "ssh"},
+		},
+		{
 			name: "preserves shell completion request",
 			args: []string{"knot", cobra.ShellCompRequestCmd, ""},
 			want: []string{"knot", cobra.ShellCompRequestCmd, ""},

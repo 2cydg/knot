@@ -63,6 +63,7 @@ func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
 
 	// Let Cobra handle root flags and built-in completion commands.
 	if strings.HasPrefix(firstArg, "-") ||
+		firstArg == "help" ||
 		firstArg == cobra.ShellCompRequestCmd ||
 		firstArg == cobra.ShellCompNoDescRequestCmd {
 		return args, nil
