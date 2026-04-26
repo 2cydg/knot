@@ -1,0 +1,29 @@
+name: Website Sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
+      - 'scripts/sync_cloudflare_kv.sh'
+      - '.github/workflows/website-sync.yml'
+
+jobs:
+  sync-installers:
+    name: Sync installer scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Sync install scripts to Cloudflare KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+        run: |
+          scripts/sync_cloudflare_kv.sh install.sh scripts/install.sh
+          scripts/sync_cloudflare_kv.sh install.ps1 scripts/install.ps1
