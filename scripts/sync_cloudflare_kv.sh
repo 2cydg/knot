@@ -32,10 +32,30 @@ case "$KEY" in
   *) content_type="application/octet-stream" ;;
 esac
 
-curl -fsS -X PUT \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$CLOUDFLARE_KV_NAMESPACE_ID/values/$KEY" \
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required to encode Cloudflare KV keys" >&2
+  exit 1
+fi
+
+encoded_key=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KEY")
+url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$CLOUDFLARE_KV_NAMESPACE_ID/values/$encoded_key"
+response_file=$(mktemp)
+trap 'rm -f "$response_file"' EXIT INT TERM
+
+status=$(curl -sS -o "$response_file" -w "%{http_code}" -X PUT \
+  "$url" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -H "Content-Type: $content_type" \
-  --data-binary "@$FILE" >/dev/null
+  --data-binary "@$FILE")
+
+case "$status" in
+  2*) ;;
+  *)
+    echo "failed to sync $FILE to Cloudflare KV key $KEY (HTTP $status)" >&2
+    cat "$response_file" >&2
+    echo >&2
+    exit 1
+    ;;
+esac
 
 echo "synced $FILE to Cloudflare KV key $KEY"
