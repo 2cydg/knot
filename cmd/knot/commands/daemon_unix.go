@@ -2,8 +2,14 @@
 
 package commands
 
-import "os/exec"
+import (
+	"os/exec"
+	"syscall"
+)
 
 func setupBackgroundProcessOS(cmd *exec.Cmd) {
-	// No special setup needed for Unix/Linux background execution via exec.Command
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setsid = true
 }
