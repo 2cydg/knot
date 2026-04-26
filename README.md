@@ -6,17 +6,21 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
-**Knot** is a minimalist, high-performance SSH/SFTP management tool designed for developers and AI Agents. By utilizing a background daemon and connection multiplexing, it eliminates the handshake overhead of traditional SSH, making remote sessions and file transfers nearly instant.
+**Knot** is an SSH/SFTP connection manager for your native terminal. Keep using Windows Terminal, iTerm2, Kitty, or any terminal you already like, while Knot keeps server profiles, credentials, proxies, jump hosts, file transfer, and port forwarding behind one CLI.
+
+Knot does not try to replace your terminal. It makes the connection workflow smoother: `knot web-prod` opens a shell, `knot exec web-prod "uptime"` runs a remote command, and `knot cp ./dist/. web-prod:/var/www/html/` transfers files. A background daemon keeps physical SSH connections alive, so later shells, commands, and transfers can reuse them instead of repeating the SSH handshake.
 
 ---
 
 ## 🚀 Why Knot?
 
-*   ⚡ **Instant Connectivity**: Connection multiplexing via a background daemon. No more waiting for SSH handshakes.
-*   🔒 **Native Security**: Passwords and keys are never stored in plaintext. Uses OS-level encryption (Windows DPAPI, macOS Keychain, Linux Machine-ID).
-*   🤖 **AI & Scripting Ready**: Structured `--json` output and non-interactive workflows for automation.
-*   🛠️ **Modern SFTP**: Interactive REPL plus scriptable file-management commands.
-*   🔌 **Powerful Forwarding**: Easy management of local, remote, and dynamic (SOCKS5) port forwarding.
+*   **Connection reuse**: a background daemon keeps physical SSH connections alive, so new shells, remote commands, and file transfers can reuse them.
+*   **SSH Agent authentication**: use keys already loaded in your system SSH Agent instead of importing every private key into Knot.
+*   **Agent forwarding**: keep using your local SSH Agent after connecting to remote servers.
+*   **Native credential encryption**: sensitive values are encrypted with platform facilities such as Windows DPAPI, macOS Keychain, Linux Secret Service, or a machine-ID fallback.
+*   **File transfer**: copy files with Docker-style `alias:/path` syntax through `knot cp`, or use the interactive SFTP shell and scriptable SFTP subcommands.
+*   **Network paths**: manage jump host chains, SOCKS5/HTTP proxies, and local/remote/dynamic port forwarding from the same CLI.
+*   **AI and scripting friendly**: structured `--json` output and non-interactive commands work well in scripts, CI, and AI coding agents.
 
 ---
 
@@ -50,35 +54,47 @@ mv knot ~/.local/bin/
 
 Knot provides built-in completion for Bash, Zsh, Fish, and PowerShell.
 
+#### Bash
+
 ```bash
-# Bash: enable for the current session
+# Enable for the current session
 source <(knot completion bash)
 
-# Bash: enable permanently for the current user
+# Enable permanently for the current user
 mkdir -p ~/.local/share/bash-completion/completions && knot completion bash > ~/.local/share/bash-completion/completions/knot
+```
 
-# Zsh: enable for the current session
+Make sure `bash-completion` is installed and loaded by your shell.
+
+#### Zsh
+
+```bash
+# Enable for the current session
 autoload -U compinit && compinit && source <(knot completion zsh)
 
-# Zsh: enable permanently for the current user
+# Enable permanently for the current user
 mkdir -p ~/.zfunc && knot completion zsh > ~/.zfunc/_knot && grep -qxF 'fpath=("$HOME/.zfunc" $fpath)' ~/.zshrc || printf '\nfpath=("$HOME/.zfunc" $fpath)\nautoload -U compinit && compinit\n' >> ~/.zshrc
+```
 
-# Fish: enable for the current session
+#### Fish
+
+```bash
+# Enable for the current session
 knot completion fish | source
 
-# Fish: enable permanently for the current user
+# Enable permanently for the current user
 mkdir -p ~/.config/fish/completions && knot completion fish > ~/.config/fish/completions/knot.fish
 ```
 
+#### PowerShell
+
 ```powershell
-# PowerShell: enable for the current session
+# Enable for the current session
 knot completion powershell | Out-String | Invoke-Expression
 
-# PowerShell: enable permanently for the current user
+# Enable permanently for the current user
 if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }; if (-not (Select-String -Path $PROFILE -SimpleMatch 'knot completion powershell | Out-String | Invoke-Expression' -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`nknot completion powershell | Out-String | Invoke-Expression" }
 ```
-
-For Bash, make sure `bash-completion` is installed and loaded by your shell.
 
 ---
 
@@ -114,7 +130,7 @@ knot cp ./dist/. web-prod:/var/www/html/
 knot cp web-prod:/var/log/nginx/access.log ./
 ```
 
-### 4. Remote Execution
+### 5. Remote Execution
 ```bash
 knot exec web-prod "uptime" --json
 ```

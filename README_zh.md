@@ -6,18 +6,21 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
-**Knot** 是一款极简、高性能的 SSH/SFTP 管理工具，专为开发者与 AI Agent 设计。通过后台守护进程 (Daemon) 与连接复用技术，它彻底消除了传统 SSH 的握手开销，让远程会话和文件传输几乎达到“瞬时”响应。
+**Knot** 是一个面向原生终端的 SSH/SFTP 连接管理工具。你可以继续使用 Windows Terminal、iTerm2、Kitty 或任何自己习惯的终端，同时把服务器配置、凭据、代理、跳板机、文件传输和端口转发收拢到一套命令里。
+
+它不试图替代终端，而是把终端里的连接体验变顺手：`knot web-prod` 打开会话，`knot exec web-prod "uptime"` 执行远程命令，`knot cp ./dist/. web-prod:/var/www/html/` 传文件。后台 daemon 会维护 SSH 物理连接，后续 shell、命令执行和文件传输都可以复用已有连接，减少重复握手的等待。
 
 ---
 
 ## 🚀 为什么选择 Knot?
 
-*   ⚡ **瞬时连接**: 基于连接复用技术，后台维护物理连接，新建会话无需等待握手。
-*   🔌 **高级网络支持**: 内置跳板机链 (Jump Host) 与 SOCKS5/HTTP 代理支持。
-*   🔒 **原生安全**: 密码与密钥绝不以明文存储。深度集成系统级加密（Windows DPAPI, macOS Keychain, Linux Secret Service 及其 Machine-ID 降级方案）。
-*   🤖 **AI & 脚本友好**: 提供结构化 `--json` 输出和非交互工作流，适配自动化脚本。
-*   🛠️ **现代 SFTP**: 交互式 REPL 环境，也支持脚本化文件管理命令。
-*   🔌 **强力转发**: 轻松管理本地 (L)、远程 (R) 和动态 (D/SOCKS5) 端口转发。
+*   **连接复用**：后台 daemon 维护 SSH 物理连接，新建 shell、执行远程命令和传文件都可以复用已有连接。
+*   **SSH Agent 认证支持**：可以使用系统 SSH Agent 中已有的密钥，不需要把所有私钥都导入 Knot。
+*   **Agent 转发支持**：连接到远程服务器后，也可以继续使用本机 SSH Agent 做后续认证。
+*   **平台原生加密**：敏感信息会通过 Windows DPAPI、macOS Keychain、Linux Secret Service 或 machine-ID 降级方案加密保存。
+*   **文件传输**：通过 `knot cp` 使用 Docker 风格的 `alias:/path` 语法复制文件，也支持交互式 SFTP Shell 和脚本化 SFTP 子命令。
+*   **网络路径管理**：统一管理跳板机链、SOCKS5/HTTP 代理，以及本地、远程、动态端口转发。
+*   **AI 和脚本友好**：结构化 `--json` 输出与非交互命令适合脚本、CI 和 AI 编码助手调用。
 
 ---
 
@@ -51,35 +54,47 @@ mv knot ~/.local/bin/
 
 Knot 内置了对 Bash、Zsh、Fish 和 PowerShell 的补全支持。
 
+#### Bash
+
 ```bash
-# Bash：当前会话立即启用
+# 当前会话立即启用
 source <(knot completion bash)
 
-# Bash：为当前用户永久启用
+# 为当前用户永久启用
 mkdir -p ~/.local/share/bash-completion/completions && knot completion bash > ~/.local/share/bash-completion/completions/knot
+```
 
-# Zsh：当前会话立即启用
+请确认系统已安装并加载 `bash-completion`。
+
+#### Zsh
+
+```bash
+# 当前会话立即启用
 autoload -U compinit && compinit && source <(knot completion zsh)
 
-# Zsh：为当前用户永久启用
+# 为当前用户永久启用
 mkdir -p ~/.zfunc && knot completion zsh > ~/.zfunc/_knot && grep -qxF 'fpath=("$HOME/.zfunc" $fpath)' ~/.zshrc || printf '\nfpath=("$HOME/.zfunc" $fpath)\nautoload -U compinit && compinit\n' >> ~/.zshrc
+```
 
-# Fish：当前会话立即启用
+#### Fish
+
+```bash
+# 当前会话立即启用
 knot completion fish | source
 
-# Fish：为当前用户永久启用
+# 为当前用户永久启用
 mkdir -p ~/.config/fish/completions && knot completion fish > ~/.config/fish/completions/knot.fish
 ```
 
+#### PowerShell
+
 ```powershell
-# PowerShell：当前会话立即启用
+# 当前会话立即启用
 knot completion powershell | Out-String | Invoke-Expression
 
-# PowerShell：为当前用户永久启用
+# 为当前用户永久启用
 if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }; if (-not (Select-String -Path $PROFILE -SimpleMatch 'knot completion powershell | Out-String | Invoke-Expression' -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`nknot completion powershell | Out-String | Invoke-Expression" }
 ```
-
-对于 Bash，请确认系统已安装并加载 `bash-completion`。
 
 ---
 
