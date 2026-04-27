@@ -124,16 +124,16 @@ var listCmd = &cobra.Command{
 
 		// Prepare data for JSON output (stripping sensitive info)
 		type ServerInfo struct {
-			Alias          string                 `json:"alias"`
-			Host           string                 `json:"host"`
-			Port           int                    `json:"port"`
-			User           string                 `json:"user"`
-			AuthMethod     string                 `json:"auth_method"`
-			KeyAlias       string                 `json:"key_alias,omitempty"`
-			ProxyAlias     string                 `json:"proxy_alias,omitempty"`
-			JumpHost       []string               `json:"jump_host,omitempty"`
-			Tags           []string               `json:"tags,omitempty"`
-			Forwards       []config.ForwardConfig `json:"forwards,omitempty"`
+			Alias      string                 `json:"alias"`
+			Host       string                 `json:"host"`
+			Port       int                    `json:"port"`
+			User       string                 `json:"user"`
+			AuthMethod string                 `json:"auth_method"`
+			KeyAlias   string                 `json:"key_alias,omitempty"`
+			ProxyAlias string                 `json:"proxy_alias,omitempty"`
+			JumpHost   []string               `json:"jump_host,omitempty"`
+			Tags       []string               `json:"tags,omitempty"`
+			Forwards   []config.ForwardConfig `json:"forwards,omitempty"`
 		}
 		var jsonServers []ServerInfo
 		for _, s := range filteredServers {
@@ -143,9 +143,9 @@ var listCmd = &cobra.Command{
 				Port:       s.Port,
 				User:       s.User,
 				AuthMethod: s.AuthMethod,
-				KeyAlias:   s.KeyAlias,
-				ProxyAlias: s.ProxyAlias,
-				JumpHost:   s.JumpHost,
+				KeyAlias:   cfg.KeyAlias(s.KeyID),
+				ProxyAlias: cfg.ProxyAlias(s.ProxyID),
+				JumpHost:   cfg.ServerAliases(s.JumpHostIDs),
 				Tags:       s.Tags,
 				Forwards:   s.Forwards,
 			})
@@ -171,11 +171,11 @@ var listCmd = &cobra.Command{
 			lastUsedS string
 		}
 
-		recentByAlias := make(map[string]time.Time)
+		recentByServerID := make(map[string]time.Time)
 		state, err := config.LoadState()
 		if err == nil {
 			for _, entry := range state.Recent {
-				recentByAlias[entry.Alias] = entry.LastUsed
+				recentByServerID[entry.ServerID] = entry.LastUsed
 			}
 		}
 
@@ -188,7 +188,7 @@ var listCmd = &cobra.Command{
 		for _, s := range filteredServers {
 			target := buildTarget(s)
 			tags := joinTags(s.Tags)
-			lastUsed := recentByAlias[s.Alias]
+			lastUsed := recentByServerID[s.ID]
 			lastUsedS := formatLastUsed(lastUsed)
 
 			rows = append(rows, serverRow{
@@ -227,8 +227,10 @@ var listCmd = &cobra.Command{
 		})
 
 		sort.Slice(jsonServers, func(i, j int) bool {
-			left := recentByAlias[jsonServers[i].Alias]
-			right := recentByAlias[jsonServers[j].Alias]
+			leftID, _, _ := cfg.FindServerByAlias(jsonServers[i].Alias)
+			rightID, _, _ := cfg.FindServerByAlias(jsonServers[j].Alias)
+			left := recentByServerID[leftID]
+			right := recentByServerID[rightID]
 
 			switch {
 			case left.IsZero() && !right.IsZero():

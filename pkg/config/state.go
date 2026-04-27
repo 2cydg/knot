@@ -10,7 +10,7 @@ import (
 )
 
 type RecentEntry struct {
-	Alias    string    `json:"alias"`
+	ServerID string    `json:"server_id"`
 	LastUsed time.Time `json:"last_used"`
 }
 
@@ -57,11 +57,11 @@ func (s *State) Save() error {
 	return os.WriteFile(statePath, data, 0600)
 }
 
-func (s *State) UpdateRecent(alias string, limit int) {
+func (s *State) UpdateRecent(serverID string, limit int) {
 	// Find if already exists
 	found := -1
 	for i, entry := range s.Recent {
-		if entry.Alias == alias {
+		if entry.ServerID == serverID {
 			found = i
 			break
 		}
@@ -73,7 +73,7 @@ func (s *State) UpdateRecent(alias string, limit int) {
 	} else {
 		// Add new
 		s.Recent = append(s.Recent, RecentEntry{
-			Alias:    alias,
+			ServerID: serverID,
 			LastUsed: time.Now(),
 		})
 	}

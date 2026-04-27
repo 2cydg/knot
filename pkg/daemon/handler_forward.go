@@ -28,10 +28,16 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 	} else {
 		// Load config to get server info for exact pool key lookup
 		cfg, loadErr := config.Load(d.crypto)
+		var serverID string
+		var srv config.ServerConfig
+		var serverOK bool
+		if loadErr == nil {
+			serverID, srv, serverOK = cfg.FindServerByAlias(req.Alias)
+		}
 		var sshClient *ssh.Client
 		var poolKeys []string
 		if loadErr == nil {
-			if srv, ok := cfg.Servers[req.Alias]; ok {
+			if serverOK {
 				// We call GetClient here. If it's already in the pool, it returns immediately.
 				// If not, it may dial if we are in "enable" or "add" action with enabled=true.
 				// But we should only dial if we really need it.
@@ -69,7 +75,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 		case "add":
 			if loadErr != nil {
 				err = loadErr
-			} else if _, ok := cfg.Servers[req.Alias]; !ok {
+			} else if !serverOK {
 				err = fmt.Errorf("server alias '%s' not found", req.Alias)
 			} else {
 				// 1. Add rule to ForwardManager
@@ -78,36 +84,54 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 					LocalPort:  req.Config.LocalPort,
 					RemoteAddr: req.Config.RemoteAddr,
 				}
-				err = d.fm.AddRule(req.Alias, fConfig, req.Config.Enabled, req.IsTemp, sshClient, poolKeys)
+				err = d.fm.AddRule(serverID, fConfig, req.Config.Enabled, req.IsTemp, sshClient, poolKeys)
 				if err == nil && !req.IsTemp {
-					d.syncConfig(req.Alias)
+					d.syncConfig(serverID)
 				}
 			}
 
 		case "remove":
-			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
-			if ok {
-				isTemp := rule.IsTemp
-				d.fm.RemoveRule(req.Alias, req.Config.Type, req.Config.LocalPort)
-				if !isTemp {
-					d.syncConfig(req.Alias)
+			if loadErr != nil {
+				err = loadErr
+			} else if !serverOK {
+				err = fmt.Errorf("server alias '%s' not found", req.Alias)
+			} else {
+				rule, ok := d.fm.GetRule(serverID, req.Config.Type, req.Config.LocalPort)
+				if ok {
+					isTemp := rule.IsTemp
+					d.fm.RemoveRule(serverID, req.Config.Type, req.Config.LocalPort)
+					if !isTemp {
+						d.syncConfig(serverID)
+					}
 				}
 			}
 
 		case "enable":
-			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
-			if ok {
-				err = d.fm.SetEnabled(rule, true, sshClient, poolKeys)
+			if loadErr != nil {
+				err = loadErr
+			} else if !serverOK {
+				err = fmt.Errorf("server alias '%s' not found", req.Alias)
 			} else {
-				err = fmt.Errorf("rule not found")
+				rule, ok := d.fm.GetRule(serverID, req.Config.Type, req.Config.LocalPort)
+				if ok {
+					err = d.fm.SetEnabled(rule, true, sshClient, poolKeys)
+				} else {
+					err = fmt.Errorf("rule not found")
+				}
 			}
 
 		case "disable":
-			rule, ok := d.fm.GetRule(req.Alias, req.Config.Type, req.Config.LocalPort)
-			if ok {
-				err = d.fm.SetEnabled(rule, false, sshClient, poolKeys)
+			if loadErr != nil {
+				err = loadErr
+			} else if !serverOK {
+				err = fmt.Errorf("server alias '%s' not found", req.Alias)
 			} else {
-				err = fmt.Errorf("rule not found")
+				rule, ok := d.fm.GetRule(serverID, req.Config.Type, req.Config.LocalPort)
+				if ok {
+					err = d.fm.SetEnabled(rule, false, sshClient, poolKeys)
+				} else {
+					err = fmt.Errorf("rule not found")
+				}
 			}
 
 		default:
@@ -128,25 +152,40 @@ func (d *Daemon) handleForwardListRequest(conn net.Conn, alias string) {
 		return
 	}
 
+	cfg, err := config.Load(d.crypto)
+	if err != nil {
+		protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte(err.Error()))
+		return
+	}
+	serverID := ""
+	if alias != "" {
+		var ok bool
+		serverID, _, ok = cfg.FindServerByAlias(alias)
+		if !ok {
+			protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte(fmt.Sprintf("server alias '%s' not found", alias)))
+			return
+		}
+	}
+
 	rules := d.fm.ListRules()
 	resp := protocol.ForwardListResponse{
 		Alias: alias,
 	}
-	resp.Forwards = forwardStatusesForAlias(rules, alias)
+	resp.Forwards = forwardStatusesForServer(rules, cfg, serverID)
 
 	data, _ := json.Marshal(resp)
 	protocol.WriteMessage(conn, protocol.TypeForwardListResp, 0, data)
 }
 
-func forwardStatusesForAlias(rules []*ForwardRule, alias string) []protocol.ForwardStatus {
+func forwardStatusesForServer(rules []*ForwardRule, cfg *config.Config, serverID string) []protocol.ForwardStatus {
 	statuses := make([]protocol.ForwardStatus, 0, len(rules))
 	for _, r := range rules {
-		if alias != "" && r.Alias != alias {
+		if serverID != "" && r.ServerID != serverID {
 			continue
 		}
 		r.mu.RLock()
 		statuses = append(statuses, protocol.ForwardStatus{
-			Alias:      r.Alias,
+			Alias:      cfg.ServerAlias(r.ServerID),
 			Type:       r.Config.Type,
 			LocalPort:  r.Config.LocalPort,
 			RemoteAddr: r.Config.RemoteAddr,

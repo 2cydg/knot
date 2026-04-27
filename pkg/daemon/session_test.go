@@ -4,8 +4,8 @@ import "testing"
 
 func TestSessionManagerCountByPoolKeyUsesTargetConnection(t *testing.T) {
 	sm := NewSessionManager()
-	sm.Add("target", nil, []string{"jump:user@jump:22", "target:user@host:22"})
-	sm.Add("target", nil, []string{"target:user@host:22"})
+	sm.Add("target", "target", nil, []string{"jump:user@jump:22", "target:user@host:22"})
+	sm.Add("target", "target", nil, []string{"target:user@host:22"})
 
 	counts := sm.CountByPoolKey()
 

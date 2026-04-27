@@ -18,6 +18,7 @@ type clientEntry struct {
 	lastAccess time.Time
 	refCount   int
 	remoteHost string
+	serverID   string
 	alias      string
 	chainKeys  []string
 }
@@ -36,7 +37,7 @@ type Pool struct {
 
 // GetConnKey returns the unique pool key for a server configuration.
 func GetConnKey(srv config.ServerConfig) string {
-	return fmt.Sprintf("%s:%s@%s:%d", srv.Alias, srv.User, srv.Host, srv.Port)
+	return fmt.Sprintf("%s:%s@%s:%d", srv.ID, srv.User, srv.Host, srv.Port)
 }
 
 // NewPool creates a new Pool instance.
@@ -95,12 +96,12 @@ func (p *Pool) GetClientForKey(key string) (*ssh.Client, bool) {
 	return entry.client, true
 }
 
-// GetClientForAlias returns the first active client found that matches the given alias.
-func (p *Pool) GetClientForAlias(alias string) (*ssh.Client, bool) {
+// GetClientForServer returns the first active client found that matches the given server ID.
+func (p *Pool) GetClientForServer(serverID string) (*ssh.Client, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	prefix := alias + ":"
+	prefix := serverID + ":"
 	for key, entry := range p.entries {
 		if strings.HasPrefix(key, prefix) {
 			return entry.client, true
@@ -119,6 +120,7 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	for key, entry := range p.entries {
 		stats = append(stats, protocol.PoolEntryStat{
 			Key:      key,
+			ServerID: entry.serverID,
 			Alias:    entry.alias,
 			Host:     entry.remoteHost,
 			IdleTime: now.Sub(entry.lastAccess).Round(time.Second).String(),

@@ -27,14 +27,15 @@ var removeCmd = &cobra.Command{
 			return err
 		}
 
-		if _, exists := cfg.Servers[alias]; !exists {
-			return fmt.Errorf("server alias '%s' not found", alias)
+		serverID, _, err := resolveServerAlias(cfg, alias)
+		if err != nil {
+			return err
 		}
 
 		// Optional: Add confirmation here if needed, but for CLI 'rm' usually it's direct unless -i is passed.
 		// For now, let's just delete it as requested.
-		
-		delete(cfg.Servers, alias)
+
+		delete(cfg.Servers, serverID)
 
 		if err := cfg.Save(provider); err != nil {
 			return err

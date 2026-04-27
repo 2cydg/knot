@@ -247,10 +247,10 @@ func sanitizedConfig(cfg *config.Config) map[string]interface{} {
 			"user":             srv.User,
 			"auth_method":      srv.AuthMethod,
 			"has_password":     srv.Password != "",
-			"key_alias":        srv.KeyAlias,
+			"key_alias":        cfg.KeyAlias(srv.KeyID),
 			"known_hosts_path": srv.KnownHostsPath,
-			"proxy_alias":      srv.ProxyAlias,
-			"jump_host":        srv.JumpHost,
+			"proxy_alias":      cfg.ProxyAlias(srv.ProxyID),
+			"jump_host":        cfg.ServerAliases(srv.JumpHostIDs),
 			"forwards":         srv.Forwards,
 			"tags":             srv.Tags,
 		}

@@ -54,8 +54,8 @@ func dialTransport(addr string, srv config.ServerConfig, cfg *config.Config, jum
 	if jumpClient != nil {
 		return jumpClient.Dial("tcp", addr)
 	}
-	if srv.ProxyAlias != "" && cfg != nil {
-		return dialViaProxy(addr, srv.ProxyAlias, cfg)
+	if srv.ProxyID != "" && cfg != nil {
+		return dialViaProxy(addr, srv.ProxyID, cfg)
 	}
 
 	dialer := &net.Dialer{

@@ -13,10 +13,10 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-func dialViaProxy(targetAddr, proxyAlias string, cfg *config.Config) (net.Conn, error) {
-	proxyCfg, ok := cfg.Proxies[proxyAlias]
+func dialViaProxy(targetAddr, proxyID string, cfg *config.Config) (net.Conn, error) {
+	proxyCfg, ok := cfg.Proxies[proxyID]
 	if !ok {
-		return nil, fmt.Errorf("proxy %s not found in config", proxyAlias)
+		return nil, fmt.Errorf("proxy %s not found in config", proxyID)
 	}
 
 	proxyAddr := net.JoinHostPort(proxyCfg.Host, strconv.Itoa(proxyCfg.Port))

@@ -149,9 +149,13 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 	if provider != nil {
 		cfg, _ := config.Load(provider)
 		if cfg != nil {
+			serverID, _, ok := cfg.FindServerByAlias(alias)
+			if !ok {
+				return nil
+			}
 			state, _ := config.LoadState()
 			if state != nil {
-				state.UpdateRecent(alias, cfg.Settings.RecentLimit)
+				state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
 				_ = state.Save()
 			}
 		}

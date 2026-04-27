@@ -1,7 +1,9 @@
 package config
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"knot/internal/paths"
 	"knot/pkg/crypto"
@@ -26,6 +28,7 @@ const (
 )
 
 type ProxyConfig struct {
+	ID       string `toml:"id"`
 	Alias    string `toml:"alias"`
 	Type     string `toml:"type,omitempty"`
 	Host     string `toml:"host,omitempty"`
@@ -35,6 +38,7 @@ type ProxyConfig struct {
 }
 
 type KeyConfig struct {
+	ID         string `toml:"id"`
 	Alias      string `toml:"alias"`
 	Type       string `toml:"type"`
 	Length     int    `toml:"length"`
@@ -48,16 +52,17 @@ type ForwardConfig struct {
 }
 
 type ServerConfig struct {
+	ID             string          `toml:"id"`
 	Alias          string          `toml:"alias"`
 	Host           string          `toml:"host"`
 	Port           int             `toml:"port"`
 	User           string          `toml:"user"`
 	AuthMethod     string          `toml:"auth_method,omitempty"`
 	Password       string          `toml:"password,omitempty"` // Encrypted
-	KeyAlias       string          `toml:"key_alias,omitempty"`
+	KeyID          string          `toml:"key_id,omitempty"`
 	KnownHostsPath string          `toml:"known_hosts_path,omitempty"`
-	ProxyAlias     string          `toml:"proxy_alias,omitempty"`
-	JumpHost       []string        `toml:"jump_host,omitempty"`
+	ProxyID        string          `toml:"proxy_id,omitempty"`
+	JumpHostIDs    []string        `toml:"jump_host_ids,omitempty"`
 	Forwards       []ForwardConfig `toml:"forwards,omitempty"`
 	Tags           []string        `toml:"tags,omitempty"`
 }
@@ -90,6 +95,106 @@ type Config struct {
 	Servers  map[string]ServerConfig `toml:"servers"`
 	Proxies  map[string]ProxyConfig  `toml:"proxies"`
 	Keys     map[string]KeyConfig    `toml:"keys"`
+}
+
+func NewID(prefix string) (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return prefix + "_" + hex.EncodeToString(b[:]), nil
+}
+
+func (c *Config) NewServerID() (string, error) {
+	return c.newUniqueID("srv", func(id string) bool {
+		_, ok := c.Servers[id]
+		return ok
+	})
+}
+
+func (c *Config) NewProxyID() (string, error) {
+	return c.newUniqueID("prx", func(id string) bool {
+		_, ok := c.Proxies[id]
+		return ok
+	})
+}
+
+func (c *Config) NewKeyID() (string, error) {
+	return c.newUniqueID("key", func(id string) bool {
+		_, ok := c.Keys[id]
+		return ok
+	})
+}
+
+func (c *Config) newUniqueID(prefix string, exists func(string) bool) (string, error) {
+	for {
+		id, err := NewID(prefix)
+		if err != nil {
+			return "", err
+		}
+		if !exists(id) {
+			return id, nil
+		}
+	}
+}
+
+func (c *Config) FindServerByAlias(alias string) (string, ServerConfig, bool) {
+	for id, srv := range c.Servers {
+		if srv.Alias == alias {
+			return id, srv, true
+		}
+	}
+	return "", ServerConfig{}, false
+}
+
+func (c *Config) FindProxyByAlias(alias string) (string, ProxyConfig, bool) {
+	for id, proxy := range c.Proxies {
+		if proxy.Alias == alias {
+			return id, proxy, true
+		}
+	}
+	return "", ProxyConfig{}, false
+}
+
+func (c *Config) FindKeyByAlias(alias string) (string, KeyConfig, bool) {
+	for id, key := range c.Keys {
+		if key.Alias == alias {
+			return id, key, true
+		}
+	}
+	return "", KeyConfig{}, false
+}
+
+func (c *Config) ServerAlias(id string) string {
+	if srv, ok := c.Servers[id]; ok {
+		return srv.Alias
+	}
+	return id
+}
+
+func (c *Config) ProxyAlias(id string) string {
+	if proxy, ok := c.Proxies[id]; ok {
+		return proxy.Alias
+	}
+	return id
+}
+
+func (c *Config) KeyAlias(id string) string {
+	if key, ok := c.Keys[id]; ok {
+		return key.Alias
+	}
+	return id
+}
+
+func (c *Config) ServerAliases(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	aliases := make([]string, len(ids))
+	for i, id := range ids {
+		aliases[i] = c.ServerAlias(id)
+	}
+	return aliases
 }
 
 func (c *Config) GetAllTags() []string {
@@ -335,9 +440,42 @@ func IsValidAlias(alias string) bool {
 	return true
 }
 
+func (c *Config) ServerAliasExists(alias string, exceptID string) bool {
+	for id, srv := range c.Servers {
+		if id != exceptID && srv.Alias == alias {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) ProxyAliasExists(alias string, exceptID string) bool {
+	for id, proxy := range c.Proxies {
+		if id != exceptID && proxy.Alias == alias {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) KeyAliasExists(alias string, exceptID string) bool {
+	for id, key := range c.Keys {
+		if id != exceptID && key.Alias == alias {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ServerConfig) Validate(cfg *Config) error {
+	if s.ID == "" {
+		return fmt.Errorf("server id cannot be empty")
+	}
 	if !IsValidAlias(s.Alias) {
 		return fmt.Errorf("invalid server alias format")
+	}
+	if cfg.ServerAliasExists(s.Alias, s.ID) {
+		return fmt.Errorf("server alias '%s' already exists", s.Alias)
 	}
 	if s.Host == "" {
 		return fmt.Errorf("host cannot be empty")
@@ -351,31 +489,34 @@ func (s *ServerConfig) Validate(cfg *Config) error {
 	if s.AuthMethod != AuthMethodPassword && s.AuthMethod != AuthMethodKey && s.AuthMethod != AuthMethodAgent {
 		return fmt.Errorf("invalid auth method: %s", s.AuthMethod)
 	}
-	if s.AuthMethod == AuthMethodKey && s.KeyAlias == "" {
-		return fmt.Errorf("key alias is required for key authentication")
+	if s.AuthMethod == AuthMethodKey && s.KeyID == "" {
+		return fmt.Errorf("key is required for key authentication")
 	}
-	if s.KeyAlias != "" {
-		if _, ok := cfg.Keys[s.KeyAlias]; !ok {
-			return fmt.Errorf("key '%s' not found in config", s.KeyAlias)
+	if s.KeyID != "" {
+		if _, ok := cfg.Keys[s.KeyID]; !ok {
+			return fmt.Errorf("key '%s' not found in config", s.KeyID)
 		}
 	}
-	if s.ProxyAlias != "" {
-		if _, ok := cfg.Proxies[s.ProxyAlias]; !ok {
-			return fmt.Errorf("proxy '%s' not found in config", s.ProxyAlias)
+	if s.ProxyID != "" {
+		if _, ok := cfg.Proxies[s.ProxyID]; !ok {
+			return fmt.Errorf("proxy '%s' not found in config", s.ProxyID)
 		}
 	}
-	for _, jh := range s.JumpHost {
-		if jh == s.Alias {
+	for _, jhID := range s.JumpHostIDs {
+		if jhID == s.ID {
 			return fmt.Errorf("server cannot use itself as a jump host")
 		}
-		if _, ok := cfg.Servers[jh]; !ok {
-			return fmt.Errorf("jump host '%s' not found in config", jh)
+		if _, ok := cfg.Servers[jhID]; !ok {
+			return fmt.Errorf("jump host '%s' not found in config", jhID)
 		}
 	}
 	return nil
 }
 
 func (p *ProxyConfig) Validate() error {
+	if p.ID == "" {
+		return fmt.Errorf("proxy id cannot be empty")
+	}
 	if !IsValidAlias(p.Alias) {
 		return fmt.Errorf("invalid proxy alias format")
 	}
@@ -391,28 +532,41 @@ func (p *ProxyConfig) Validate() error {
 	return nil
 }
 
-func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {
-	if len(jumpHostAliases) == 0 {
+func (k *KeyConfig) Validate(cfg *Config) error {
+	if k.ID == "" {
+		return fmt.Errorf("key id cannot be empty")
+	}
+	if !IsValidAlias(k.Alias) {
+		return fmt.Errorf("invalid key alias format")
+	}
+	if cfg.KeyAliasExists(k.Alias, k.ID) {
+		return fmt.Errorf("key alias '%s' already exists", k.Alias)
+	}
+	return nil
+}
+
+func (c *Config) HasCycle(startID string, jumpHostIDs []string) error {
+	if len(jumpHostIDs) == 0 {
 		return nil
 	}
 
 	visited := make(map[string]bool)
 
 	var check func(string, []string) error
-	check = func(alias string, chain []string) error {
-		if visited[alias] {
-			return fmt.Errorf("cycle detected: %s", strings.Join(append(chain, alias), " -> "))
+	check = func(id string, chain []string) error {
+		if visited[id] {
+			return fmt.Errorf("cycle detected: %s", strings.Join(append(chain, c.ServerAlias(id)), " -> "))
 		}
-		visited[alias] = true
-		defer func() { visited[alias] = false }()
+		visited[id] = true
+		defer func() { visited[id] = false }()
 
-		srv, ok := c.Servers[alias]
+		srv, ok := c.Servers[id]
 		if !ok {
 			return nil
 		}
 
-		for _, jh := range srv.JumpHost {
-			if err := check(jh, append(chain, alias)); err != nil {
+		for _, jh := range srv.JumpHostIDs {
+			if err := check(jh, append(chain, c.ServerAlias(id))); err != nil {
 				return err
 			}
 		}
@@ -420,10 +574,10 @@ func (c *Config) HasCycle(startAlias string, jumpHostAliases []string) error {
 	}
 
 	// For any server we check, we mark startAlias as visited so it can't be hit
-	visited[startAlias] = true
+	visited[startID] = true
 
-	for _, jh := range jumpHostAliases {
-		if err := check(jh, []string{startAlias}); err != nil {
+	for _, jh := range jumpHostIDs {
+		if err := check(jh, []string{c.ServerAlias(startID)}); err != nil {
 			return err
 		}
 	}

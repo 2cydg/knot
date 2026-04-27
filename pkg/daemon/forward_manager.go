@@ -29,24 +29,24 @@ func NewForwardManager(pool *sshpool.Pool) *ForwardManager {
 	}
 }
 
-func (fm *ForwardManager) GetRuleKey(alias string, fType string, port int) string {
-	return fmt.Sprintf("%s:%s:%d", alias, fType, port)
+func (fm *ForwardManager) GetRuleKey(serverID string, fType string, port int) string {
+	return fmt.Sprintf("%s:%s:%d", serverID, fType, port)
 }
 
 // AddRule adds a new rule. If it's enabled and a connection exists, it starts it.
-func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enabled bool, isTemp bool, sshClient *ssh.Client, poolKeys []string) error {
-	key := fm.GetRuleKey(alias, cfg.Type, cfg.LocalPort)
+func (fm *ForwardManager) AddRule(serverID string, cfg config.ForwardConfig, enabled bool, isTemp bool, sshClient *ssh.Client, poolKeys []string) error {
+	key := fm.GetRuleKey(serverID, cfg.Type, cfg.LocalPort)
 
 	fm.mu.Lock()
 	rule, exists := fm.rules[key]
 	if !exists {
 		rule = &ForwardRule{
-			Config:  cfg,
-			Alias:   alias,
-			IsTemp:  isTemp,
-			Enabled: enabled,
-			Status:  forwardStatusInactive,
-			pool:    fm.pool,
+			Config:   cfg,
+			ServerID: serverID,
+			IsTemp:   isTemp,
+			Enabled:  enabled,
+			Status:   forwardStatusInactive,
+			pool:     fm.pool,
 		}
 		fm.rules[key] = rule
 	}
@@ -70,8 +70,8 @@ func (fm *ForwardManager) AddRule(alias string, cfg config.ForwardConfig, enable
 }
 
 // GetRule returns a rule by key.
-func (fm *ForwardManager) GetRule(alias string, fType string, port int) (*ForwardRule, bool) {
-	key := fm.GetRuleKey(alias, fType, port)
+func (fm *ForwardManager) GetRule(serverID string, fType string, port int) (*ForwardRule, bool) {
+	key := fm.GetRuleKey(serverID, fType, port)
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 	rule, ok := fm.rules[key]
@@ -79,8 +79,8 @@ func (fm *ForwardManager) GetRule(alias string, fType string, port int) (*Forwar
 }
 
 // RemoveRule stops and removes a rule.
-func (fm *ForwardManager) RemoveRule(alias string, fType string, port int) {
-	key := fm.GetRuleKey(alias, fType, port)
+func (fm *ForwardManager) RemoveRule(serverID string, fType string, port int) {
+	key := fm.GetRuleKey(serverID, fType, port)
 	fm.mu.Lock()
 	rule, ok := fm.rules[key]
 	if ok {
@@ -110,12 +110,12 @@ func (fm *ForwardManager) SetEnabled(rule *ForwardRule, enabled bool, sshClient 
 	return nil
 }
 
-// StopAllForAlias stops all rules for a specific alias.
-func (fm *ForwardManager) StopAllForAlias(alias string) {
+// StopAllForServer stops all rules for a specific server.
+func (fm *ForwardManager) StopAllForServer(serverID string) {
 	fm.mu.RLock()
 	var rulesToStop []*ForwardRule
 	for _, rule := range fm.rules {
-		if rule.Alias == alias {
+		if rule.ServerID == serverID {
 			rulesToStop = append(rulesToStop, rule)
 		}
 	}

@@ -10,6 +10,7 @@ import (
 
 func TestBuildRouteChain(t *testing.T) {
 	target := config.ServerConfig{
+		ID:    "target",
 		Alias: "target",
 		Host:  "target.example",
 		Port:  22,
@@ -30,10 +31,10 @@ func TestBuildRouteChain(t *testing.T) {
 	})
 
 	t.Run("single jump", func(t *testing.T) {
-		target.JumpHost = []string{"jump-a"}
+		target.JumpHostIDs = []string{"jump-a"}
 		cfg := &config.Config{
 			Servers: map[string]config.ServerConfig{
-				"jump-a": {Alias: "jump-a", Host: "jump-a.example", Port: 22, User: "alice"},
+				"jump-a": {ID: "jump-a", Alias: "jump-a", Host: "jump-a.example", Port: 22, User: "alice"},
 			},
 		}
 
@@ -53,11 +54,11 @@ func TestBuildRouteChain(t *testing.T) {
 	})
 
 	t.Run("multi jump", func(t *testing.T) {
-		target.JumpHost = []string{"jump-a", "jump-b"}
+		target.JumpHostIDs = []string{"jump-a", "jump-b"}
 		cfg := &config.Config{
 			Servers: map[string]config.ServerConfig{
-				"jump-a": {Alias: "jump-a", Host: "jump-a.example", Port: 22, User: "alice"},
-				"jump-b": {Alias: "jump-b", Host: "jump-b.example", Port: 22, User: "alice"},
+				"jump-a": {ID: "jump-a", Alias: "jump-a", Host: "jump-a.example", Port: 22, User: "alice"},
+				"jump-b": {ID: "jump-b", Alias: "jump-b", Host: "jump-b.example", Port: 22, User: "alice"},
 			},
 		}
 
@@ -77,7 +78,7 @@ func TestBuildRouteChain(t *testing.T) {
 	})
 
 	t.Run("missing jump host", func(t *testing.T) {
-		target.JumpHost = []string{"missing"}
+		target.JumpHostIDs = []string{"missing"}
 		cfg := &config.Config{Servers: map[string]config.ServerConfig{}}
 
 		_, err := buildRouteChain(target, cfg)
@@ -112,7 +113,7 @@ func TestGetClientReturnsClonedChainKeysFromCache(t *testing.T) {
 
 	srv := makePasswordServer("direct", server.Addr(), user, password, knownHostsPath)
 	cfg := &config.Config{
-		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
 		Proxies: make(map[string]config.ProxyConfig),
 		Keys:    make(map[string]config.KeyConfig),
 	}
@@ -150,7 +151,7 @@ func TestCleanupIdleEntriesRespectsRefCount(t *testing.T) {
 
 	srv := makePasswordServer("direct", server.Addr(), user, password, knownHostsPath)
 	cfg := &config.Config{
-		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
 		Proxies: make(map[string]config.ProxyConfig),
 		Keys:    make(map[string]config.KeyConfig),
 	}

@@ -63,6 +63,10 @@ paths support ~/... expansion.`,
 		if err != nil {
 			return err
 		}
+		serverID, _, err := resolveServerAlias(cfg, alias)
+		if err != nil {
+			return err
+		}
 
 		// Send SFTP request
 		sftpReq := protocol.SFTPRequest{
@@ -82,7 +86,7 @@ paths support ~/... expansion.`,
 		// Update recent history
 		state, err := config.LoadState()
 		if err == nil {
-			state.UpdateRecent(alias, cfg.Settings.RecentLimit)
+			state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
 			_ = state.Save()
 		}
 
@@ -110,16 +114,16 @@ paths support ~/... expansion.`,
 					}
 				}
 
-				srv := cfg.Servers[alias]
+				srv := cfg.Servers[serverID]
 				if err := PromptAuthUpdate(rl, &srv, cfg, provider, &challenge); err != nil {
 					return nil, err
 				}
 				authUpdated = true
-				cfg.Servers[alias] = srv
+				cfg.Servers[serverID] = srv
 				return &protocol.AuthResponsePayload{
 					AuthMethod: srv.AuthMethod,
 					Password:   srv.Password,
-					KeyAlias:   srv.KeyAlias,
+					KeyID:      srv.KeyID,
 				}, nil
 			},
 		}

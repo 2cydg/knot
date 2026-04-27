@@ -106,8 +106,8 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 	if alias == "" {
 		fmt.Println("Available servers:")
 		aliases := make([]string, 0, len(cfg.Servers))
-		for a := range cfg.Servers {
-			aliases = append(aliases, a)
+		for _, srv := range cfg.Servers {
+			aliases = append(aliases, srv.Alias)
 		}
 		sort.Strings(aliases)
 		for i, a := range aliases {
@@ -131,7 +131,7 @@ func handleForwardAddInteractive(alias string, isTemp bool) error {
 			}
 
 			// Try as alias
-			if _, ok := cfg.Servers[aliasStr]; ok {
+			if _, _, ok := cfg.FindServerByAlias(aliasStr); ok {
 				alias = aliasStr
 				break
 			}

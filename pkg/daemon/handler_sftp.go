@@ -31,7 +31,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		return
 	}
 
-	srv, ok := cfg.Servers[alias]
+	serverID, srv, ok := cfg.FindServerByAlias(alias)
 	if !ok {
 		sendError("server not found: " + alias)
 		return
@@ -55,7 +55,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKeys, _, err := d.dialWithRetry(conn, alias, srv, cfg, sftpReq.IsInteractive, sftpReq.SSHAuthSock, sftpReq.HostKeyPolicy, confirmCallback)
+	client, poolKeys, _, err := d.dialWithRetry(conn, serverID, alias, srv, cfg, sftpReq.IsInteractive, sftpReq.SSHAuthSock, sftpReq.HostKeyPolicy, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return

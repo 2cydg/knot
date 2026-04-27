@@ -162,7 +162,7 @@ func (d *Daemon) getSSHClient(alias string, agentSocket string, hostKeyPolicy st
 		return nil, nil, err
 	}
 
-	srv, ok := cfg.Servers[alias]
+	_, srv, ok := cfg.FindServerByAlias(alias)
 	if !ok {
 		return nil, nil, fmt.Errorf("server alias '%s' not found", alias)
 	}

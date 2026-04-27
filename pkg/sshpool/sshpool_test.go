@@ -33,6 +33,7 @@ func TestSSHConnection(t *testing.T) {
 		Servers: make(map[string]config.ServerConfig),
 		Keys: map[string]config.KeyConfig{
 			"test-key": {
+				ID:         "test-key",
 				Alias:      "test-key",
 				PrivateKey: string(keyContent),
 			},
@@ -40,17 +41,18 @@ func TestSSHConnection(t *testing.T) {
 	}
 
 	srv := config.ServerConfig{
+		ID:         "test-local",
 		Alias:      "test-local",
 		Host:       "127.0.0.1",
 		Port:       54263,
 		User:       os.Getenv("USER"),
 		AuthMethod: config.AuthMethodKey,
-		KeyAlias:   "test-key",
+		KeyID:      "test-key",
 	}
 	if srv.User == "" {
 		srv.User = "clax"
 	}
-	cfg.Servers[srv.Alias] = srv
+	cfg.Servers[srv.ID] = srv
 
 	pool := NewPool()
 	defer pool.CloseAll()
@@ -200,6 +202,7 @@ func makePasswordServer(alias string, addr string, user string, password string,
 		panic(err)
 	}
 	return config.ServerConfig{
+		ID:             alias,
 		Alias:          alias,
 		Host:           host,
 		Port:           port,
@@ -222,7 +225,7 @@ func TestHostKeyPolicyFailRejectsUnknownHost(t *testing.T) {
 
 	srv := makePasswordServer("target", server.Addr(), user, password, knownHostsPath)
 	cfg := &config.Config{
-		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
 		Proxies: make(map[string]config.ProxyConfig),
 		Keys:    make(map[string]config.KeyConfig),
 	}
@@ -251,7 +254,7 @@ func TestHostKeyPolicyAcceptNewAddsUnknownHost(t *testing.T) {
 
 	srv := makePasswordServer("target", server.Addr(), user, password, knownHostsPath)
 	cfg := &config.Config{
-		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
 		Proxies: make(map[string]config.ProxyConfig),
 		Keys:    make(map[string]config.KeyConfig),
 	}
@@ -291,13 +294,13 @@ func TestGetClientExplicitJumpChainUsesEachHop(t *testing.T) {
 	aSrv := makePasswordServer("jump-a", a.Addr(), user, password, knownHostsPath)
 	bSrv := makePasswordServer("jump-b", b.Addr(), user, password, knownHostsPath)
 	targetSrv := makePasswordServer("target", target.Addr(), user, password, knownHostsPath)
-	targetSrv.JumpHost = []string{"jump-a", "jump-b"}
+	targetSrv.JumpHostIDs = []string{aSrv.ID, bSrv.ID}
 
 	cfg := &config.Config{
 		Servers: map[string]config.ServerConfig{
-			aSrv.Alias:      aSrv,
-			bSrv.Alias:      bSrv,
-			targetSrv.Alias: targetSrv,
+			aSrv.ID:      aSrv,
+			bSrv.ID:      bSrv,
+			targetSrv.ID: targetSrv,
 		},
 		Proxies: make(map[string]config.ProxyConfig),
 		Keys:    make(map[string]config.KeyConfig),

@@ -39,20 +39,22 @@ var keyListCmd = &cobra.Command{
 			return err
 		}
 
-		var aliases []string
-		for alias := range cfg.Keys {
-			aliases = append(aliases, alias)
+		var keyIDs []string
+		for id := range cfg.Keys {
+			keyIDs = append(keyIDs, id)
 		}
-		sort.Strings(aliases)
+		sort.Slice(keyIDs, func(i, j int) bool {
+			return cfg.Keys[keyIDs[i]].Alias < cfg.Keys[keyIDs[j]].Alias
+		})
 
 		type keyInfo struct {
 			Alias string `json:"alias"`
 			Type  string `json:"type"`
 			Bits  int    `json:"bits"`
 		}
-		keys := make([]keyInfo, 0, len(aliases))
-		for _, alias := range aliases {
-			k := cfg.Keys[alias]
+		keys := make([]keyInfo, 0, len(keyIDs))
+		for _, id := range keyIDs {
+			k := cfg.Keys[id]
 			keys = append(keys, keyInfo{Alias: k.Alias, Type: k.Type, Bits: k.Length})
 		}
 
@@ -168,11 +170,18 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 			if alias == "" {
 				return fmt.Errorf("alias is required in non-interactive mode")
 			}
-			kConfig, err := ValidateAndPrepareKey(alias, keyBytes, passphraseFlag)
+			keyID, _, exists := cfg.FindKeyByAlias(alias)
+			if !exists {
+				keyID, err = cfg.NewKeyID()
+				if err != nil {
+					return err
+				}
+			}
+			kConfig, err := ValidateAndPrepareKey(keyID, alias, keyBytes, passphraseFlag)
 			if err != nil {
 				return err
 			}
-			cfg.Keys[alias] = *kConfig
+			cfg.Keys[keyID] = *kConfig
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
@@ -201,10 +210,18 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 			}
 		}
 
-		if _, exists := cfg.Keys[alias]; exists {
+		keyID := ""
+		if existingID, _, exists := cfg.FindKeyByAlias(alias); exists {
 			resp, _ := readLineWithPrompt(line, fmt.Sprintf("Key alias '%s' already exists. Overwrite? (y/N): ", alias))
 			if strings.ToLower(resp) != "y" {
 				return nil
+			}
+			keyID = existingID
+		}
+		if keyID == "" {
+			keyID, err = cfg.NewKeyID()
+			if err != nil {
+				return err
 			}
 		}
 
@@ -213,12 +230,12 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 			return err
 		}
 
-		kConfig, err := ValidateAndPrepareKey(alias, kb, pass)
+		kConfig, err := ValidateAndPrepareKey(keyID, alias, kb, pass)
 		if err != nil {
 			return err
 		}
 
-		cfg.Keys[alias] = *kConfig
+		cfg.Keys[keyID] = *kConfig
 		if err := cfg.Save(provider); err != nil {
 			return err
 		}
@@ -246,14 +263,15 @@ var keyRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		if _, exists := cfg.Keys[alias]; !exists {
+		keyID, _, exists := cfg.FindKeyByAlias(alias)
+		if !exists {
 			return fmt.Errorf("key '%s' not found", alias)
 		}
 
 		var usedBy []string
-		for sAlias, srv := range cfg.Servers {
-			if srv.KeyAlias == alias {
-				usedBy = append(usedBy, sAlias)
+		for _, srv := range cfg.Servers {
+			if srv.KeyID == keyID {
+				usedBy = append(usedBy, srv.Alias)
 			}
 		}
 
@@ -272,14 +290,15 @@ var keyRemoveCmd = &cobra.Command{
 				return nil
 			}
 
-			for _, s := range usedBy {
-				srv := cfg.Servers[s]
-				srv.KeyAlias = ""
-				cfg.Servers[s] = srv
+			for id, srv := range cfg.Servers {
+				if srv.KeyID == keyID {
+					srv.KeyID = ""
+					cfg.Servers[id] = srv
+				}
 			}
 		}
 
-		delete(cfg.Keys, alias)
+		delete(cfg.Keys, keyID)
 		if err := cfg.Save(provider); err != nil {
 			return err
 		}
@@ -306,7 +325,8 @@ var keyEditCmd = &cobra.Command{
 			return err
 		}
 
-		if _, exists := cfg.Keys[alias]; !exists {
+		keyID, _, exists := cfg.FindKeyByAlias(alias)
+		if !exists {
 			return fmt.Errorf("key '%s' not found", alias)
 		}
 
@@ -322,12 +342,12 @@ var keyEditCmd = &cobra.Command{
 			return err
 		}
 
-		kConfig, err := ValidateAndPrepareKey(alias, kb, pass)
+		kConfig, err := ValidateAndPrepareKey(keyID, alias, kb, pass)
 		if err != nil {
 			return err
 		}
 
-		cfg.Keys[alias] = *kConfig
+		cfg.Keys[keyID] = *kConfig
 		if err := cfg.Save(provider); err != nil {
 			return err
 		}
@@ -336,7 +356,14 @@ var keyEditCmd = &cobra.Command{
 	},
 }
 
-func ValidateAndPrepareKey(alias string, keyBytes []byte, passphrase string) (*config.KeyConfig, error) {
+func ValidateAndPrepareKey(id string, alias string, keyBytes []byte, passphrase string) (*config.KeyConfig, error) {
+	if id == "" {
+		return nil, fmt.Errorf("key id cannot be empty")
+	}
+	if !config.IsValidAlias(alias) {
+		return nil, fmt.Errorf("invalid key alias format")
+	}
+
 	var rawKey interface{}
 	var err error
 
@@ -435,6 +462,7 @@ func ValidateAndPrepareKey(alias string, keyBytes []byte, passphrase string) (*c
 	decryptedPEM := pem.EncodeToMemory(pemBlock)
 
 	return &config.KeyConfig{
+		ID:         id,
 		Alias:      alias,
 		Type:       keyType,
 		Length:     bits,

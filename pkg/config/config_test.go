@@ -33,7 +33,8 @@ func TestConfigLoadSave(t *testing.T) {
 			ClearScreenOnConnect: func() *bool { v := false; return &v }(),
 		},
 		Servers: map[string]ServerConfig{
-			"test": {
+			"srv_test": {
+				ID:       "srv_test",
 				Alias:    "test",
 				Host:     "127.0.0.1",
 				Port:     22,
@@ -62,8 +63,8 @@ func TestConfigLoadSave(t *testing.T) {
 		t.Fatalf("failed to load config: %v", err)
 	}
 
-	if loadedCfg.Servers["test"].Password != "password123" {
-		t.Fatalf("expected password to be password123, got %s", loadedCfg.Servers["test"].Password)
+	if loadedCfg.Servers["srv_test"].Password != "password123" {
+		t.Fatalf("expected password to be password123, got %s", loadedCfg.Servers["srv_test"].Password)
 	}
 	if loadedCfg.Settings.GetClearScreenOnConnect() {
 		t.Fatal("expected clear_screen_on_connect to stay false after save/load")
@@ -73,10 +74,10 @@ func TestConfigLoadSave(t *testing.T) {
 func TestHasCycle(t *testing.T) {
 	cfg := &Config{
 		Servers: map[string]ServerConfig{
-			"A": {Alias: "A", JumpHost: []string{"B"}},
-			"B": {Alias: "B", JumpHost: []string{"C"}},
-			"C": {Alias: "C", JumpHost: []string{}},
-			"D": {Alias: "D", JumpHost: []string{"A"}},
+			"A": {ID: "A", Alias: "A", JumpHostIDs: []string{"B"}},
+			"B": {ID: "B", Alias: "B", JumpHostIDs: []string{"C"}},
+			"C": {ID: "C", Alias: "C", JumpHostIDs: []string{}},
+			"D": {ID: "D", Alias: "D", JumpHostIDs: []string{"A"}},
 		},
 	}
 

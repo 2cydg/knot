@@ -48,15 +48,15 @@ func buildAuthMethods(srv config.ServerConfig, cfg *config.Config, opts DialOpti
 		authMethods = append(authMethods, ssh.PublicKeys(signers...))
 
 	case config.AuthMethodKey:
-		if srv.KeyAlias != "" && cfg != nil {
-			keyCfg, ok := cfg.Keys[srv.KeyAlias]
+		if srv.KeyID != "" && cfg != nil {
+			keyCfg, ok := cfg.Keys[srv.KeyID]
 			if !ok {
-				return nil, nil, fmt.Errorf("key %s not found in config", srv.KeyAlias)
+				return nil, nil, fmt.Errorf("key %s not found in config", srv.KeyID)
 			}
 
 			signer, err := ssh.ParsePrivateKey([]byte(keyCfg.PrivateKey))
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to parse private key %s: %w", srv.KeyAlias, err)
+				return nil, nil, fmt.Errorf("failed to parse private key %s: %w", keyCfg.Alias, err)
 			}
 			authMethods = append(authMethods, ssh.PublicKeys(signer))
 		}

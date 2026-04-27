@@ -32,7 +32,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return
 	}
 
-	srv, ok := cfg.Servers[req.Alias]
+	serverID, srv, ok := cfg.FindServerByAlias(req.Alias)
 	if !ok {
 		sendError("server not found: " + req.Alias)
 		return
@@ -56,7 +56,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
 	}
 
-	client, poolKeys, isNew, err := d.dialWithRetry(conn, req.Alias, srv, cfg, req.IsInteractive, req.SSHAuthSock, req.HostKeyPolicy, confirmCallback)
+	client, poolKeys, isNew, err := d.dialWithRetry(conn, serverID, req.Alias, srv, cfg, req.IsInteractive, req.SSHAuthSock, req.HostKeyPolicy, confirmCallback)
 	if err != nil {
 		sendError("failed to connect to server: " + err.Error())
 		return
@@ -123,7 +123,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// Register session in SessionManager
-	s := d.sm.Add(req.Alias, conn, poolKeys)
+	s := d.sm.Add(serverID, req.Alias, conn, poolKeys)
 	for _, k := range poolKeys {
 		d.pool.IncRef(k)
 	}
@@ -142,7 +142,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	// 4.5 Send port forward notifications (only on new connection)
 	if isNew {
 		for _, rule := range d.fm.ListRules() {
-			if rule.Alias == req.Alias && rule.Enabled {
+			if rule.ServerID == serverID && rule.Enabled {
 				status, errStr, _ := rule.GetStatus()
 				var msgStr string
 				switch rule.Config.Type {

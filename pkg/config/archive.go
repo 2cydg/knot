@@ -188,29 +188,44 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 	// Merge imported
 	if mode == MergeModeLocalFirst {
 		for k, v := range imported.Servers {
-			if _, ok := result.Servers[k]; !ok {
+			if !result.ServerAliasExists(v.Alias, "") {
 				result.Servers[k] = v
 			}
 		}
 		for k, v := range imported.Proxies {
-			if _, ok := result.Proxies[k]; !ok {
+			if !result.ProxyAliasExists(v.Alias, "") {
 				result.Proxies[k] = v
 			}
 		}
 		for k, v := range imported.Keys {
-			if _, ok := result.Keys[k]; !ok {
+			if !result.KeyAliasExists(v.Alias, "") {
 				result.Keys[k] = v
 			}
 		}
 	} else if mode == MergeModeImportFirst {
 		result.Settings = imported.Settings // Use imported settings
 		for k, v := range imported.Servers {
+			for localID, local := range result.Servers {
+				if localID != k && local.Alias == v.Alias {
+					delete(result.Servers, localID)
+				}
+			}
 			result.Servers[k] = v
 		}
 		for k, v := range imported.Proxies {
+			for localID, local := range result.Proxies {
+				if localID != k && local.Alias == v.Alias {
+					delete(result.Proxies, localID)
+				}
+			}
 			result.Proxies[k] = v
 		}
 		for k, v := range imported.Keys {
+			for localID, local := range result.Keys {
+				if localID != k && local.Alias == v.Alias {
+					delete(result.Keys, localID)
+				}
+			}
 			result.Keys[k] = v
 		}
 	}

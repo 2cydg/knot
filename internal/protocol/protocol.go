@@ -72,7 +72,7 @@ type AuthChallengePayload struct {
 type AuthResponsePayload struct {
 	AuthMethod string `json:"auth_method"`
 	Password   string `json:"password,omitempty"`
-	KeyAlias   string `json:"key_alias,omitempty"`
+	KeyID      string `json:"key_id,omitempty"`
 }
 
 // SSHRequest defines the payload for an SSH session request.
@@ -139,7 +139,8 @@ type StatusResponse struct {
 
 // PoolEntryStat defines the statistics for a single SSH pool entry.
 type PoolEntryStat struct {
-	Key      string `json:"key"`
+	Key      string `json:"-"`
+	ServerID string `json:"-"`
 	Alias    string `json:"alias"`
 	Host     string `json:"host"`
 	IdleTime string `json:"idle_time"`

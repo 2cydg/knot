@@ -49,6 +49,7 @@ func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *confi
 			lastAccess: time.Now(),
 			refCount:   0,
 			remoteHost: srv.Host,
+			serverID:   srv.ID,
 			alias:      srv.Alias,
 			chainKeys:  cloneKeys(allKeys),
 		})

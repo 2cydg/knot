@@ -18,7 +18,7 @@ const (
 type ForwardRule struct {
 	mu       sync.RWMutex
 	Config   config.ForwardConfig
-	Alias    string
+	ServerID string
 	IsTemp   bool
 	Enabled  bool
 	Status   string

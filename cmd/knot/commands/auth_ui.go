@@ -48,7 +48,7 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 			return err
 		}
 		srv.Password = string(pass)
-		srv.KeyAlias = ""
+		srv.KeyID = ""
 	case "2":
 		fmt.Println()
 		srv.AuthMethod = config.AuthMethodKey
@@ -77,35 +77,41 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 				}
 			}
 
-			kConfig, err := ValidateAndPrepareKey(kAlias, kb, pass)
+			keyID, err := cfg.NewKeyID()
 			if err != nil {
 				return err
 			}
-			cfg.Keys[kAlias] = *kConfig
+			kConfig, err := ValidateAndPrepareKey(keyID, kAlias, kb, pass)
+			if err != nil {
+				return err
+			}
+			cfg.Keys[keyID] = *kConfig
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
-			srv.KeyAlias = kAlias
-			fmt.Printf("Key '%s' added and selected.\n", srv.KeyAlias)
+			srv.KeyID = keyID
+			fmt.Printf("Key '%s' added and selected.\n", kAlias)
 		} else {
 			fmt.Println("Available keys:")
-			var keyAliases []string
-			for k := range cfg.Keys {
-				keyAliases = append(keyAliases, k)
+			var keyIDs []string
+			for id := range cfg.Keys {
+				keyIDs = append(keyIDs, id)
 			}
-			sort.Strings(keyAliases)
-			for i, k := range keyAliases {
-				fmt.Printf("%d) %s\n", i+1, k)
+			sort.Slice(keyIDs, func(i, j int) bool {
+				return cfg.Keys[keyIDs[i]].Alias < cfg.Keys[keyIDs[j]].Alias
+			})
+			for i, id := range keyIDs {
+				fmt.Printf("%d) %s\n", i+1, cfg.Keys[id].Alias)
 			}
 			for {
 				prompt := "Select key"
-				if challenge != nil && srv.KeyAlias != "" {
-					prompt = fmt.Sprintf("Select key (current: %s)", srv.KeyAlias)
+				if challenge != nil && srv.KeyID != "" {
+					prompt = fmt.Sprintf("Select key (current: %s)", cfg.KeyAlias(srv.KeyID))
 				}
-				kChoice, _ := readLineWithPrompt(rl, fmt.Sprintf("%s (1-%d): ", prompt, len(keyAliases)))
+				kChoice, _ := readLineWithPrompt(rl, fmt.Sprintf("%s (1-%d): ", prompt, len(keyIDs)))
 				idx, err := strconv.Atoi(kChoice)
-				if err == nil && idx > 0 && idx <= len(keyAliases) {
-					srv.KeyAlias = keyAliases[idx-1]
+				if err == nil && idx > 0 && idx <= len(keyIDs) {
+					srv.KeyID = keyIDs[idx-1]
 					break
 				}
 				fmt.Println("Invalid selection.")
@@ -121,7 +127,7 @@ func PromptAuthUpdate(rl *readline.Instance, srv *config.ServerConfig, cfg *conf
 		}
 		srv.AuthMethod = config.AuthMethodAgent
 		srv.Password = ""
-		srv.KeyAlias = ""
+		srv.KeyID = ""
 	default:
 		return fmt.Errorf("invalid choice")
 	}

@@ -95,17 +95,19 @@ func TestSSHRequest(t *testing.T) {
 	// Prepare config
 	cfg := &config.Config{
 		Servers: map[string]config.ServerConfig{
-			"local": {
+			"srv_local": {
+				ID:         "srv_local",
 				Alias:      "local",
 				Host:       "127.0.0.1",
 				Port:       22,
 				User:       user,
 				AuthMethod: config.AuthMethodKey,
-				KeyAlias:   "test-key",
+				KeyID:      "key_test",
 			},
 		},
 		Keys: map[string]config.KeyConfig{
-			"test-key": {
+			"key_test": {
+				ID:         "key_test",
 				Alias:      "test-key",
 				PrivateKey: string(keyContent),
 			},

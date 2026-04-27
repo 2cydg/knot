@@ -9,6 +9,7 @@ import (
 // Session represents an active SSH session.
 type Session struct {
 	ID          string `json:"id"`
+	ServerID    string `json:"-"`
 	Alias       string `json:"alias"`
 	PoolKeys    []string
 	primaryConn net.Conn
@@ -29,13 +30,14 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
-func (sm *SessionManager) Add(alias string, conn net.Conn, poolKeys []string) *Session {
+func (sm *SessionManager) Add(serverID string, alias string, conn net.Conn, poolKeys []string) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	id := strconv.Itoa(sm.nextID)
 	sm.nextID++
 	s := &Session{
 		ID:          id,
+		ServerID:    serverID,
 		Alias:       alias,
 		PoolKeys:    cloneSessionPoolKeys(poolKeys),
 		primaryConn: conn,
@@ -57,12 +59,12 @@ func (sm *SessionManager) Remove(id string) {
 	delete(sm.sessions, id)
 }
 
-func (sm *SessionManager) ListByAlias(alias string) []*Session {
+func (sm *SessionManager) ListByServer(serverID string) []*Session {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	var res []*Session
 	for _, s := range sm.sessions {
-		if s.Alias == alias {
+		if s.ServerID == serverID {
 			res = append(res, s)
 		}
 	}

@@ -28,8 +28,8 @@ func serverAliasCompleter(cmd *cobra.Command, args []string, toComplete string) 
 	}
 
 	var aliases []string
-	for alias := range cfg.Servers {
-		aliases = append(aliases, alias)
+	for _, srv := range cfg.Servers {
+		aliases = append(aliases, srv.Alias)
 	}
 
 	return filterAndSortCompletions(aliases, toComplete), cobra.ShellCompDirectiveNoFileComp
@@ -47,8 +47,8 @@ func keyAliasCompleter(cmd *cobra.Command, args []string, toComplete string) ([]
 	}
 
 	var aliases []string
-	for alias := range cfg.Keys {
-		aliases = append(aliases, alias)
+	for _, key := range cfg.Keys {
+		aliases = append(aliases, key.Alias)
 	}
 
 	return filterAndSortCompletions(aliases, toComplete), cobra.ShellCompDirectiveNoFileComp
@@ -70,8 +70,8 @@ func proxyAliasCompleter(cmd *cobra.Command, args []string, toComplete string) (
 	}
 
 	var aliases []string
-	for alias := range cfg.Proxies {
-		aliases = append(aliases, alias)
+	for _, proxy := range cfg.Proxies {
+		aliases = append(aliases, proxy.Alias)
 	}
 
 	return filterAndSortCompletions(aliases, toComplete), cobra.ShellCompDirectiveNoFileComp

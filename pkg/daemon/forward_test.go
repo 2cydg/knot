@@ -136,6 +136,7 @@ func makeForwardPasswordServer(alias string, addr string, user string, password 
 		panic(err)
 	}
 	return config.ServerConfig{
+		ID:             alias,
 		Alias:          alias,
 		Host:           host,
 		Port:           port,
@@ -160,7 +161,7 @@ func newForwardTestClient(t *testing.T) (*sshpool.Pool, *ssh.Client, []string) {
 
 	srv := makeForwardPasswordServer("target", server.Addr(), user, password, knownHostsPath)
 	cfg := &config.Config{
-		Servers: map[string]config.ServerConfig{srv.Alias: srv},
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
 		Proxies: make(map[string]config.ProxyConfig),
 		Keys:    make(map[string]config.KeyConfig),
 	}
@@ -242,11 +243,11 @@ func TestStartRuleIncrementsRefsAndStopRuleReleasesRefs(t *testing.T) {
 
 	fm := NewForwardManager(pool)
 	rule := &ForwardRule{
-		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
-		Alias:   "target",
-		Status:  forwardStatusInactive,
-		pool:    pool,
-		Enabled: false,
+		Config:   config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
+		ServerID: "target",
+		Status:   forwardStatusInactive,
+		pool:     pool,
+		Enabled:  false,
 	}
 
 	if err := fm.StartRule(rule, client, keys); err != nil {
@@ -274,11 +275,11 @@ func TestLocalForwardProxiesTCPData(t *testing.T) {
 
 	fm := NewForwardManager(pool)
 	rule := &ForwardRule{
-		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
-		Alias:   "target",
-		Status:  forwardStatusInactive,
-		pool:    pool,
-		Enabled: false,
+		Config:   config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
+		ServerID: "target",
+		Status:   forwardStatusInactive,
+		pool:     pool,
+		Enabled:  false,
 	}
 
 	if err := fm.StartRule(rule, client, keys); err != nil {
@@ -311,10 +312,10 @@ func TestStartRuleFailureRollsBackRefs(t *testing.T) {
 
 	fm := NewForwardManager(pool)
 	rule := &ForwardRule{
-		Config: config.ForwardConfig{Type: "X", LocalPort: 0},
-		Alias:  "target",
-		Status: forwardStatusInactive,
-		pool:   pool,
+		Config:   config.ForwardConfig{Type: "X", LocalPort: 0},
+		ServerID: "target",
+		Status:   forwardStatusInactive,
+		pool:     pool,
 	}
 
 	err := fm.StartRule(rule, client, keys)
@@ -339,11 +340,11 @@ func TestSetEnabledFalseStopsRule(t *testing.T) {
 
 	fm := NewForwardManager(pool)
 	rule := &ForwardRule{
-		Config:  config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
-		Alias:   "target",
-		Status:  forwardStatusInactive,
-		pool:    pool,
-		Enabled: false,
+		Config:   config.ForwardConfig{Type: "L", LocalPort: 0, RemoteAddr: target.Addr().String()},
+		ServerID: "target",
+		Status:   forwardStatusInactive,
+		pool:     pool,
+		Enabled:  false,
 	}
 
 	if err := fm.StartRule(rule, client, keys); err != nil {

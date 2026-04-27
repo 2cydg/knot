@@ -30,11 +30,12 @@ var editCmd = &cobra.Command{
 			return err
 		}
 
-		srv, ok := cfg.Servers[alias]
-		if !ok {
-			return fmt.Errorf("server alias '%s' not found", alias)
+		serverID, srv, err := resolveServerAlias(cfg, alias)
+		if err != nil {
+			return err
 		}
 
+		aliasFlag, _ := cmd.Flags().GetString("alias")
 		hostFlag, _ := cmd.Flags().GetString("host")
 		portFlag, _ := cmd.Flags().GetInt("port")
 		userFlag, _ := cmd.Flags().GetString("user")
@@ -46,13 +47,17 @@ var editCmd = &cobra.Command{
 		proxyFlag, _ := cmd.Flags().GetString("proxy")
 		tagsFlag, _ := cmd.Flags().GetString("tags")
 
-		nonInteractive := cmd.Flags().Changed("host") || cmd.Flags().Changed("port") ||
+		nonInteractive := cmd.Flags().Changed("alias") ||
+			cmd.Flags().Changed("host") || cmd.Flags().Changed("port") ||
 			cmd.Flags().Changed("user") || cmd.Flags().Changed("password") ||
 			cmd.Flags().Changed("key") || cmd.Flags().Changed("auth-method") ||
 			cmd.Flags().Changed("known-hosts") || cmd.Flags().Changed("jump-host") ||
 			cmd.Flags().Changed("proxy") || cmd.Flags().Changed("tags")
 
 		if nonInteractive {
+			if cmd.Flags().Changed("alias") {
+				srv.Alias = strings.TrimSpace(aliasFlag)
+			}
 			if hostFlag != "" {
 				srv.Host = hostFlag
 			}
@@ -66,26 +71,35 @@ var editCmd = &cobra.Command{
 				srv.Password = passFlag
 			}
 			if keyFlag != "" {
-				srv.KeyAlias = keyFlag
+				keyID, err := resolveKeyAlias(cfg, keyFlag)
+				if err != nil {
+					return err
+				}
+				srv.KeyID = keyID
 			}
 			if khFlag != "" {
 				srv.KnownHostsPath = khFlag
 			}
 			if proxyFlag != "" {
-				srv.ProxyAlias = proxyFlag
+				proxyID, err := resolveProxyAlias(cfg, proxyFlag)
+				if err != nil {
+					return err
+				}
+				srv.ProxyID = proxyID
 			} else if cmd.Flags().Changed("proxy") {
-				srv.ProxyAlias = ""
+				srv.ProxyID = ""
 			}
 			if jhFlag != "" {
-				srv.JumpHost = strings.Split(jhFlag, ",")
-				for i, jh := range srv.JumpHost {
-					srv.JumpHost[i] = strings.TrimSpace(jh)
+				jumpHostIDs, err := resolveJumpHostAliases(cfg, jhFlag)
+				if err != nil {
+					return err
 				}
-				if err := cfg.HasCycle(alias, srv.JumpHost); err != nil {
+				srv.JumpHostIDs = jumpHostIDs
+				if err := cfg.HasCycle(serverID, srv.JumpHostIDs); err != nil {
 					return err
 				}
 			} else if cmd.Flags().Changed("jump-host") {
-				srv.JumpHost = nil
+				srv.JumpHostIDs = nil
 			}
 			if tagsFlag != "" {
 				rawTags := strings.Split(tagsFlag, ",")
@@ -104,11 +118,12 @@ var editCmd = &cobra.Command{
 			}
 			if authFlag != "" {
 				srv.AuthMethod = authFlag
-				if authFlag == config.AuthMethodKey {
+				switch authFlag {
+				case config.AuthMethodKey:
 					srv.Password = ""
-				} else if authFlag == config.AuthMethodAgent {
+				case config.AuthMethodAgent:
 					srv.Password = ""
-					srv.KeyAlias = ""
+					srv.KeyID = ""
 				}
 			} else if keyFlag != "" && authFlag == "" {
 				srv.AuthMethod = config.AuthMethodKey
@@ -119,11 +134,15 @@ var editCmd = &cobra.Command{
 				return err
 			}
 
-			cfg.Servers[alias] = srv
+			cfg.Servers[serverID] = srv
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
-			fmt.Printf("Server '%s' updated successfully.\n", alias)
+			if srv.Alias != alias {
+				fmt.Printf("Server '%s' updated successfully as '%s'.\n", alias, srv.Alias)
+			} else {
+				fmt.Printf("Server '%s' updated successfully.\n", alias)
+			}
 			return nil
 		} else {
 			// Interactive mode
@@ -141,6 +160,12 @@ var editCmd = &cobra.Command{
 			fmt.Printf("Editing server: %s\n", alias)
 
 			// Basic fields
+			line.SetPrompt(fmt.Sprintf("Alias [%s]: ", srv.Alias))
+			newAlias, _ := line.Readline()
+			if strings.TrimSpace(newAlias) != "" {
+				srv.Alias = strings.TrimSpace(newAlias)
+			}
+
 			line.SetPrompt(fmt.Sprintf("Host [%s]: ", srv.Host))
 			newHost, _ := line.Readline()
 			if newHost != "" {
@@ -215,7 +240,7 @@ var editCmd = &cobra.Command{
 				}
 
 				if choice == "1" {
-					if len(srv.JumpHost) > 0 {
+					if len(srv.JumpHostIDs) > 0 {
 						resp, err := readLineWithPrompt(line, "Configuring Proxy will clear existing Jump Host(s). Continue? (y/N): ")
 						if err != nil {
 							return err
@@ -223,7 +248,7 @@ var editCmd = &cobra.Command{
 						if strings.ToLower(resp) != "y" {
 							continue
 						}
-						srv.JumpHost = nil
+						srv.JumpHostIDs = nil
 					}
 
 					if len(cfg.Proxies) == 0 {
@@ -234,44 +259,46 @@ var editCmd = &cobra.Command{
 								return err
 							}
 							if p != nil {
-								cfg.Proxies[p.Alias] = *p
+								cfg.Proxies[p.ID] = *p
 								if err := cfg.Save(provider); err != nil {
 									return err
 								}
-								srv.ProxyAlias = p.Alias
-								fmt.Printf("Proxy '%s' added and selected.\n", srv.ProxyAlias)
+								srv.ProxyID = p.ID
+								fmt.Printf("Proxy '%s' added and selected.\n", p.Alias)
 							}
 						}
 					} else {
 						fmt.Println("Available proxies:")
-						var pAliases []string
-						for p := range cfg.Proxies {
-							pAliases = append(pAliases, p)
+						var proxyIDs []string
+						for id := range cfg.Proxies {
+							proxyIDs = append(proxyIDs, id)
 						}
-						sort.Strings(pAliases)
-						fmt.Printf("0) Clear Proxy (current: [%s])\n", srv.ProxyAlias)
-						for i, p := range pAliases {
-							fmt.Printf("%d) %s\n", i+1, p)
+						sort.Slice(proxyIDs, func(i, j int) bool {
+							return cfg.Proxies[proxyIDs[i]].Alias < cfg.Proxies[proxyIDs[j]].Alias
+						})
+						fmt.Printf("0) Clear Proxy (current: [%s])\n", cfg.ProxyAlias(srv.ProxyID))
+						for i, id := range proxyIDs {
+							fmt.Printf("%d) %s\n", i+1, cfg.Proxies[id].Alias)
 						}
 						for {
-							pChoice, _ := readLineWithPrompt(line, fmt.Sprintf("Select proxy (0-%d): ", len(pAliases)))
+							pChoice, _ := readLineWithPrompt(line, fmt.Sprintf("Select proxy (0-%d): ", len(proxyIDs)))
 							if pChoice == "" {
 								break // keep current
 							}
 							if pChoice == "0" {
-								srv.ProxyAlias = ""
+								srv.ProxyID = ""
 								break
 							}
 							idx, err := strconv.Atoi(pChoice)
-							if err == nil && idx > 0 && idx <= len(pAliases) {
-								srv.ProxyAlias = pAliases[idx-1]
+							if err == nil && idx > 0 && idx <= len(proxyIDs) {
+								srv.ProxyID = proxyIDs[idx-1]
 								break
 							}
 							fmt.Println("Invalid selection.")
 						}
 					}
 				} else if choice == "2" {
-					if srv.ProxyAlias != "" {
+					if srv.ProxyID != "" {
 						resp, err := readLineWithPrompt(line, "Configuring Jump Host(s) will clear existing Proxy settings. Continue? (y/N): ")
 						if err != nil {
 							return err
@@ -279,11 +306,11 @@ var editCmd = &cobra.Command{
 						if strings.ToLower(resp) != "y" {
 							continue
 						}
-						srv.ProxyAlias = ""
+						srv.ProxyID = ""
 					}
 
 					// Iterative Jump Host selection
-					fmt.Printf("\nCurrent Jump Host chain: %s\n", strings.Join(srv.JumpHost, " -> "))
+					fmt.Printf("\nCurrent Jump Host chain: %s\n", strings.Join(cfg.ServerAliases(srv.JumpHostIDs), " -> "))
 					fmt.Println("1) Modify chain")
 					fmt.Println("0) Back")
 					jhEditChoice, err := readLineWithPrompt(line, "Selection (0-1): ")
@@ -293,34 +320,36 @@ var editCmd = &cobra.Command{
 					if jhEditChoice == "1" {
 						var newChain []string
 						for {
-							var available []string
-							for a := range cfg.Servers {
+							var availableIDs []string
+							for id := range cfg.Servers {
 								// Exclude already selected jump hosts and the current alias
 								isSelected := false
 								for _, selected := range newChain {
-									if a == selected {
+									if id == selected {
 										isSelected = true
 										break
 									}
 								}
-								if !isSelected && a != alias {
-									available = append(available, a)
+								if !isSelected && id != serverID {
+									availableIDs = append(availableIDs, id)
 								}
 							}
-							sort.Strings(available)
+							sort.Slice(availableIDs, func(i, j int) bool {
+								return cfg.Servers[availableIDs[i]].Alias < cfg.Servers[availableIDs[j]].Alias
+							})
 
-							if len(available) == 0 {
+							if len(availableIDs) == 0 {
 								fmt.Println("No more servers available to select.")
 								break
 							}
 
-							fmt.Println("\nBuild Jump Host chain (current: " + strings.Join(newChain, " -> ") + "):")
+							fmt.Println("\nBuild Jump Host chain (current: " + strings.Join(cfg.ServerAliases(newChain), " -> ") + "):")
 							fmt.Println("0) Done/Finish Selection")
-							for i, a := range available {
-								fmt.Printf("%d) %s\n", i+1, a)
+							for i, id := range availableIDs {
+								fmt.Printf("%d) %s\n", i+1, cfg.Servers[id].Alias)
 							}
 
-							jhChoice, err := readLineWithPrompt(line, fmt.Sprintf("Selection (0-%d): ", len(available)))
+							jhChoice, err := readLineWithPrompt(line, fmt.Sprintf("Selection (0-%d): ", len(availableIDs)))
 							if err != nil {
 								return err
 							}
@@ -329,10 +358,10 @@ var editCmd = &cobra.Command{
 							}
 
 							idx, err := strconv.Atoi(jhChoice)
-							if err == nil && idx > 0 && idx <= len(available) {
-								selected := available[idx-1]
+							if err == nil && idx > 0 && idx <= len(availableIDs) {
+								selected := availableIDs[idx-1]
 								tempChain := append(newChain, selected)
-								if err := cfg.HasCycle(alias, tempChain); err != nil {
+								if err := cfg.HasCycle(serverID, tempChain); err != nil {
 									fmt.Printf("Invalid selection: %v\n", err)
 									continue
 								}
@@ -341,24 +370,29 @@ var editCmd = &cobra.Command{
 								fmt.Println("Invalid selection.")
 							}
 						}
-						srv.JumpHost = newChain
+						srv.JumpHostIDs = newChain
 					}
 				}
 			}
 
-			cfg.Servers[alias] = srv
+			cfg.Servers[serverID] = srv
 
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
 
-			fmt.Printf("Server '%s' updated successfully.\n", alias)
+			if srv.Alias != alias {
+				fmt.Printf("Server '%s' updated successfully as '%s'.\n", alias, srv.Alias)
+			} else {
+				fmt.Printf("Server '%s' updated successfully.\n", alias)
+			}
 			return nil
 		}
 	},
 }
 
 func init() {
+	editCmd.Flags().String("alias", "", "Server alias")
 	editCmd.Flags().StringP("host", "H", "", "Server host")
 	editCmd.Flags().IntP("port", "P", 0, "Server port")
 	editCmd.Flags().StringP("user", "u", "", "Server user")

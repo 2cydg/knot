@@ -41,6 +41,10 @@ var sshCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		serverID, _, err := resolveServerAlias(cfg, alias)
+		if err != nil {
+			return err
+		}
 
 		client, err := daemon.NewClient()
 		if err != nil {
@@ -161,7 +165,7 @@ var sshCmd = &cobra.Command{
 					}
 				}
 
-				srv := cfg.Servers[alias]
+				srv := cfg.Servers[serverID]
 				if err := PromptAuthUpdate(rl, &srv, cfg, provider, &challenge); err != nil {
 					protocol.WriteMessage(conn, protocol.TypeAuthRetryAbort, 0, nil)
 					return err
@@ -170,9 +174,9 @@ var sshCmd = &cobra.Command{
 				resp := protocol.AuthResponsePayload{
 					AuthMethod: srv.AuthMethod,
 					Password:   srv.Password,
-					KeyAlias:   srv.KeyAlias,
+					KeyID:      srv.KeyID,
 				}
-				cfg.Servers[alias] = srv // Update in-memory config
+				cfg.Servers[serverID] = srv // Update in-memory config
 				authUpdated = true
 
 				respPayload, _ := json.Marshal(resp)
@@ -188,7 +192,7 @@ var sshCmd = &cobra.Command{
 				// Update recent history
 				state, err := config.LoadState()
 				if err == nil {
-					state.UpdateRecent(alias, cfg.Settings.RecentLimit)
+					state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
 					state.Save()
 				}
 				// Save config if it was updated during auth retry

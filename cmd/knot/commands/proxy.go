@@ -31,11 +31,13 @@ var proxyListCmd = &cobra.Command{
 			return err
 		}
 
-		var aliases []string
-		for alias := range cfg.Proxies {
-			aliases = append(aliases, alias)
+		var proxyIDs []string
+		for id := range cfg.Proxies {
+			proxyIDs = append(proxyIDs, id)
 		}
-		sort.Strings(aliases)
+		sort.Slice(proxyIDs, func(i, j int) bool {
+			return cfg.Proxies[proxyIDs[i]].Alias < cfg.Proxies[proxyIDs[j]].Alias
+		})
 
 		type proxyInfo struct {
 			Alias string `json:"alias"`
@@ -43,9 +45,9 @@ var proxyListCmd = &cobra.Command{
 			Host  string `json:"host"`
 			Port  int    `json:"port"`
 		}
-		proxies := make([]proxyInfo, 0, len(aliases))
-		for _, alias := range aliases {
-			p := cfg.Proxies[alias]
+		proxies := make([]proxyInfo, 0, len(proxyIDs))
+		for _, id := range proxyIDs {
+			p := cfg.Proxies[id]
 			proxies = append(proxies, proxyInfo{Alias: p.Alias, Type: p.Type, Host: p.Host, Port: p.Port})
 		}
 
@@ -81,10 +83,19 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 		}
 	}
 
-	if _, exists := cfg.Proxies[alias]; exists {
+	proxyID := ""
+	if existingID, _, exists := cfg.FindProxyByAlias(alias); exists {
 		resp, _ := readLineWithPrompt(line, fmt.Sprintf("Proxy alias '%s' already exists. Overwrite? (y/N): ", alias))
 		if strings.ToLower(resp) != "y" {
 			return nil, nil
+		}
+		proxyID = existingID
+	}
+	if proxyID == "" {
+		var err error
+		proxyID, err = cfg.NewProxyID()
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -134,6 +145,7 @@ func PromptForProxy(line *readline.Instance, cfg *config.Config, alias string) (
 	}
 
 	p := &config.ProxyConfig{
+		ID:       proxyID,
 		Alias:    alias,
 		Type:     pType,
 		Host:     host,
@@ -175,7 +187,15 @@ var proxyAddCmd = &cobra.Command{
 			if alias == "" {
 				return fmt.Errorf("alias is required in non-interactive mode")
 			}
+			proxyID, _, exists := cfg.FindProxyByAlias(alias)
+			if !exists {
+				proxyID, err = cfg.NewProxyID()
+				if err != nil {
+					return err
+				}
+			}
 			p := config.ProxyConfig{
+				ID:       proxyID,
 				Alias:    alias,
 				Type:     typeFlag,
 				Host:     hostFlag,
@@ -186,7 +206,7 @@ var proxyAddCmd = &cobra.Command{
 			if err := p.Validate(); err != nil {
 				return err
 			}
-			cfg.Proxies[alias] = p
+			cfg.Proxies[proxyID] = p
 			if err := cfg.Save(provider); err != nil {
 				return err
 			}
@@ -209,7 +229,7 @@ var proxyAddCmd = &cobra.Command{
 			return nil
 		}
 
-		cfg.Proxies[p.Alias] = *p
+		cfg.Proxies[p.ID] = *p
 
 		if err := cfg.Save(provider); err != nil {
 			return err
@@ -239,15 +259,16 @@ var proxyRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		if _, exists := cfg.Proxies[alias]; !exists {
+		proxyID, _, exists := cfg.FindProxyByAlias(alias)
+		if !exists {
 			return fmt.Errorf("proxy '%s' not found", alias)
 		}
 
 		// Check for usage in servers
 		var usedBy []string
-		for sAlias, srv := range cfg.Servers {
-			if srv.ProxyAlias == alias {
-				usedBy = append(usedBy, sAlias)
+		for _, srv := range cfg.Servers {
+			if srv.ProxyID == proxyID {
+				usedBy = append(usedBy, srv.Alias)
 			}
 		}
 
@@ -267,14 +288,15 @@ var proxyRemoveCmd = &cobra.Command{
 			}
 
 			// Clear references
-			for _, s := range usedBy {
-				srv := cfg.Servers[s]
-				srv.ProxyAlias = ""
-				cfg.Servers[s] = srv
+			for id, srv := range cfg.Servers {
+				if srv.ProxyID == proxyID {
+					srv.ProxyID = ""
+					cfg.Servers[id] = srv
+				}
 			}
 		}
 
-		delete(cfg.Proxies, alias)
+		delete(cfg.Proxies, proxyID)
 		if err := cfg.Save(provider); err != nil {
 			return err
 		}
@@ -302,7 +324,7 @@ var proxyEditCmd = &cobra.Command{
 			return err
 		}
 
-		p, exists := cfg.Proxies[alias]
+		proxyID, p, exists := cfg.FindProxyByAlias(alias)
 		if !exists {
 			return fmt.Errorf("proxy '%s' not found", alias)
 		}
@@ -348,7 +370,7 @@ var proxyEditCmd = &cobra.Command{
 			return err
 		}
 
-		cfg.Proxies[alias] = p
+		cfg.Proxies[proxyID] = p
 		if err := cfg.Save(provider); err != nil {
 			return err
 		}

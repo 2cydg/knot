@@ -76,27 +76,28 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 
 	// Load permanent rules from config at startup
 	if cfg, err := config.Load(d.crypto); err == nil {
-		for alias, srv := range cfg.Servers {
+		for serverID, srv := range cfg.Servers {
 			for _, f := range srv.Forwards {
 				// All permanent rules are enabled by default on start
 				// We don't have a client yet, so nil
-				d.fm.AddRule(alias, f, true, false, nil, nil)
+				d.fm.AddRule(serverID, f, true, false, nil, nil)
 			}
 		}
 	}
 
 	d.pool.ConnectCallback = func(poolKey string, client *ssh.Client) {
-		alias := strings.SplitN(poolKey, ":", 2)[0]
-		logger.Info("SSH client connected. Starting forwarding rules.", "alias", alias, "pool_key", poolKey)
+		serverID := strings.SplitN(poolKey, ":", 2)[0]
 
 		cfg, err := config.Load(d.crypto)
 		if err != nil {
 			return
 		}
-		srv, ok := cfg.Servers[alias]
+		srv, ok := cfg.Servers[serverID]
 		if !ok {
 			return
 		}
+		alias := srv.Alias
+		logger.Info("SSH client connected. Starting forwarding rules.", "alias", alias, "pool_key", poolKey)
 
 		// Re-get client via pool to get ALL keys in the chain
 		_, poolKeys, _, err := d.pool.GetClient(srv, cfg, func(string) bool { return false })
@@ -107,7 +108,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		// Start any existing rules that are enabled for this alias
 		for _, rule := range d.fm.ListRules() {
 			rule.mu.RLock()
-			shouldStart := rule.Alias == alias && rule.Status != "Active" && rule.Enabled
+			shouldStart := rule.ServerID == serverID && rule.Status != "Active" && rule.Enabled
 			rule.mu.RUnlock()
 			if shouldStart {
 				d.fm.StartRule(rule, client, poolKeys)
@@ -116,10 +117,16 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 	}
 
 	d.pool.DisconnectCallback = func(poolKey string) {
-		alias := strings.SplitN(poolKey, ":", 2)[0]
+		serverID := strings.SplitN(poolKey, ":", 2)[0]
+		alias := serverID
+		if cfg, err := config.Load(d.crypto); err == nil {
+			if srv, ok := cfg.Servers[serverID]; ok {
+				alias = srv.Alias
+			}
+		}
 		logger.Info("SSH client disconnected. Notifying sessions.", "alias", alias, "pool_key", poolKey)
-		d.fm.StopAllForAlias(alias)
-		sessions := d.sm.ListByAlias(alias)
+		d.fm.StopAllForServer(serverID)
+		sessions := d.sm.ListByServer(serverID)
 		for _, s := range sessions {
 			s.mu.Lock()
 			conn := s.primaryConn
@@ -243,15 +250,15 @@ func (d *Daemon) Stop() error {
 	return err
 }
 
-func (d *Daemon) syncConfig(targetAlias string) error {
+func (d *Daemon) syncConfig(targetServerID string) error {
 	cfg, err := config.Load(d.crypto)
 	if err != nil {
 		return err
 	}
 
 	// For each server, update its Forwards list from our ForwardManager
-	for alias, srv := range cfg.Servers {
-		if targetAlias != "" && alias != targetAlias {
+	for serverID, srv := range cfg.Servers {
+		if targetServerID != "" && serverID != targetServerID {
 			continue
 		}
 
@@ -260,7 +267,7 @@ func (d *Daemon) syncConfig(targetAlias string) error {
 		// Get all rules for this alias from ForwardManager
 		allRules := d.fm.ListRules()
 		for _, r := range allRules {
-			if r.Alias == alias && !r.IsTemp {
+			if r.ServerID == serverID && !r.IsTemp {
 				r.mu.RLock()
 				newForwards = append(newForwards, r.Config)
 				r.mu.RUnlock()
@@ -268,7 +275,7 @@ func (d *Daemon) syncConfig(targetAlias string) error {
 		}
 
 		srv.Forwards = newForwards
-		cfg.Servers[alias] = srv
+		cfg.Servers[serverID] = srv
 	}
 
 	return cfg.Save(d.crypto)
@@ -341,7 +348,7 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 }
 
 // dialWithRetry handles the authentication retry loop for SSH/SFTP connections.
-func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerConfig, cfg *config.Config,
+func (d *Daemon) dialWithRetry(conn net.Conn, serverID string, alias string, srv config.ServerConfig, cfg *config.Config,
 	isInteractive bool, agentSocket string, hostKeyPolicy string, confirmCallback func(string) bool) (*ssh.Client, []string, bool, error) {
 
 	var authRetries int
@@ -388,8 +395,8 @@ func (d *Daemon) dialWithRetry(conn net.Conn, alias string, srv config.ServerCon
 				// Update server config in memory for retry
 				srv.AuthMethod = resp.AuthMethod
 				srv.Password = resp.Password
-				srv.KeyAlias = resp.KeyAlias
-				cfg.Servers[alias] = srv // Sync back to memory
+				srv.KeyID = resp.KeyID
+				cfg.Servers[serverID] = srv // Sync back to memory
 				continue
 			}
 

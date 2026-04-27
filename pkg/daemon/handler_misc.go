@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
+	"knot/pkg/config"
 	"net"
 	"os"
 	"runtime"
@@ -25,7 +26,13 @@ func (d *Daemon) handleStatusRequest(conn net.Conn) {
 		poolStats[i].Sessions = sessionsByPoolKey[poolStats[i].Key]
 	}
 
-	forwardRules := forwardStatusesForAlias(d.fm.ListRules(), "")
+	cfg, err := config.Load(d.crypto)
+	if err != nil {
+		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: load config failed"))
+		return
+	}
+
+	forwardRules := forwardStatusesForServer(d.fm.ListRules(), cfg, "")
 	activeForwardRules := 0
 	for _, rule := range forwardRules {
 		if rule.Status == "Active" {
