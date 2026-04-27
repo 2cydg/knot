@@ -24,6 +24,34 @@ fail() {
   exit 1
 }
 
+use_color() {
+  [ -t 1 ] && [ -z "${NO_COLOR:-}" ]
+}
+
+green_start() {
+  if use_color; then
+    printf '\033[32m'
+  fi
+}
+
+color_reset() {
+  if use_color; then
+    printf '\033[0m'
+  fi
+}
+
+print_green() {
+  green_start
+  printf '%s\n' "$*"
+  color_reset
+}
+
+print_green_block() {
+  green_start
+  cat
+  color_reset
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version)
@@ -113,6 +141,86 @@ json_asset_field() {
     head -n 1
 }
 
+stop_running_knot() {
+  knot_cmd=$(command -v knot 2>/dev/null || true)
+  if [ -z "$knot_cmd" ] && [ -x "$INSTALL_DIR/knot" ]; then
+    knot_cmd="$INSTALL_DIR/knot"
+  fi
+
+  if [ -z "$knot_cmd" ]; then
+    return
+  fi
+
+  if "$knot_cmd" status >/dev/null 2>&1; then
+    echo "Stopping running knot daemon"
+    "$knot_cmd" stop >/dev/null 2>&1 || fail "failed to stop running knot daemon"
+  fi
+}
+
+detect_shell_name() {
+  current_shell=""
+  if command -v ps >/dev/null 2>&1; then
+    current_shell=$(ps -p $$ -o comm= 2>/dev/null || true)
+    current_shell=${current_shell##*/}
+  fi
+
+  case "$current_shell" in
+    bash | zsh | fish) printf '%s\n' "$current_shell"; return ;;
+  esac
+
+  login_shell=${SHELL:-}
+  login_shell=${login_shell##*/}
+  case "$login_shell" in
+    bash | zsh | fish) printf '%s\n' "$login_shell"; return ;;
+  esac
+}
+
+print_completion_hint() {
+  shell_name=$(detect_shell_name)
+
+  case "$shell_name" in
+    bash)
+      cat <<'EOF' | print_green_block
+
+Shell completion:
+  source <(knot completion bash)
+EOF
+      ;;
+    zsh)
+      cat <<'EOF' | print_green_block
+
+Shell completion:
+  autoload -U compinit && compinit && source <(knot completion zsh)
+EOF
+      ;;
+    fish)
+      cat <<'EOF' | print_green_block
+
+Shell completion:
+  knot completion fish | source
+EOF
+      ;;
+  esac
+}
+
+print_next_steps() {
+  cat <<'EOF' | print_green_block
+
+Common commands:
+  knot add      Add a server configuration
+  knot ls       List saved servers
+  knot [alias]  Connect to a saved server
+EOF
+
+  print_completion_hint
+
+  cat <<'EOF'
+
+Run "knot --help" for the full command reference.
+Enjoy.
+EOF
+}
+
 BASE_URL=${BASE_URL%/}
 if [ -z "$MANIFEST_URL" ]; then
   if [ -n "$VERSION" ]; then
@@ -156,6 +264,8 @@ tar -xzf "$ARCHIVE_FILE" -C "$EXTRACT_DIR" || fail "failed to extract package"
 mkdir -p "$INSTALL_DIR" || fail "failed to create install directory: $INSTALL_DIR"
 [ -w "$INSTALL_DIR" ] || fail "install directory is not writable: $INSTALL_DIR"
 
+stop_running_knot
+
 TMP_BIN="$INSTALL_DIR/.knot.tmp.$$"
 cp "$EXTRACT_DIR/knot" "$TMP_BIN" || fail "failed to copy knot binary"
 chmod +x "$TMP_BIN" || fail "failed to mark knot executable"
@@ -166,6 +276,8 @@ echo "knot installed to $INSTALL_DIR/knot"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
-    echo "Add $INSTALL_DIR to PATH if knot is not found by your shell."
+    print_green "Add $INSTALL_DIR to PATH if knot is not found by your shell."
     ;;
 esac
+
+print_next_steps
