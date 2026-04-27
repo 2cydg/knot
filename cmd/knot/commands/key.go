@@ -26,8 +26,9 @@ var keyCmd = &cobra.Command{
 }
 
 var keyListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all keys",
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List all keys",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider, err := crypto.NewProvider()
 		if err != nil {
@@ -227,8 +228,9 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 }
 
 var keyRemoveCmd = &cobra.Command{
-	Use:   "remove [alias]",
-	Short: "Remove a key",
+	Use:     "remove [alias]",
+	Aliases: []string{"rm"},
+	Short:   "Remove a key",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("alias is required")

@@ -19,14 +19,30 @@ func (d *Daemon) handleStatusRequest(conn net.Conn) {
 		memUsage = m.Sys
 	}
 
+	poolStats := d.pool.GetStats()
+	sessionsByPoolKey := d.sm.CountByPoolKey()
+	for i := range poolStats {
+		poolStats[i].Sessions = sessionsByPoolKey[poolStats[i].Key]
+	}
+
+	forwardRules := forwardStatusesForAlias(d.fm.ListRules(), "")
+	activeForwardRules := 0
+	for _, rule := range forwardRules {
+		if rule.Status == "Active" {
+			activeForwardRules++
+		}
+	}
+
 	stats := protocol.StatusResponse{
-		DaemonPID:      os.Getpid(),
-		Uptime:         time.Since(d.startTime).Round(time.Second).String(),
-		UDSPath:        d.socketPath,
-		MemoryUsage:    memUsage,
-		PoolStats:      d.pool.GetStats(),
-		ActiveSessions: d.sm.Count(),
-		CryptoProvider: d.crypto.Name(),
+		DaemonPID:          os.Getpid(),
+		Uptime:             time.Since(d.startTime).Round(time.Second).String(),
+		UDSPath:            d.socketPath,
+		MemoryUsage:        memUsage,
+		PoolStats:          poolStats,
+		ActiveSessions:     d.sm.Count(),
+		ActiveForwardRules: activeForwardRules,
+		ForwardRules:       forwardRules,
+		CryptoProvider:     d.crypto.Name(),
 	}
 
 	data, err := json.Marshal(stats)

@@ -8,6 +8,7 @@ import (
 	"knot/pkg/config"
 	"knot/pkg/sshpool"
 	"net"
+	"sort"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -129,26 +130,44 @@ func (d *Daemon) handleForwardListRequest(conn net.Conn, alias string) {
 
 	rules := d.fm.ListRules()
 	resp := protocol.ForwardListResponse{
-		Alias:    alias,
-		Forwards: []protocol.ForwardStatus{},
+		Alias: alias,
 	}
-	for _, r := range rules {
-		if alias == "" || r.Alias == alias {
-			r.mu.RLock()
-			resp.Forwards = append(resp.Forwards, protocol.ForwardStatus{
-				Alias:      r.Alias,
-				Type:       r.Config.Type,
-				LocalPort:  r.Config.LocalPort,
-				RemoteAddr: r.Config.RemoteAddr,
-				Enabled:    r.Enabled,
-				IsTemp:     r.IsTemp,
-				Status:     r.Status,
-				Error:      r.Error,
-			})
-			r.mu.RUnlock()
-		}
-	}
+	resp.Forwards = forwardStatusesForAlias(rules, alias)
 
 	data, _ := json.Marshal(resp)
 	protocol.WriteMessage(conn, protocol.TypeForwardListResp, 0, data)
+}
+
+func forwardStatusesForAlias(rules []*ForwardRule, alias string) []protocol.ForwardStatus {
+	statuses := make([]protocol.ForwardStatus, 0, len(rules))
+	for _, r := range rules {
+		if alias != "" && r.Alias != alias {
+			continue
+		}
+		r.mu.RLock()
+		statuses = append(statuses, protocol.ForwardStatus{
+			Alias:      r.Alias,
+			Type:       r.Config.Type,
+			LocalPort:  r.Config.LocalPort,
+			RemoteAddr: r.Config.RemoteAddr,
+			Enabled:    r.Enabled,
+			IsTemp:     r.IsTemp,
+			Status:     r.Status,
+			Error:      r.Error,
+		})
+		r.mu.RUnlock()
+	}
+	sort.Slice(statuses, func(i, j int) bool {
+		if statuses[i].Alias != statuses[j].Alias {
+			return statuses[i].Alias < statuses[j].Alias
+		}
+		if statuses[i].Type != statuses[j].Type {
+			return statuses[i].Type < statuses[j].Type
+		}
+		if statuses[i].LocalPort != statuses[j].LocalPort {
+			return statuses[i].LocalPort < statuses[j].LocalPort
+		}
+		return statuses[i].RemoteAddr < statuses[j].RemoteAddr
+	})
+	return statuses
 }

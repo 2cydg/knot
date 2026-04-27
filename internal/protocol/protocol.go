@@ -126,13 +126,15 @@ type ResizePayload struct {
 
 // StatusResponse defines the payload for a status response message.
 type StatusResponse struct {
-	DaemonPID      int             `json:"daemon_pid"`
-	Uptime         string          `json:"uptime"`
-	UDSPath        string          `json:"uds_path"`
-	MemoryUsage    uint64          `json:"memory_usage_bytes"`
-	PoolStats      []PoolEntryStat `json:"pool_stats"`
-	ActiveSessions int             `json:"active_sessions"`
-	CryptoProvider string          `json:"crypto_provider"`
+	DaemonPID          int             `json:"daemon_pid"`
+	Uptime             string          `json:"uptime"`
+	UDSPath            string          `json:"uds_path"`
+	MemoryUsage        uint64          `json:"memory_usage_bytes"`
+	PoolStats          []PoolEntryStat `json:"pool_stats"`
+	ActiveSessions     int             `json:"active_sessions"`
+	ActiveForwardRules int             `json:"active_forward_rules"`
+	ForwardRules       []ForwardStatus `json:"forward_rules"`
+	CryptoProvider     string          `json:"crypto_provider"`
 }
 
 // PoolEntryStat defines the statistics for a single SSH pool entry.
@@ -141,6 +143,7 @@ type PoolEntryStat struct {
 	Alias    string `json:"alias"`
 	Host     string `json:"host"`
 	IdleTime string `json:"idle_time"`
+	Sessions int    `json:"sessions"`
 	RefCount int    `json:"ref_count"`
 }
 

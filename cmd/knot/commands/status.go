@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
-	"os"
+	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 )
@@ -76,9 +75,14 @@ var statusCmd = &cobra.Command{
 			fmt.Printf("Active:      %d\n", status.ActiveSessions)
 			fmt.Println()
 
+			fmt.Println("[Connections]")
 			if len(status.PoolStats) > 0 {
-				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "ALIAS\tREMOTE HOST\tSESSIONS\tIDLE")
+				sort.Slice(status.PoolStats, func(i, j int) bool {
+					if status.PoolStats[i].Alias != status.PoolStats[j].Alias {
+						return status.PoolStats[i].Alias < status.PoolStats[j].Alias
+					}
+					return status.PoolStats[i].Key < status.PoolStats[j].Key
+				})
 
 				// Count occurrences of each alias to detect duplicates
 				aliasCount := make(map[string]int)
@@ -86,6 +90,7 @@ var statusCmd = &cobra.Command{
 					aliasCount[s.Alias]++
 				}
 
+				connectionRows := make([][]string, 0, len(status.PoolStats))
 				for _, s := range status.PoolStats {
 					displayAlias := s.Alias
 					if aliasCount[s.Alias] > 1 {
@@ -96,15 +101,102 @@ var statusCmd = &cobra.Command{
 							displayAlias = fmt.Sprintf("%s(%s)", s.Alias, parts[1])
 						}
 					}
-					fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", displayAlias, s.Host, s.RefCount, s.IdleTime)
+					connectionRows = append(connectionRows, []string{
+						displayAlias,
+						s.Host,
+						fmt.Sprintf("%d", s.Sessions),
+						s.IdleTime,
+					})
 				}
-				w.Flush()
+				printStatusTable([]string{"ALIAS", "REMOTE HOST", "SESSIONS", "IDLE"}, connectionRows)
 			} else {
 				fmt.Println("No active SSH connections in pool.")
+			}
+			fmt.Println()
+
+			fmt.Println("[Forward Rules]")
+			fmt.Printf("Active:      %d\n", status.ActiveForwardRules)
+			activeRules := activeForwardRules(status.ForwardRules)
+			if len(activeRules) > 0 {
+				forwardRows := make([][]string, 0, len(activeRules))
+				for _, f := range activeRules {
+					tempStr := ""
+					if f.IsTemp {
+						tempStr = "Yes"
+					}
+					forwardRows = append(forwardRows, []string{
+						f.Alias,
+						f.Type,
+						fmt.Sprintf("%d", f.LocalPort),
+						f.RemoteAddr,
+						tempStr,
+					})
+				}
+				printStatusTable([]string{"ALIAS", "TYPE", "PORT", "REMOTE/LOCAL ADDR", "TEMP"}, forwardRows)
+			} else {
+				fmt.Println("No active forwarding rules.")
 			}
 			return nil
 		})
 	},
+}
+
+func activeForwardRules(rules []protocol.ForwardStatus) []protocol.ForwardStatus {
+	active := make([]protocol.ForwardStatus, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Status == "Active" {
+			active = append(active, rule)
+		}
+	}
+	return active
+}
+
+func printStatusTable(headers []string, rows [][]string) {
+	widths := make([]int, len(headers))
+	for i, header := range headers {
+		widths[i] = len(header)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < len(widths) && len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+
+	printStatusRow(headers, widths)
+	separators := make([]string, len(headers))
+	for i, width := range widths {
+		separators[i] = strings.Repeat("-", width)
+	}
+	printStatusRow(separators, widths)
+	for _, row := range rows {
+		printStatusDataRow(row, widths)
+	}
+}
+
+func printStatusRow(cells []string, widths []int) {
+	for i, cell := range cells {
+		fmt.Printf("%-*s", widths[i], cell)
+		if i < len(cells)-1 {
+			fmt.Print("   ")
+		}
+	}
+	fmt.Println()
+}
+
+func printStatusDataRow(cells []string, widths []int) {
+	for i, cell := range cells {
+		if i == 0 {
+			fmt.Print(padStyledText(cell, boldText(cell), widths[i]))
+		} else {
+			fmt.Printf("%-*s", widths[i], cell)
+		}
+		if i < len(cells)-1 {
+			fmt.Print("   ")
+		}
+	}
+	fmt.Println()
 }
 
 func init() {

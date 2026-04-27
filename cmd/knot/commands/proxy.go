@@ -18,8 +18,9 @@ var proxyCmd = &cobra.Command{
 }
 
 var proxyListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all proxies",
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List all proxies",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider, err := crypto.NewProvider()
 		if err != nil {
@@ -220,6 +221,7 @@ var proxyAddCmd = &cobra.Command{
 
 var proxyRemoveCmd = &cobra.Command{
 	Use:               "remove [alias]",
+	Aliases:           []string{"rm"},
 	Short:             "Remove a proxy",
 	ValidArgsFunction: proxyAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {

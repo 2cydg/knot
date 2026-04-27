@@ -258,58 +258,26 @@ func sendForwardAdd(alias, fType string, localPort int, remoteAddr string, isTem
 
 var forwardRemoveCmd = &cobra.Command{
 	Use:               "remove [alias] [type:port]",
+	Aliases:           []string{"rm"},
 	Short:             "Remove a port forwarding rule",
-	Args:              cobra.ExactArgs(2),
+	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		alias := args[0]
-		target := args[1]
-		parts := strings.Split(target, ":")
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid format, use Type:Port (e.g. L:8080)")
+		if len(args) == 1 {
+			return handleForwardInteractiveAction(alias, "remove")
 		}
-		fType := strings.ToUpper(parts[0])
-		port, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return fmt.Errorf("invalid port: %v", err)
-		}
-
-		client, err := daemon.NewClient()
+		fType, port, err := parseForwardTarget(args[1])
 		if err != nil {
 			return err
 		}
-
-		req := protocol.ForwardRequest{
-			Action:        "remove",
-			Alias:         alias,
-			SSHAuthSock:   sshpool.GetAgentPath(),
-			HostKeyPolicy: hostKeyPolicy,
-			Config: protocol.ForwardProtocolConfig{
-				Type:      fType,
-				LocalPort: port,
-			},
-		}
-
-		if err := client.SendForwardRequest(req); err != nil {
-			return err
-		}
-
-		formatter := NewFormatter()
-		return formatter.Render(map[string]interface{}{
-			"status":     "success",
-			"action":     "remove",
-			"alias":      alias,
-			"type":       fType,
-			"local_port": port,
-		}, func() error {
-			fmt.Printf("Forward rule %s removed.\n", target)
-			return nil
-		})
+		return sendForwardAction(alias, fType, port, "remove")
 	},
 }
 
 var forwardListCmd = &cobra.Command{
 	Use:               "list [alias]",
+	Aliases:           []string{"ls"},
 	Short:             "List port forwarding rules",
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -327,6 +295,8 @@ var forwardListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		sortForwardStatuses(resp.Forwards)
 
 		formatter := NewFormatter()
 		return formatter.Render(resp, func() error {
@@ -349,9 +319,12 @@ var forwardListCmd = &cobra.Command{
 var forwardEnableCmd = &cobra.Command{
 	Use:               "enable [alias] [type:port]",
 	Short:             "Enable a port forwarding rule",
-	Args:              cobra.ExactArgs(2),
+	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			return handleForwardInteractiveAction(args[0], "enable")
+		}
 		return handleForwardToggle(args[0], args[1], true)
 	},
 }
@@ -359,25 +332,18 @@ var forwardEnableCmd = &cobra.Command{
 var forwardDisableCmd = &cobra.Command{
 	Use:               "disable [alias] [type:port]",
 	Short:             "Disable a port forwarding rule",
-	Args:              cobra.ExactArgs(2),
+	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: serverAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			return handleForwardInteractiveAction(args[0], "disable")
+		}
 		return handleForwardToggle(args[0], args[1], false)
 	},
 }
 
 func handleForwardToggle(alias, target string, enable bool) error {
-	parts := strings.Split(target, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid format, use Type:Port (e.g. L:8080)")
-	}
-	fType := strings.ToUpper(parts[0])
-	port, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return fmt.Errorf("invalid port: %v", err)
-	}
-
-	client, err := daemon.NewClient()
+	fType, port, err := parseForwardTarget(target)
 	if err != nil {
 		return err
 	}
@@ -385,6 +351,104 @@ func handleForwardToggle(alias, target string, enable bool) error {
 	action := "disable"
 	if enable {
 		action = "enable"
+	}
+
+	return sendForwardAction(alias, fType, port, action)
+}
+
+func handleForwardInteractiveAction(alias string, action string) error {
+	client, err := daemon.NewClient()
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.GetForwardList(alias)
+	if err != nil {
+		return err
+	}
+
+	if len(resp.Forwards) == 0 {
+		fmt.Printf("No forwarding rules found for alias '%s'.\n", alias)
+		return nil
+	}
+
+	sortForwardStatuses(resp.Forwards)
+
+	line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+	if err != nil {
+		return err
+	}
+	defer line.Close()
+
+	fmt.Printf("Forward rules for '%s':\n", alias)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NO.\tTYPE\tPORT\tREMOTE/LOCAL ADDR\tENABLED\tTEMP\tSTATUS\tERROR")
+	for i, f := range resp.Forwards {
+		tempStr := "No"
+		if f.IsTemp {
+			tempStr = "Yes"
+		}
+		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%t\t%s\t%s\t%s\n",
+			i+1, f.Type, f.LocalPort, f.RemoteAddr, f.Enabled, tempStr, f.Status, f.Error)
+	}
+	w.Flush()
+
+	for {
+		choice, err := readLineWithPrompt(line, fmt.Sprintf("Select rule to %s (1-%d, 0 to cancel): ", action, len(resp.Forwards)))
+		if err != nil {
+			return err
+		}
+		choice = strings.TrimSpace(choice)
+		if choice == "" {
+			continue
+		}
+		if choice == "0" {
+			return nil
+		}
+		idx, err := strconv.Atoi(choice)
+		if err == nil && idx > 0 && idx <= len(resp.Forwards) {
+			selected := resp.Forwards[idx-1]
+			return sendForwardAction(alias, selected.Type, selected.LocalPort, action)
+		}
+		fmt.Println("Invalid selection.")
+	}
+}
+
+func parseForwardTarget(target string) (string, int, error) {
+	parts := strings.Split(target, ":")
+	if len(parts) != 2 {
+		return "", 0, fmt.Errorf("invalid format, use Type:Port (e.g. L:8080)")
+	}
+	fType := strings.ToUpper(strings.TrimSpace(parts[0]))
+	if fType != "L" && fType != "R" && fType != "D" {
+		return "", 0, fmt.Errorf("invalid forward type: %s", fType)
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %v", err)
+	}
+	return fType, port, nil
+}
+
+func sortForwardStatuses(forwards []protocol.ForwardStatus) {
+	sort.Slice(forwards, func(i, j int) bool {
+		if forwards[i].Alias != forwards[j].Alias {
+			return forwards[i].Alias < forwards[j].Alias
+		}
+		if forwards[i].Type != forwards[j].Type {
+			return forwards[i].Type < forwards[j].Type
+		}
+		if forwards[i].LocalPort != forwards[j].LocalPort {
+			return forwards[i].LocalPort < forwards[j].LocalPort
+		}
+		return forwards[i].RemoteAddr < forwards[j].RemoteAddr
+	})
+}
+
+func sendForwardAction(alias, fType string, port int, action string) error {
+	client, err := daemon.NewClient()
+	if err != nil {
+		return err
 	}
 
 	req := protocol.ForwardRequest{
@@ -402,20 +466,30 @@ func handleForwardToggle(alias, target string, enable bool) error {
 		return err
 	}
 
-	state := "disabled"
-	if enable {
-		state = "enabled"
+	target := fmt.Sprintf("%s:%d", fType, port)
+	message := fmt.Sprintf("Forward rule %s removed.\n", target)
+	enabled := false
+	switch action {
+	case "enable":
+		message = fmt.Sprintf("Forward rule %s enabled.\n", target)
+		enabled = true
+	case "disable":
+		message = fmt.Sprintf("Forward rule %s disabled.\n", target)
 	}
+
 	formatter := NewFormatter()
-	return formatter.Render(map[string]interface{}{
+	data := map[string]interface{}{
 		"status":     "success",
 		"action":     action,
 		"alias":      alias,
 		"type":       fType,
 		"local_port": port,
-		"enabled":    enable,
-	}, func() error {
-		fmt.Printf("Forward rule %s %s.\n", target, state)
+	}
+	if action == "enable" || action == "disable" {
+		data["enabled"] = enabled
+	}
+	return formatter.Render(data, func() error {
+		fmt.Print(message)
 		return nil
 	})
 }

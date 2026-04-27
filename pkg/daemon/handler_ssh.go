@@ -123,7 +123,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// Register session in SessionManager
-	s := d.sm.Add(req.Alias, conn)
+	s := d.sm.Add(req.Alias, conn, poolKeys)
 	for _, k := range poolKeys {
 		d.pool.IncRef(k)
 	}

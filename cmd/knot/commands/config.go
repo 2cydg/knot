@@ -90,8 +90,9 @@ var configInitCmd = &cobra.Command{
 }
 
 var configListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all global settings",
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List all global settings",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider, err := crypto.NewProvider()
 		if err != nil {

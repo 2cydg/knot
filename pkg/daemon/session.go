@@ -10,6 +10,7 @@ import (
 type Session struct {
 	ID          string `json:"id"`
 	Alias       string `json:"alias"`
+	PoolKeys    []string
 	primaryConn net.Conn
 	mu          sync.Mutex
 }
@@ -28,7 +29,7 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
-func (sm *SessionManager) Add(alias string, conn net.Conn) *Session {
+func (sm *SessionManager) Add(alias string, conn net.Conn, poolKeys []string) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	id := strconv.Itoa(sm.nextID)
@@ -36,6 +37,7 @@ func (sm *SessionManager) Add(alias string, conn net.Conn) *Session {
 	s := &Session{
 		ID:          id,
 		Alias:       alias,
+		PoolKeys:    cloneSessionPoolKeys(poolKeys),
 		primaryConn: conn,
 	}
 	sm.sessions[id] = s
@@ -83,6 +85,19 @@ func (sm *SessionManager) Count() int {
 	return len(sm.sessions)
 }
 
+func (sm *SessionManager) CountByPoolKey() map[string]int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	counts := make(map[string]int)
+	for _, s := range sm.sessions {
+		if len(s.PoolKeys) > 0 {
+			counts[s.PoolKeys[len(s.PoolKeys)-1]]++
+		}
+	}
+	return counts
+}
+
 func (sm *SessionManager) Clear() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -93,4 +108,13 @@ func (sm *SessionManager) Clear() {
 	}
 	sm.sessions = make(map[string]*Session)
 	sm.nextID = 1
+}
+
+func cloneSessionPoolKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	cloned := make([]string, len(keys))
+	copy(cloned, keys)
+	return cloned
 }
