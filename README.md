@@ -6,6 +6,8 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
+Full documentation: [https://knot.clay.li](https://knot.clay.li)
+
 **Knot** is an SSH/SFTP connection manager for your native terminal. Keep using Windows Terminal, iTerm2, Kitty, or any terminal you already like, while Knot keeps server profiles, credentials, proxies, jump hosts, file transfer, and port forwarding behind one CLI.
 
 Knot does not try to replace your terminal. It makes the connection workflow smoother: `knot web-prod` opens a shell, `knot exec web-prod "uptime"` runs a remote command, and `knot cp ./dist/. web-prod:/var/www/html/` transfers files. A background daemon keeps physical SSH connections alive, so later shells, commands, and transfers can reuse them instead of repeating the SSH handshake.

@@ -6,6 +6,8 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
+详细文档：[https://knot.clay.li](https://knot.clay.li)
+
 **Knot** 是一个面向原生终端的 SSH/SFTP 连接管理工具。你可以继续使用 Windows Terminal、iTerm2、Kitty 或任何自己习惯的终端，同时把服务器配置、凭据、代理、跳板机、文件传输和端口转发收拢到一套命令里。
 
 它不试图替代终端，而是把终端里的连接体验变顺手：`knot web-prod` 打开会话，`knot exec web-prod "uptime"` 执行远程命令，`knot cp ./dist/. web-prod:/var/www/html/` 传文件。后台 daemon 会维护 SSH 物理连接，后续 shell、命令执行和文件传输都可以复用已有连接，减少重复握手的等待。
