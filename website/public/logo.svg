@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Knot">
+  <rect width="64" height="64" rx="12" fill="#1f756e"/>
+  <path d="M17 46V18h7v11l11-11h9L32 31l13 15h-9L24 32v14h-7z" fill="#fff"/>
+</svg>
