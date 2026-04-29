@@ -54,6 +54,7 @@ knot config get servers.web-prod
 | `idle_timeout` | Go duration | Idle timeout for daemon-held connections. |
 | `keepalive_interval` | Go duration | SSH keepalive interval. |
 | `log_level` | `debug`, `info`, `warn`, `error` | Log level. |
+| `default_sync_provider` | provider alias | Default provider used by `knot sync push` and `knot sync pull`. |
 
 Examples:
 
@@ -61,6 +62,7 @@ Examples:
 knot config set forward_agent true
 knot config set idle_timeout 30m
 knot config set log_level error
+knot config set default_sync_provider home
 ```
 
 Config changes apply to new connections.
@@ -80,3 +82,5 @@ knot import [path]
 knot export backup.enc
 knot import backup.enc
 ```
+
+For day-to-day multi-device sharing, use [Config Sync](/features/sync). Sync only includes `servers`, `proxies`, and `keys`, and uses WebDAV as the remote provider.

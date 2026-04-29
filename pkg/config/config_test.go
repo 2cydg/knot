@@ -71,6 +71,96 @@ func TestConfigLoadSave(t *testing.T) {
 	}
 }
 
+type testProvider struct{}
+
+func (testProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	return append([]byte(nil), plaintext...), nil
+}
+
+func (testProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	return append([]byte(nil), ciphertext...), nil
+}
+
+func (testProvider) Name() string {
+	return "test"
+}
+
+func TestSyncProviderLoadSaveEncryptsSecrets(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	provider := testProvider{}
+
+	cfg := &Config{
+		Settings: SettingsConfig{
+			SyncPassword:        "sync-secret",
+			DefaultSyncProvider: "home",
+		},
+		Servers: make(map[string]ServerConfig),
+		Proxies: make(map[string]ProxyConfig),
+		Keys:    make(map[string]KeyConfig),
+		SyncProviders: map[string]SyncProviderConfig{
+			"sync_test": {
+				ID:       "sync_test",
+				Alias:    "home",
+				Type:     SyncProviderWebDAV,
+				URL:      "https://example.invalid/config.sync.enc",
+				Username: "alice",
+				Password: "webdav-secret",
+			},
+		},
+	}
+	if err := cfg.SaveToPath(configPath, provider); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read saved config: %v", err)
+	}
+	if !strings.Contains(string(raw), "ENC:") {
+		t.Fatalf("expected encrypted sync secrets in raw config: %s", string(raw))
+	}
+	for _, secret := range []string{"sync-secret", "webdav-secret"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("raw config leaked secret %q: %s", secret, string(raw))
+		}
+	}
+
+	loaded, err := LoadFromPath(configPath, provider)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if loaded.Settings.SyncPassword != "sync-secret" {
+		t.Fatalf("sync password was not decrypted")
+	}
+	p := loaded.SyncProviders["sync_test"]
+	if p.Password != "webdav-secret" {
+		t.Fatalf("provider secrets were not decrypted: %+v", p)
+	}
+}
+
+func TestSyncProviderAliasLookupAndValidation(t *testing.T) {
+	cfg := &Config{
+		SyncProviders: map[string]SyncProviderConfig{
+			"sync_home": {ID: "sync_home", Alias: "home", Type: SyncProviderWebDAV, URL: "https://example.invalid/sync.enc"},
+		},
+	}
+	if id, provider, ok := cfg.FindSyncProviderByAlias("home"); !ok || id != "sync_home" || provider.Alias != "home" {
+		t.Fatalf("FindSyncProviderByAlias failed: id=%s provider=%+v ok=%t", id, provider, ok)
+	}
+	if !cfg.SyncProviderAliasExists("home", "") {
+		t.Fatalf("expected sync provider alias to exist")
+	}
+	dupe := SyncProviderConfig{ID: "sync_dupe", Alias: "home", Type: SyncProviderWebDAV, URL: "https://example.invalid/other.enc"}
+	if err := dupe.Validate(cfg); err == nil {
+		t.Fatalf("expected duplicate alias validation error")
+	}
+	valid := SyncProviderConfig{ID: "sync_work", Alias: "work", Type: SyncProviderWebDAV, URL: "https://example.invalid/work.enc"}
+	if err := valid.Validate(cfg); err != nil {
+		t.Fatalf("expected valid provider: %v", err)
+	}
+}
+
 func TestHasCycle(t *testing.T) {
 	cfg := &Config{
 		Servers: map[string]ServerConfig{

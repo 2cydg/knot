@@ -1,9 +1,15 @@
 package commands
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"knot/pkg/config"
+	"knot/pkg/crypto"
+
+	"github.com/spf13/cobra"
 )
 
 func TestFilterAndSortCompletions(t *testing.T) {
@@ -73,6 +79,58 @@ func TestConfigValueCandidates(t *testing.T) {
 				t.Fatalf("configValueCandidates(%q) = %#v, want %#v", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSyncProviderAliasCompleter(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		t.Fatalf("failed to create crypto provider: %v", err)
+	}
+
+	cfg := &config.Config{
+		Settings: config.SettingsConfig{},
+		Servers:  make(map[string]config.ServerConfig),
+		Proxies:  make(map[string]config.ProxyConfig),
+		Keys:     make(map[string]config.KeyConfig),
+		SyncProviders: map[string]config.SyncProviderConfig{
+			"sync_backup": {
+				ID:    "sync_backup",
+				Alias: "backup",
+				Type:  config.SyncProviderWebDAV,
+				URL:   "https://example.invalid/backup/config-sync.toml.enc",
+			},
+			"sync_home": {
+				ID:    "sync_home",
+				Alias: "home",
+				Type:  config.SyncProviderWebDAV,
+				URL:   "https://example.invalid/home/config-sync.toml.enc",
+			},
+		},
+	}
+	if err := cfg.Save(provider); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	got, directive := syncProviderAliasCompleter(nil, nil, "h")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("syncProviderAliasCompleter directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if want := []string{"home"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("syncProviderAliasCompleter() = %#v, want %#v", got, want)
+	}
+
+	got, directive = configKeyValueCompleter(nil, []string{"default_sync_provider"}, "")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("configKeyValueCompleter directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if want := []string{"backup", "home"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("configKeyValueCompleter() = %#v, want %#v", got, want)
 	}
 }
 

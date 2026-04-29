@@ -150,6 +150,9 @@ func DecryptConfig(data []byte, password string) (*Config, error) {
 	if cfg.Keys == nil {
 		cfg.Keys = make(map[string]KeyConfig)
 	}
+	if cfg.SyncProviders == nil {
+		cfg.SyncProviders = make(map[string]SyncProviderConfig)
+	}
 
 	return &cfg, nil
 }
@@ -168,10 +171,11 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 	}
 
 	result := &Config{
-		Settings: local.Settings, // Default to local settings
-		Servers:  make(map[string]ServerConfig),
-		Proxies:  make(map[string]ProxyConfig),
-		Keys:     make(map[string]KeyConfig),
+		Settings:      local.Settings, // Default to local settings
+		Servers:       make(map[string]ServerConfig),
+		Proxies:       make(map[string]ProxyConfig),
+		Keys:          make(map[string]KeyConfig),
+		SyncProviders: make(map[string]SyncProviderConfig),
 	}
 
 	// Copy local first
@@ -183,6 +187,9 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 	}
 	for k, v := range local.Keys {
 		result.Keys[k] = v
+	}
+	for k, v := range local.SyncProviders {
+		result.SyncProviders[k] = v
 	}
 
 	// Merge imported
@@ -204,6 +211,10 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 		}
 	} else if mode == MergeModeImportFirst {
 		result.Settings = imported.Settings // Use imported settings
+		result.SyncProviders = make(map[string]SyncProviderConfig)
+		for k, v := range imported.SyncProviders {
+			result.SyncProviders[k] = v
+		}
 		for k, v := range imported.Servers {
 			for localID, local := range result.Servers {
 				if localID != k && local.Alias == v.Alias {

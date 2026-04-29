@@ -25,6 +25,8 @@ const (
 	ProxyTypeNone   = ""
 	ProxyTypeSOCKS5 = "socks5"
 	ProxyTypeHTTP   = "http"
+
+	SyncProviderWebDAV = "webdav"
 )
 
 type ProxyConfig struct {
@@ -74,6 +76,8 @@ type SettingsConfig struct {
 	KeepaliveInterval    string `toml:"keepalive_interval"`
 	LogLevel             string `toml:"log_level"`
 	RecentLimit          int    `toml:"recent_limit"`
+	DefaultSyncProvider  string `toml:"default_sync_provider,omitempty"`
+	SyncPassword         string `toml:"sync_password,omitempty"`
 }
 
 func (s SettingsConfig) GetForwardAgent() bool {
@@ -91,10 +95,21 @@ func (s SettingsConfig) GetClearScreenOnConnect() bool {
 }
 
 type Config struct {
-	Settings SettingsConfig          `toml:"settings"`
-	Servers  map[string]ServerConfig `toml:"servers"`
-	Proxies  map[string]ProxyConfig  `toml:"proxies"`
-	Keys     map[string]KeyConfig    `toml:"keys"`
+	Settings      SettingsConfig                `toml:"settings"`
+	Servers       map[string]ServerConfig       `toml:"servers"`
+	Proxies       map[string]ProxyConfig        `toml:"proxies"`
+	Keys          map[string]KeyConfig          `toml:"keys"`
+	SyncProviders map[string]SyncProviderConfig `toml:"sync_providers"`
+}
+
+type SyncProviderConfig struct {
+	ID    string `toml:"id"`
+	Alias string `toml:"alias"`
+	Type  string `toml:"type"`
+
+	URL      string `toml:"url,omitempty"`
+	Username string `toml:"username,omitempty"`
+	Password string `toml:"password,omitempty"`
 }
 
 func NewID(prefix string) (string, error) {
@@ -122,6 +137,13 @@ func (c *Config) NewProxyID() (string, error) {
 func (c *Config) NewKeyID() (string, error) {
 	return c.newUniqueID("key", func(id string) bool {
 		_, ok := c.Keys[id]
+		return ok
+	})
+}
+
+func (c *Config) NewSyncProviderID() (string, error) {
+	return c.newUniqueID("sync", func(id string) bool {
+		_, ok := c.SyncProviders[id]
 		return ok
 	})
 }
@@ -163,6 +185,15 @@ func (c *Config) FindKeyByAlias(alias string) (string, KeyConfig, bool) {
 		}
 	}
 	return "", KeyConfig{}, false
+}
+
+func (c *Config) FindSyncProviderByAlias(alias string) (string, SyncProviderConfig, bool) {
+	for id, provider := range c.SyncProviders {
+		if provider.Alias == alias {
+			return id, provider, true
+		}
+	}
+	return "", SyncProviderConfig{}, false
 }
 
 func (c *Config) ServerAlias(id string) string {
@@ -293,6 +324,52 @@ func (k *KeyConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
 	return nil
 }
 
+func (s *SettingsConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
+	if s.SyncPassword != "" {
+		if encrypt {
+			if !strings.HasPrefix(s.SyncPassword, encPrefix) {
+				enc, err := encryptField([]byte(s.SyncPassword), p)
+				if err != nil {
+					return err
+				}
+				s.SyncPassword = encPrefix + enc
+			}
+		} else if strings.HasPrefix(s.SyncPassword, encPrefix) {
+			dec, err := decryptField(s.SyncPassword[len(encPrefix):], p)
+			if err != nil {
+				return err
+			}
+			s.SyncPassword = string(dec)
+		}
+	}
+	return nil
+}
+
+func (s *SyncProviderConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
+	fields := []*string{&s.Password}
+	for _, field := range fields {
+		if *field == "" {
+			continue
+		}
+		if encrypt {
+			if !strings.HasPrefix(*field, encPrefix) {
+				enc, err := encryptField([]byte(*field), p)
+				if err != nil {
+					return err
+				}
+				*field = encPrefix + enc
+			}
+		} else if strings.HasPrefix(*field, encPrefix) {
+			dec, err := decryptField((*field)[len(encPrefix):], p)
+			if err != nil {
+				return err
+			}
+			*field = string(dec)
+		}
+	}
+	return nil
+}
+
 func processSecretsMap[T any, PT interface {
 	*T
 	SecretManager
@@ -319,9 +396,10 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 				LogLevel:             "error",
 				RecentLimit:          5,
 			},
-			Servers: make(map[string]ServerConfig),
-			Proxies: make(map[string]ProxyConfig),
-			Keys:    make(map[string]KeyConfig),
+			Servers:       make(map[string]ServerConfig),
+			Proxies:       make(map[string]ProxyConfig),
+			Keys:          make(map[string]KeyConfig),
+			SyncProviders: make(map[string]SyncProviderConfig),
 		}, nil
 	}
 
@@ -357,8 +435,14 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 	if cfg.Keys == nil {
 		cfg.Keys = make(map[string]KeyConfig)
 	}
+	if cfg.SyncProviders == nil {
+		cfg.SyncProviders = make(map[string]SyncProviderConfig)
+	}
 
 	// Decrypt all sensitive fields
+	if err := cfg.Settings.ProcessSecrets(cryptoProvider, false); err != nil {
+		return nil, err
+	}
 	if err := processSecretsMap[ServerConfig, *ServerConfig](cfg.Servers, cryptoProvider, false); err != nil {
 		return nil, err
 	}
@@ -366,6 +450,9 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		return nil, err
 	}
 	if err := processSecretsMap[KeyConfig, *KeyConfig](cfg.Keys, cryptoProvider, false); err != nil {
+		return nil, err
+	}
+	if err := processSecretsMap[SyncProviderConfig, *SyncProviderConfig](cfg.SyncProviders, cryptoProvider, false); err != nil {
 		return nil, err
 	}
 
@@ -393,10 +480,11 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 
 	// Deep copy and encrypt
 	cfgToSave := Config{
-		Settings: c.Settings,
-		Servers:  make(map[string]ServerConfig),
-		Proxies:  make(map[string]ProxyConfig),
-		Keys:     make(map[string]KeyConfig),
+		Settings:      c.Settings,
+		Servers:       make(map[string]ServerConfig),
+		Proxies:       make(map[string]ProxyConfig),
+		Keys:          make(map[string]KeyConfig),
+		SyncProviders: make(map[string]SyncProviderConfig),
 	}
 
 	for k, v := range c.Servers {
@@ -408,7 +496,13 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 	for k, v := range c.Keys {
 		cfgToSave.Keys[k] = v
 	}
+	for k, v := range c.SyncProviders {
+		cfgToSave.SyncProviders[k] = v
+	}
 
+	if err := cfgToSave.Settings.ProcessSecrets(cryptoProvider, true); err != nil {
+		return err
+	}
 	if err := processSecretsMap[ServerConfig, *ServerConfig](cfgToSave.Servers, cryptoProvider, true); err != nil {
 		return err
 	}
@@ -416,6 +510,9 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		return err
 	}
 	if err := processSecretsMap[KeyConfig, *KeyConfig](cfgToSave.Keys, cryptoProvider, true); err != nil {
+		return err
+	}
+	if err := processSecretsMap[SyncProviderConfig, *SyncProviderConfig](cfgToSave.SyncProviders, cryptoProvider, true); err != nil {
 		return err
 	}
 
@@ -461,6 +558,15 @@ func (c *Config) ProxyAliasExists(alias string, exceptID string) bool {
 func (c *Config) KeyAliasExists(alias string, exceptID string) bool {
 	for id, key := range c.Keys {
 		if id != exceptID && key.Alias == alias {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) SyncProviderAliasExists(alias string, exceptID string) bool {
+	for id, provider := range c.SyncProviders {
+		if id != exceptID && provider.Alias == alias {
 			return true
 		}
 	}
@@ -541,6 +647,27 @@ func (k *KeyConfig) Validate(cfg *Config) error {
 	}
 	if cfg.KeyAliasExists(k.Alias, k.ID) {
 		return fmt.Errorf("key alias '%s' already exists", k.Alias)
+	}
+	return nil
+}
+
+func (s *SyncProviderConfig) Validate(cfg *Config) error {
+	if s.ID == "" {
+		return fmt.Errorf("sync provider id cannot be empty")
+	}
+	if !IsValidAlias(s.Alias) {
+		return fmt.Errorf("invalid sync provider alias format")
+	}
+	if cfg != nil && cfg.SyncProviderAliasExists(s.Alias, s.ID) {
+		return fmt.Errorf("sync provider alias '%s' already exists", s.Alias)
+	}
+	switch s.Type {
+	case SyncProviderWebDAV:
+		if strings.TrimSpace(s.URL) == "" {
+			return fmt.Errorf("webdav url cannot be empty")
+		}
+	default:
+		return fmt.Errorf("unsupported sync provider type: %s", s.Type)
 	}
 	return nil
 }
