@@ -15,7 +15,8 @@ const enSidebar = [
       { text: 'SFTP and File Copy', link: '/features/sftp' },
       { text: 'Remote Exec', link: '/features/exec' },
       { text: 'Proxy', link: '/features/proxy' },
-      { text: 'Port Forwarding', link: '/features/forward' }
+      { text: 'Port Forwarding', link: '/features/forward' },
+      { text: 'Config Sync', link: '/features/sync' }
     ]
   },
   {
@@ -44,7 +45,8 @@ const zhSidebar = [
       { text: 'SFTP 与文件复制', link: '/zh/features/sftp' },
       { text: '远程执行', link: '/zh/features/exec' },
       { text: 'Proxy 代理', link: '/zh/features/proxy' },
-      { text: '端口转发', link: '/zh/features/forward' }
+      { text: '端口转发', link: '/zh/features/forward' },
+      { text: '配置同步', link: '/zh/features/sync' }
     ]
   },
   {

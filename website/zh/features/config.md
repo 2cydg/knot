@@ -54,6 +54,7 @@ knot config get servers.web-prod
 | `idle_timeout` | Go duration | daemon 中空闲连接的超时时间。 |
 | `keepalive_interval` | Go duration | SSH keepalive 间隔。 |
 | `log_level` | `debug`、`info`、`warn`、`error` | 日志级别。 |
+| `default_sync_provider` | provider alias | `knot sync push` 和 `knot sync pull` 使用的默认 provider。 |
 
 示例：
 
@@ -61,6 +62,7 @@ knot config get servers.web-prod
 knot config set forward_agent true
 knot config set idle_timeout 30m
 knot config set log_level error
+knot config set default_sync_provider home
 ```
 
 配置变更应用到新连接。
@@ -80,3 +82,5 @@ knot import [path]
 knot export backup.enc
 knot import backup.enc
 ```
+
+日常多设备共享请使用[配置同步](/zh/features/sync)。同步只包含 `servers`、`proxies` 和 `keys`，远端 provider 使用 WebDAV。

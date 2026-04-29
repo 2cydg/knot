@@ -31,6 +31,10 @@ irm https://knot.clay.li/i/install.ps1 | iex
     <strong>Daemon</strong>
     <p>The background daemon owns the SSH connection pool so SSH, exec, SFTP, cp, and forward operations can reuse connections.</p>
   </div>
+  <div class="quick-card">
+    <strong>Config Sync</strong>
+    <p>Sync server profiles, proxies, and managed keys across devices through an encrypted WebDAV archive.</p>
+  </div>
 </div>
 
 ## Quick Example
@@ -49,4 +53,5 @@ knot cp ./dist/. web-prod:/var/www/html/
 - [SFTP and File Copy](/features/sftp): interactive SFTP, batch SFTP commands, and `knot cp`.
 - [Proxy](/features/proxy): managed HTTP/SOCKS5 proxies and server references.
 - [Port Forwarding](/features/forward): local, remote, and dynamic SOCKS5 forwarding.
+- [Config Sync](/features/sync): encrypted WebDAV sync for servers, proxies, and managed keys.
 - [Servers and Global Config](/features/config): server CRUD, global settings, and config import/export.

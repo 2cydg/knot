@@ -16,6 +16,7 @@ func TestExportDecrypt(t *testing.T) {
 		Keys: map[string]KeyConfig{
 			"key": {Alias: "key", PrivateKey: "secret"},
 		},
+		SyncProviders: map[string]SyncProviderConfig{},
 	}
 	password := "my-secret-password"
 
@@ -89,7 +90,7 @@ func TestMergeConfigs(t *testing.T) {
 			"p1": {Alias: "p1", Host: "imported"},
 			"p2": {Alias: "p2", Host: "imported"},
 		},
-		Keys:    map[string]KeyConfig{
+		Keys: map[string]KeyConfig{
 			"k1": {Alias: "k1", PrivateKey: "imported"},
 			"k2": {Alias: "k2", PrivateKey: "imported"},
 		},

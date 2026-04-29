@@ -205,6 +205,13 @@ var configSetCmd = &cobra.Command{
 			default:
 				return fmt.Errorf("invalid log_level: %s (use debug, info, warn, error)", value)
 			}
+		case "default_sync_provider":
+			if value != "" {
+				if _, _, ok := cfg.FindSyncProviderByAlias(value); !ok {
+					return fmt.Errorf("sync provider '%s' not found", value)
+				}
+			}
+			cfg.Settings.DefaultSyncProvider = value
 		default:
 			return fmt.Errorf("unknown setting: %s", key)
 		}
@@ -234,6 +241,8 @@ func sanitizedSettings(cfg *config.Config) map[string]interface{} {
 		"keepalive_interval":      cfg.Settings.KeepaliveInterval,
 		"log_level":               cfg.Settings.LogLevel,
 		"recent_limit":            cfg.Settings.RecentLimit,
+		"default_sync_provider":   cfg.Settings.DefaultSyncProvider,
+		"has_sync_password":       cfg.Settings.SyncPassword != "",
 	}
 }
 
@@ -277,11 +286,23 @@ func sanitizedConfig(cfg *config.Config) map[string]interface{} {
 		}
 	}
 
+	syncProviders := make(map[string]interface{}, len(cfg.SyncProviders))
+	for alias, provider := range cfg.SyncProviders {
+		syncProviders[alias] = map[string]interface{}{
+			"alias":        provider.Alias,
+			"type":         provider.Type,
+			"url":          provider.URL,
+			"username":     provider.Username,
+			"has_password": provider.Password != "",
+		}
+	}
+
 	return map[string]interface{}{
-		"settings": sanitizedSettings(cfg),
-		"servers":  servers,
-		"proxies":  proxies,
-		"keys":     keys,
+		"settings":       sanitizedSettings(cfg),
+		"servers":        servers,
+		"proxies":        proxies,
+		"keys":           keys,
+		"sync_providers": syncProviders,
 	}
 }
 

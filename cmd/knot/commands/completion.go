@@ -77,6 +77,33 @@ func proxyAliasCompleter(cmd *cobra.Command, args []string, toComplete string) (
 	return filterAndSortCompletions(aliases, toComplete), cobra.ShellCompDirectiveNoFileComp
 }
 
+func syncProviderAliasCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	return syncProviderAliasCompletions(toComplete)
+}
+
+func syncProviderAliasCompletions(toComplete string) ([]string, cobra.ShellCompDirective) {
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	cfg, err := config.Load(provider)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	var aliases []string
+	for _, syncProvider := range cfg.SyncProviders {
+		aliases = append(aliases, syncProvider.Alias)
+	}
+
+	return filterAndSortCompletions(aliases, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
 func configKeyCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -90,6 +117,9 @@ func configKeyValueCompleter(cmd *cobra.Command, args []string, toComplete strin
 	case 0:
 		return filterAndSortCompletions(configKeys, toComplete), cobra.ShellCompDirectiveNoFileComp
 	case 1:
+		if strings.ToLower(args[0]) == "default_sync_provider" {
+			return syncProviderAliasCompletions(toComplete)
+		}
 		values := configValueCandidates(args[0])
 		if len(values) == 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
@@ -106,6 +136,7 @@ var configKeys = []string{
 	"idle_timeout",
 	"keepalive_interval",
 	"log_level",
+	"default_sync_provider",
 }
 
 func configValueCandidates(key string) []string {

@@ -31,6 +31,10 @@ irm https://knot.clay.li/i/install.ps1 | iex
     <strong>Daemon</strong>
     <p>后台 daemon 持有 SSH 连接池，让 SSH、exec、SFTP、cp 和 forward 复用已有连接。</p>
   </div>
+  <div class="quick-card">
+    <strong>配置同步</strong>
+    <p>通过加密 WebDAV 归档，在多台设备之间同步服务器、proxy 和托管密钥。</p>
+  </div>
 </div>
 
 ## 快速示例
@@ -49,4 +53,5 @@ knot cp ./dist/. web-prod:/var/www/html/
 - [SFTP 与文件复制](/zh/features/sftp)：交互式 SFTP、批处理 SFTP 子命令和 `knot cp`。
 - [Proxy 代理](/zh/features/proxy)：托管 HTTP/SOCKS5 proxy 及服务器引用方式。
 - [端口转发](/zh/features/forward)：本地、远程和动态 SOCKS5 转发。
+- [配置同步](/zh/features/sync)：通过加密 WebDAV 归档同步服务器、proxy 和托管密钥。
 - [服务器与全局配置](/zh/features/config)：服务器增删改查、全局设置和配置导入导出。
