@@ -321,6 +321,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		case protocol.TypeSFTPReq:
 			d.handleSFTPRequest(conn, msg.Payload)
 			return
+		case protocol.TypeSessionListReq:
+			d.handleSessionListRequest(conn, msg.Payload)
 		case protocol.TypeStatusReq:
 			d.handleStatusRequest(conn)
 		case protocol.TypeForwardReq:

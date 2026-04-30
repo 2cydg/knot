@@ -6,6 +6,7 @@ Knot 提供两类文件操作：交互式 `knot sftp` shell，以及面向脚本
 
 ```sh
 knot sftp [alias] [remote_path]
+knot sftp [alias] --follow
 ```
 
 | 参数 | 必填 | 说明 |
@@ -13,14 +14,27 @@ knot sftp [alias] [remote_path]
 | `[alias]` | 是 | 服务器别名。 |
 | `[remote_path]` | 否 | 初始远程目录。 |
 
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `--follow` | bool | `false` | 跟随同一 alias 下活动 `knot ssh` session 的当前目录。不能和 `[remote_path]` 同时使用。 |
+
 示例：
 
 ```sh
 knot sftp web-prod
 knot sftp web-prod /var/www
+knot sftp web-prod --follow
 ```
 
 交互式 shell 支持命令补全和路径补全。
+
+## 跟随 SSH 目录
+
+`knot sftp web-prod --follow` 会打开一个交互式 SFTP shell，并跟随已有的 `knot ssh web-prod` session。如果当前只有一个活动 SSH session，Knot 会自动跟随它；如果有多个，Knot 会列出带序号的 session、启动时间和已知当前目录，并提示用户输入 `No.` 列中的序号选择。
+
+被跟随的 SSH session 上报新目录后，SFTP shell 会尝试切换到同一路径，并输出简短的 `[follow]` 提示。如果该目录无法通过 SFTP 打开，SFTP shell 保持当前目录不变并继续等待下一次更新。被跟随的 SSH session 关闭后，SFTP shell 保持打开，停留在最后的目录并停止跟随。
+
+目录跟随依赖 OSC 7 current-directory escape sequence。Knot 只会在新的交互式 `knot ssh` shell 启动时，为 Bash 和 Zsh 安装临时 OSC 7 hook。其他 shell 只有在自己已经输出 OSC 7 时才会生效；如果没有 OSC 7，Knot 无法跟踪目录变化。这个 hook 只在当前 session 内临时存在，不会修改远端 `.bashrc`、`.zshrc` 或其他 shell 配置文件。
 
 ## SFTP shell 命令
 

@@ -24,6 +24,9 @@ func newSFTPPathCommand(name, use, short string, fn func(*sftp.Client, string) (
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if sftpFollow {
+				return fmt.Errorf("--follow is only supported by interactive sftp")
+			}
 			alias, remotePath, err := parseRemoteSFTPPath(args[0])
 			if err != nil {
 				return err
@@ -132,6 +135,9 @@ var sftpMvCmd = &cobra.Command{
 	Short: "Rename a remote file or directory",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if sftpFollow {
+			return fmt.Errorf("--follow is only supported by interactive sftp")
+		}
 		srcAlias, srcPath, err := parseRemoteSFTPPath(args[0])
 		if err != nil {
 			return err
