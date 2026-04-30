@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
@@ -9,11 +10,18 @@ import (
 	"knot/pkg/daemon"
 	knotsftp "knot/pkg/sftp"
 	"knot/pkg/sshpool"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 )
+
+var sftpFollow bool
 
 var sftpCmd = &cobra.Command{
 	Use:   "sftp [alias] [remote_path]",
@@ -25,6 +33,7 @@ Paths with spaces can be entered with quotes or backslash escaping, and local
 paths support ~/... expansion.`,
 	Example: `  knot sftp prod
   knot sftp prod /var/www
+  knot sftp prod --follow
   knot sftp prod
   sftp:/var/www> get "release notes.txt" ~/Downloads/
   sftp:/var/www> put ./dist/app.tar.gz /tmp/
@@ -37,6 +46,9 @@ paths support ~/... expansion.`,
 		alias := args[0]
 		if len(alias) > 255 {
 			return fmt.Errorf("alias too long")
+		}
+		if sftpFollow && len(args) > 1 {
+			return fmt.Errorf("--follow cannot be used with remote_path")
 		}
 
 		client, err := daemon.NewClient()
@@ -68,12 +80,27 @@ paths support ~/... expansion.`,
 			return err
 		}
 
+		var followSessionID string
+		var followInitialDir string
+		if sftpFollow {
+			followSession, err := selectFollowSession(conn, alias)
+			if err != nil {
+				return err
+			}
+			followSessionID = followSession.ID
+			followInitialDir = followSession.CurrentDir
+			if followInitialDir == "" {
+				fmt.Printf("[follow] session %s has not reported a directory yet; waiting for OSC 7 updates\n", followSession.ID)
+			}
+		}
+
 		// Send SFTP request
 		sftpReq := protocol.SFTPRequest{
-			Alias:         alias,
-			SSHAuthSock:   sshpool.GetAgentPath(),
-			IsInteractive: true,
-			HostKeyPolicy: hostKeyPolicy,
+			Alias:           alias,
+			SSHAuthSock:     sshpool.GetAgentPath(),
+			IsInteractive:   true,
+			HostKeyPolicy:   hostKeyPolicy,
+			FollowSessionID: followSessionID,
 		}
 		sftpReqPayload, err := json.Marshal(sftpReq)
 		if err != nil {
@@ -147,7 +174,13 @@ paths support ~/... expansion.`,
 		}
 		defer sftpClient.Close()
 
-		err = knotsftp.RunREPL(sftpClient, alias, initialDir)
+		replOpts := knotsftp.REPLOptions{InitialDir: initialDir}
+		if sftpFollow {
+			replOpts.InitialDir = followInitialDir
+			replOpts.FollowCh = sftpConn.FollowCh
+			replOpts.FollowID = followSessionID
+		}
+		err = knotsftp.RunREPLWithOptions(sftpClient, alias, replOpts)
 		if err != nil && err.Error() == "disconnected" {
 			return nil
 		}
@@ -156,6 +189,110 @@ paths support ~/... expansion.`,
 }
 
 func init() {
+	sftpCmd.Flags().BoolVar(&sftpFollow, "follow", false, "Follow the current directory of an active SSH session")
 	sftpCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(sftpCmd)
+}
+
+func selectFollowSession(conn net.Conn, alias string) (protocol.SessionInfo, error) {
+	payload, err := json.Marshal(protocol.SessionListRequest{Alias: alias})
+	if err != nil {
+		return protocol.SessionInfo{}, fmt.Errorf("failed to marshal session list request: %w", err)
+	}
+	if err := protocol.WriteMessage(conn, protocol.TypeSessionListReq, 0, payload); err != nil {
+		return protocol.SessionInfo{}, err
+	}
+	msg, err := protocol.ReadMessage(conn)
+	if err != nil {
+		return protocol.SessionInfo{}, err
+	}
+	if msg.Header.Type == protocol.TypeResp {
+		resp := string(msg.Payload)
+		if strings.HasPrefix(resp, "error: ") {
+			return protocol.SessionInfo{}, fmt.Errorf("%s", resp[7:])
+		}
+		return protocol.SessionInfo{}, fmt.Errorf("daemon error: %s", resp)
+	}
+	if msg.Header.Type != protocol.TypeSessionListResp {
+		return protocol.SessionInfo{}, fmt.Errorf("unexpected daemon response: %d", msg.Header.Type)
+	}
+
+	var resp protocol.SessionListResponse
+	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+		return protocol.SessionInfo{}, fmt.Errorf("failed to unmarshal session list response: %w", err)
+	}
+	switch len(resp.Sessions) {
+	case 0:
+		return protocol.SessionInfo{}, fmt.Errorf("no active SSH sessions for %s; start one with: knot ssh %s", alias, alias)
+	case 1:
+		return resp.Sessions[0], nil
+	default:
+		return promptFollowSession(alias, resp.Sessions)
+	}
+}
+
+func promptFollowSession(alias string, sessions []protocol.SessionInfo) (protocol.SessionInfo, error) {
+	fmt.Printf("Multiple active SSH sessions for %s:\n\n", alias)
+	fmt.Print(formatFollowSessionTable(sessions))
+	fmt.Print("\nEnter the No. to follow: ")
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return protocol.SessionInfo{}, err
+	}
+	choice, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || choice < 1 || choice > len(sessions) {
+		return protocol.SessionInfo{}, fmt.Errorf("invalid session selection")
+	}
+	return sessions[choice-1], nil
+}
+
+func formatFollowSessionTable(sessions []protocol.SessionInfo) string {
+	noHeader := "No."
+	startedHeader := "STARTED"
+	dirHeader := "DIRECTORY"
+	noWidth := len(noHeader)
+	startedWidth := len(startedHeader)
+	dirWidth := len(dirHeader)
+
+	for i, s := range sessions {
+		no := strconv.Itoa(i + 1)
+		if len(no) > noWidth {
+			noWidth = len(no)
+		}
+		started := formatSessionStarted(s.StartedAt)
+		if len(started) > startedWidth {
+			startedWidth = len(started)
+		}
+		dir := s.CurrentDir
+		if dir == "" {
+			dir = "(unknown)"
+		}
+		if len(dir) > dirWidth {
+			dirWidth = len(dir)
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %-*s   %-*s   %-*s\n", noWidth, noHeader, startedWidth, startedHeader, dirWidth, dirHeader)
+	fmt.Fprintf(&b, "  %s   %s   %s\n", strings.Repeat("-", noWidth), strings.Repeat("-", startedWidth), strings.Repeat("-", dirWidth))
+	for i, s := range sessions {
+		no := strconv.Itoa(i + 1)
+		dir := s.CurrentDir
+		if dir == "" {
+			dir = "(unknown)"
+		}
+		fmt.Fprintf(&b, "  %s   %-*s   %-*s\n",
+			padStyledText(no, boldText(no), noWidth),
+			startedWidth, formatSessionStarted(s.StartedAt),
+			dirWidth, dir)
+	}
+	return b.String()
+}
+
+func formatSessionStarted(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Local().Format("15:04:05")
 }

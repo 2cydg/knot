@@ -6,6 +6,7 @@ Knot provides two styles of file operation: the interactive `knot sftp` shell an
 
 ```sh
 knot sftp [alias] [remote_path]
+knot sftp [alias] --follow
 ```
 
 | Argument | Required | Description |
@@ -13,14 +14,27 @@ knot sftp [alias] [remote_path]
 | `[alias]` | Yes | Server alias. |
 | `[remote_path]` | No | Initial remote directory. |
 
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--follow` | bool | `false` | Follow the current directory of an active `knot ssh` session for the same alias. Cannot be used with `[remote_path]`. |
+
 Examples:
 
 ```sh
 knot sftp web-prod
 knot sftp web-prod /var/www
+knot sftp web-prod --follow
 ```
 
 The interactive shell supports command and path completion.
+
+## Follow SSH Directory
+
+`knot sftp web-prod --follow` opens an interactive SFTP shell that follows an existing `knot ssh web-prod` session. If one SSH session is active, Knot follows it automatically. If several sessions are active, Knot lists numbered sessions with start times and known directories, then prompts you to enter the `No.` to follow.
+
+When the followed SSH session reports a new directory, the SFTP shell tries to switch to the same path and prints a short `[follow]` message. If the directory cannot be opened through SFTP, the shell keeps its current directory and waits for the next update. If the followed SSH session closes, SFTP stays open in the last directory and stops following.
+
+Directory follow relies on OSC 7 current-directory escape sequences. Knot only installs a temporary OSC 7 hook for Bash and Zsh when a new interactive `knot ssh` shell starts. Other shells work only if they already emit OSC 7 themselves. If no OSC 7 sequence is emitted, Knot cannot track directory changes. The hook is temporary and does not modify `.bashrc`, `.zshrc`, or other remote shell configuration files.
 
 ## SFTP Shell Commands
 

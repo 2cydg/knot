@@ -12,16 +12,17 @@ import (
 // SFTPConn is a wrapper around net.Conn that implements io.ReadWriteCloser
 // for the sftp.NewClientPipe. It handles Knot protocol messages.
 type SFTPConn struct {
-	Conn       net.Conn
-	DataCh     chan []byte
-	ErrCh      chan error
-	Ready      chan struct{} // Closed when "ok" is received
-	Closed     chan struct{}
-	StartOnce  sync.Once
-	CloseOnce  sync.Once
-	Buf        []byte
+	Conn        net.Conn
+	DataCh      chan []byte
+	ErrCh       chan error
+	Ready       chan struct{} // Closed when "ok" is received
+	Closed      chan struct{}
+	StartOnce   sync.Once
+	CloseOnce   sync.Once
+	Buf         []byte
 	Interactive bool // If true, handles HostKeyConfirm interactively
 	AuthHandler func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error)
+	FollowCh    chan protocol.SessionCWDNotify
 }
 
 func (s *SFTPConn) Start() {
@@ -30,7 +31,11 @@ func (s *SFTPConn) Start() {
 		s.ErrCh = make(chan error, 1)
 		s.Ready = make(chan struct{})
 		s.Closed = make(chan struct{})
+		if s.FollowCh == nil {
+			s.FollowCh = make(chan protocol.SessionCWDNotify, 32)
+		}
 		go func() {
+			defer close(s.FollowCh)
 			handshakeDone := false
 			for {
 				msg, err := protocol.ReadMessage(s.Conn)
@@ -83,6 +88,17 @@ func (s *SFTPConn) Start() {
 						}
 					}
 					return
+				case protocol.TypeSessionCWDNotify:
+					var notify protocol.SessionCWDNotify
+					if err := json.Unmarshal(msg.Payload, &notify); err != nil {
+						continue
+					}
+					select {
+					case s.FollowCh <- notify:
+					case <-s.Closed:
+						return
+					default:
+					}
 				case protocol.TypeAuthChallenge:
 					if s.AuthHandler != nil {
 						var challenge protocol.AuthChallengePayload

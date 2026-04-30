@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // Magic bytes for the Knot protocol: "KN" (0x4B, 0x4E)
@@ -24,26 +25,29 @@ var (
 )
 
 const (
-	TypeReq             uint8 = 0x01
-	TypeResp            uint8 = 0x02
-	TypeData            uint8 = 0x03
-	TypeSignal          uint8 = 0x04
-	TypeHostKeyConfirm  uint8 = 0x05
-	TypeSFTPReq         uint8 = 0x06
-	TypeDisconnect      uint8 = 0x09
-	TypeStatusReq       uint8 = 0x0A
-	TypeStatusResp      uint8 = 0x0B
-	TypeForwardReq      uint8 = 0x0C
-	TypeForwardListReq  uint8 = 0x0D
-	TypeForwardListResp uint8 = 0x0E
-	TypeForwardNotify   uint8 = 0x0F
-	TypeClearReq        uint8 = 0x10
-	TypeClearResp       uint8 = 0x11
-	TypeExecReq         uint8 = 0x12
-	TypeExecResp        uint8 = 0x13
-	TypeAuthChallenge   uint8 = 0x14 // Daemon -> CLI: Request new credentials
-	TypeAuthResponse    uint8 = 0x15 // CLI -> Daemon: New credentials
-	TypeAuthRetryAbort  uint8 = 0x16 // CLI -> Daemon: Abort retry
+	TypeReq              uint8 = 0x01
+	TypeResp             uint8 = 0x02
+	TypeData             uint8 = 0x03
+	TypeSignal           uint8 = 0x04
+	TypeHostKeyConfirm   uint8 = 0x05
+	TypeSFTPReq          uint8 = 0x06
+	TypeDisconnect       uint8 = 0x09
+	TypeStatusReq        uint8 = 0x0A
+	TypeStatusResp       uint8 = 0x0B
+	TypeForwardReq       uint8 = 0x0C
+	TypeForwardListReq   uint8 = 0x0D
+	TypeForwardListResp  uint8 = 0x0E
+	TypeForwardNotify    uint8 = 0x0F
+	TypeClearReq         uint8 = 0x10
+	TypeClearResp        uint8 = 0x11
+	TypeExecReq          uint8 = 0x12
+	TypeExecResp         uint8 = 0x13
+	TypeAuthChallenge    uint8 = 0x14 // Daemon -> CLI: Request new credentials
+	TypeAuthResponse     uint8 = 0x15 // CLI -> Daemon: New credentials
+	TypeAuthRetryAbort   uint8 = 0x16 // CLI -> Daemon: Abort retry
+	TypeSessionListReq   uint8 = 0x17
+	TypeSessionListResp  uint8 = 0x18
+	TypeSessionCWDNotify uint8 = 0x19
 )
 
 // SubTypes for TypeData (using Reserved field)
@@ -89,10 +93,39 @@ type SSHRequest struct {
 
 // SFTPRequest defines the payload for an SFTP session request.
 type SFTPRequest struct {
-	Alias         string `json:"alias"`
-	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
-	IsInteractive bool   `json:"is_interactive"`
-	HostKeyPolicy string `json:"host_key_policy,omitempty"`
+	Alias           string `json:"alias"`
+	SSHAuthSock     string `json:"ssh_auth_sock,omitempty"`
+	IsInteractive   bool   `json:"is_interactive"`
+	HostKeyPolicy   string `json:"host_key_policy,omitempty"`
+	FollowSessionID string `json:"follow_session_id,omitempty"`
+}
+
+// SessionListRequest asks the daemon for active SSH sessions of an alias.
+type SessionListRequest struct {
+	Alias string `json:"alias"`
+}
+
+// SessionInfo describes a followable SSH session.
+type SessionInfo struct {
+	ID            string    `json:"id"`
+	Alias         string    `json:"alias"`
+	StartedAt     time.Time `json:"started_at"`
+	CurrentDir    string    `json:"current_dir,omitempty"`
+	CWDUpdatedAt  time.Time `json:"cwd_updated_at,omitempty"`
+	FollowerCount int       `json:"follower_count"`
+}
+
+// SessionListResponse contains active SSH sessions for an alias.
+type SessionListResponse struct {
+	Alias    string        `json:"alias"`
+	Sessions []SessionInfo `json:"sessions"`
+}
+
+// SessionCWDNotify is sent to SFTP clients following an SSH session.
+type SessionCWDNotify struct {
+	SessionID string `json:"session_id"`
+	Path      string `json:"path,omitempty"`
+	Closed    bool   `json:"closed,omitempty"`
 }
 
 // ExecRequest defines the payload for an SSH exec request.
