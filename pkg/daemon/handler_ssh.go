@@ -80,17 +80,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	defer session.Close()
 
 	// 4. Request PTY
-	echoMode := uint32(1)
-	if req.IsInteractive {
-		echoMode = 0
-	}
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          echoMode,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
-	}
-
-	if err := session.RequestPty(req.Term, req.Rows, req.Cols, modes); err != nil {
+	if err := session.RequestPty(req.Term, req.Rows, req.Cols, sshTerminalModes()); err != nil {
 		sendError("failed to request pty: " + err.Error())
 		return
 	}
@@ -340,6 +330,14 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		if !isAlive {
 			s.WriteMessage(protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
 		}
+	}
+}
+
+func sshTerminalModes() ssh.TerminalModes {
+	return ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
 	}
 }
 
