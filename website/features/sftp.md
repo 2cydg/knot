@@ -34,7 +34,9 @@ The interactive shell supports command and path completion.
 
 When the followed SSH session reports a new directory, the SFTP shell tries to switch to the same path and prints a short `[follow]` message. If the directory cannot be opened through SFTP, the shell keeps its current directory and waits for the next update. If the followed SSH session closes, SFTP stays open in the last directory and stops following.
 
-Directory follow relies on OSC 7 current-directory escape sequences. Knot only installs a temporary OSC 7 hook for Bash and Zsh when a new interactive `knot ssh` shell starts. Other shells work only if they already emit OSC 7 themselves. If no OSC 7 sequence is emitted, Knot cannot track directory changes. The hook is temporary and does not modify `.bashrc`, `.zshrc`, or other remote shell configuration files.
+Directory follow relies on OSC 7 current-directory escape sequences. When `knot sftp --follow` attaches to an active SSH session, Knot injects a temporary OSC 7 hook for Bash and Zsh into that followed session. Other shells work only if they already emit OSC 7 themselves. If no OSC 7 sequence is emitted, Knot cannot track directory changes.
+
+The injected hook is sent as keyboard input to the followed SSH session and ends with Enter. Use `--follow` when the followed session is sitting at a normal shell prompt. Do not start follow while the session is focused inside editors or full-screen programs such as Vim, less, top, database shells, or language REPLs, because the hook text may be handled by that foreground program. The hook is temporary and does not modify `.bashrc`, `.zshrc`, or other remote shell configuration files.
 
 ## SFTP Shell Commands
 

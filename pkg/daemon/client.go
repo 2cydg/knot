@@ -152,6 +152,39 @@ func (c *Client) GetForwardList(alias string) (*protocol.ForwardListResponse, er
 	return &resp, nil
 }
 
+func (c *Client) SendBroadcastRequest(req protocol.BroadcastRequest) (*protocol.BroadcastResponse, error) {
+	conn, err := c.ConnectWithAutoStart()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := protocol.WriteMessage(conn, protocol.TypeBroadcastReq, 0, data); err != nil {
+		return nil, err
+	}
+
+	msg, err := protocol.ReadMessage(conn)
+	if err != nil {
+		return nil, err
+	}
+	if msg.Header.Type != protocol.TypeBroadcastResp {
+		return nil, fmt.Errorf("unexpected broadcast response type: %d", msg.Header.Type)
+	}
+
+	var resp protocol.BroadcastResponse
+	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return &resp, fmt.Errorf("%s", resp.Error)
+	}
+	return &resp, nil
+}
+
 // Signal sends a signal to the daemon.
 func (c *Client) Signal(signal string) error {
 	conn, err := c.Connect()

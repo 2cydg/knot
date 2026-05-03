@@ -51,6 +51,8 @@ knot config get servers.web-prod
 | --- | --- | --- |
 | `forward_agent` | bool | Whether to forward the SSH agent. |
 | `clear_screen_on_connect` | bool | Whether to clear the screen after connecting. |
+| `broadcast_escape_enable` | bool | Whether new SSH sessions started with `--broadcast` enable broadcast escape controls by default. |
+| `broadcast_escape_char` | single printable ASCII character | Default broadcast escape prefix when `broadcast_escape_enable` is true. |
 | `idle_timeout` | Go duration | Idle timeout for daemon-held connections. |
 | `keepalive_interval` | Go duration | SSH keepalive interval. |
 | `log_level` | `debug`, `info`, `warn`, `error` | Log level. |
@@ -60,6 +62,8 @@ Examples:
 
 ```sh
 knot config set forward_agent true
+knot config set broadcast_escape_enable true
+knot config set broadcast_escape_char '~'
 knot config set idle_timeout 30m
 knot config set log_level error
 knot config set default_sync_provider home

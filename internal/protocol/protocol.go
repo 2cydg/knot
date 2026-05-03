@@ -48,13 +48,17 @@ const (
 	TypeSessionListReq   uint8 = 0x17
 	TypeSessionListResp  uint8 = 0x18
 	TypeSessionCWDNotify uint8 = 0x19
+	TypeBroadcastReq     uint8 = 0x1A
+	TypeBroadcastResp    uint8 = 0x1B
+	TypeBroadcastNotify  uint8 = 0x1C
 )
 
 // SubTypes for TypeData (using Reserved field)
 const (
-	DataStdin  uint8 = 0x01
-	DataStdout uint8 = 0x02
-	DataStderr uint8 = 0x03
+	DataStdin          uint8 = 0x01
+	DataStdout         uint8 = 0x02
+	DataStderr         uint8 = 0x03
+	DataStdinNoForward uint8 = 0x04
 )
 
 // SignalResize signals a terminal window resize.
@@ -81,14 +85,16 @@ type AuthResponsePayload struct {
 
 // SSHRequest defines the payload for an SSH session request.
 type SSHRequest struct {
-	Alias         string `json:"alias"`
-	Term          string `json:"term"`
-	Rows          int    `json:"rows"`
-	Cols          int    `json:"cols"`
-	ForwardAgent  bool   `json:"forward_agent"`
-	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
-	IsInteractive bool   `json:"is_interactive"`
-	HostKeyPolicy string `json:"host_key_policy,omitempty"`
+	Alias          string `json:"alias"`
+	Term           string `json:"term"`
+	Rows           int    `json:"rows"`
+	Cols           int    `json:"cols"`
+	ForwardAgent   bool   `json:"forward_agent"`
+	SSHAuthSock    string `json:"ssh_auth_sock,omitempty"`
+	IsInteractive  bool   `json:"is_interactive"`
+	HostKeyPolicy  string `json:"host_key_policy,omitempty"`
+	BroadcastGroup string `json:"broadcast_group,omitempty"`
+	Escape         string `json:"escape,omitempty"`
 }
 
 // SFTPRequest defines the payload for an SFTP session request.
@@ -126,6 +132,50 @@ type SessionCWDNotify struct {
 	SessionID string `json:"session_id"`
 	Path      string `json:"path,omitempty"`
 	Closed    bool   `json:"closed,omitempty"`
+}
+
+// BroadcastRequest asks the daemon to inspect or mutate broadcast groups.
+type BroadcastRequest struct {
+	Action   string `json:"action"`
+	Group    string `json:"group,omitempty"`
+	Selector string `json:"selector,omitempty"`
+}
+
+// BroadcastGroupInfo describes a daemon-local broadcast group.
+type BroadcastGroupInfo struct {
+	Group     string    `json:"group"`
+	Members   int       `json:"members"`
+	Active    int       `json:"active"`
+	Paused    int       `json:"paused"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// BroadcastMemberInfo describes one session in a broadcast group.
+type BroadcastMemberInfo struct {
+	SessionID string    `json:"session_id"`
+	Alias     string    `json:"alias"`
+	Remote    string    `json:"remote,omitempty"`
+	State     string    `json:"state"`
+	JoinedAt  time.Time `json:"joined_at"`
+}
+
+// BroadcastResponse is the daemon response for broadcast management requests.
+type BroadcastResponse struct {
+	Groups  []BroadcastGroupInfo  `json:"groups,omitempty"`
+	Group   *BroadcastGroupInfo   `json:"group,omitempty"`
+	Members []BroadcastMemberInfo `json:"members,omitempty"`
+	Message string                `json:"message,omitempty"`
+	Error   string                `json:"error,omitempty"`
+}
+
+// BroadcastNotify is a local-only notification for an attached SSH CLI.
+type BroadcastNotify struct {
+	Group     string `json:"group,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Action    string `json:"action,omitempty"`
+	State     string `json:"state,omitempty"`
+	Message   string `json:"message"`
+	Level     string `json:"level,omitempty"`
 }
 
 // ExecRequest defines the payload for an SSH exec request.

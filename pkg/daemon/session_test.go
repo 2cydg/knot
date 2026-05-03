@@ -1,6 +1,10 @@
 package daemon
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
 
 func TestSessionManagerCountByPoolKeyUsesTargetConnection(t *testing.T) {
 	sm := NewSessionManager()
@@ -70,5 +74,24 @@ func TestSessionRemoveClosesFollowers(t *testing.T) {
 	}
 	if _, ok := <-ch; ok {
 		t.Fatal("follower channel remains open")
+	}
+}
+
+func TestInjectOSC7HookWritesToSessionInput(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.Add("server", "alias", nil, nil)
+	var input bytes.Buffer
+	session.SetInput(&input)
+
+	if err := injectOSC7Hook(session); err != nil {
+		t.Fatalf("injectOSC7Hook: %v", err)
+	}
+
+	got := input.String()
+	if !strings.Contains(got, "__knot_osc7") {
+		t.Fatalf("hook input = %q, want OSC 7 hook", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatalf("hook input = %q, want trailing newline", got)
 	}
 }

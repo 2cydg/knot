@@ -59,13 +59,14 @@ func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
 		return args, nil
 	}
 
+	if isShellCompletionCommand(args[1]) {
+		return rewriteCompletionArgsForAlias(args, root)
+	}
+
 	firstArg := args[1]
 
-	// Let Cobra handle root flags and built-in completion commands.
-	if strings.HasPrefix(firstArg, "-") ||
-		firstArg == "help" ||
-		firstArg == cobra.ShellCompRequestCmd ||
-		firstArg == cobra.ShellCompNoDescRequestCmd {
+	// Let Cobra handle root flags and built-in help.
+	if strings.HasPrefix(firstArg, "-") || firstArg == "help" {
 		return args, nil
 	}
 
@@ -88,6 +89,37 @@ func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
 	newArgs = append(newArgs, args[0], "ssh")
 	newArgs = append(newArgs, args[1:]...)
 	return newArgs, nil
+}
+
+func rewriteCompletionArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
+	if len(args) <= 2 {
+		return args, nil
+	}
+
+	firstArg := args[2]
+	if firstArg == "" || strings.HasPrefix(firstArg, "-") || firstArg == "help" {
+		return args, nil
+	}
+	for _, c := range root.Commands() {
+		if c.Name() == firstArg || c.HasAlias(firstArg) {
+			return args, nil
+		}
+	}
+	if len(firstArg) > 255 {
+		return nil, fmt.Errorf("alias too long")
+	}
+	if strings.ContainsAny(firstArg, " \t\n\r/;\"'|&<>") {
+		return nil, fmt.Errorf("invalid alias format: '%s' (contains disallowed characters)", firstArg)
+	}
+
+	newArgs := make([]string, 0, len(args)+1)
+	newArgs = append(newArgs, args[0], args[1], "ssh")
+	newArgs = append(newArgs, args[2:]...)
+	return newArgs, nil
+}
+
+func isShellCompletionCommand(arg string) bool {
+	return arg == cobra.ShellCompRequestCmd || arg == cobra.ShellCompNoDescRequestCmd
 }
 
 func init() {

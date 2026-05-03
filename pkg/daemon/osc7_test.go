@@ -83,38 +83,3 @@ func TestOSC7ParserKeepsSplitPrefix(t *testing.T) {
 		t.Fatalf("second observe output=%q paths=%#v", string(out), paths)
 	}
 }
-
-func TestInitialOSC7GateDropsStartupOutputBeforeFirstPath(t *testing.T) {
-	gate := newInitialOSC7Gate(true)
-
-	if out := gate.Filter([]byte("prompt$ "), -1); out != nil {
-		t.Fatalf("first output = %q, want nil", string(out))
-	}
-	out := gate.Filter([]byte("\r\nprompt$ "), 2)
-	if string(out) != "prompt$ " {
-		t.Fatalf("second output = %q, want prompt", string(out))
-	}
-	out = gate.Filter([]byte("ls\r\n"), -1)
-	if string(out) != "ls\r\n" {
-		t.Fatalf("post-gate output = %q, want passthrough", string(out))
-	}
-}
-
-func TestInitialOSC7GateFlushesWhenNoPathArrives(t *testing.T) {
-	gate := newInitialOSC7Gate(true)
-	out := gate.Filter(make([]byte, initialOSC7GateMaxBytes+1), -1)
-	if len(out) != initialOSC7GateMaxBytes+1 {
-		t.Fatalf("output len = %d, want %d", len(out), initialOSC7GateMaxBytes+1)
-	}
-	if out := gate.Filter([]byte("next"), -1); string(out) != "next" {
-		t.Fatalf("post-flush output = %q, want next", string(out))
-	}
-}
-
-func TestInitialOSC7GateDisabledPassesThrough(t *testing.T) {
-	gate := newInitialOSC7Gate(false)
-	out := gate.Filter([]byte("prompt$ "), -1)
-	if string(out) != "prompt$ " {
-		t.Fatalf("output = %q, want passthrough", string(out))
-	}
-}

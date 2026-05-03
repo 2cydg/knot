@@ -34,6 +34,27 @@ knot ssh web-prod
 
 To avoid ambiguity, shortcut aliases cannot match built-in commands and cannot contain whitespace, path separators, or common shell metacharacters.
 
+### Command Broadcast
+
+Interactive SSH sessions can join a daemon-local broadcast group. Input typed in one active member is forwarded to the other active members in the same group:
+
+```sh
+knot ssh web-1 --broadcast cloud
+knot web-2 --broadcast cloud
+```
+
+Use `knot broadcast list` and `knot broadcast show cloud` to inspect groups. `knot broadcast pause`, `resume`, `leave`, and `disband` manage existing sessions without closing the SSH connection.
+
+Session-local escape controls are disabled by default. Enable them for one connection with `--escape`, set a custom one-character prefix with `--escape %`, or force them off with `--escape none`:
+
+```sh
+knot ssh web-1 --broadcast cloud --escape
+knot ssh web-1 --broadcast cloud --escape %
+knot ssh web-1 --broadcast cloud --escape none
+```
+
+The global settings `broadcast_escape_enable` and `broadcast_escape_char` control the default for SSH sessions started with `--broadcast`. Command-line `--escape` always has priority over the global settings. Plain `knot ssh [alias]` sessions do not enable broadcast escapes from the global settings. When escape controls are enabled, Knot prints the available local shortcuts after connecting.
+
 ## Add a Server
 
 ```sh
