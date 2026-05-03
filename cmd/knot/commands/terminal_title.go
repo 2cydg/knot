@@ -26,8 +26,23 @@ func (m *terminalTitleManager) PushAndSet(title string) {
 	}
 
 	_, _ = fmt.Fprint(m.w, "\033[22;0t")
-	_, _ = fmt.Fprintf(m.w, "\033]0;%s\a", title)
+	m.writeTitle(title)
 	m.active = true
+}
+
+func (m *terminalTitleManager) Set(title string) {
+	if m == nil || m.w == nil {
+		return
+	}
+	m.writeTitle(title)
+}
+
+func (m *terminalTitleManager) writeTitle(title string) {
+	title = sanitizeTerminalTitle(title)
+	if title == "" {
+		return
+	}
+	_, _ = fmt.Fprintf(m.w, "\033]0;%s\a", title)
 }
 
 func (m *terminalTitleManager) Restore() {

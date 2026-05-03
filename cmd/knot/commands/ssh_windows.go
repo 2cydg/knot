@@ -5,15 +5,14 @@ package commands
 import (
 	"encoding/json"
 	"knot/internal/protocol"
-	"net"
 	"os"
 	"time"
 
 	"golang.org/x/term"
 )
 
-func setupResizeHandler(conn net.Conn, _ int) {
-	// On Windows, GetSize requires an output handle (stdout), 
+func setupResizeHandler(writeMessage func(uint8, uint8, []byte) error, _ int) {
+	// On Windows, GetSize requires an output handle (stdout),
 	// while the fd passed from ssh.go is typically stdin.
 	fd := int(os.Stdout.Fd())
 
@@ -36,7 +35,7 @@ func setupResizeHandler(conn net.Conn, _ int) {
 				lastCols, lastRows = cols, rows
 				payload, err := json.Marshal(protocol.ResizePayload{Rows: rows, Cols: cols})
 				if err == nil {
-					_ = protocol.WriteMessage(conn, protocol.TypeSignal, protocol.SignalResize, payload)
+					_ = writeMessage(protocol.TypeSignal, protocol.SignalResize, payload)
 				}
 			}
 		}

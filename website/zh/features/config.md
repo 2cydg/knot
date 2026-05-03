@@ -51,6 +51,8 @@ knot config get servers.web-prod
 | --- | --- | --- |
 | `forward_agent` | bool | 是否转发 SSH agent。 |
 | `clear_screen_on_connect` | bool | 连接后是否清屏。 |
+| `broadcast_escape_enable` | bool | 带 `--broadcast` 启动的新 SSH 会话是否默认启用广播 escape 控制。 |
+| `broadcast_escape_char` | 单个可打印 ASCII 字符 | `broadcast_escape_enable` 为 true 时使用的默认广播 escape 前缀。 |
 | `idle_timeout` | Go duration | daemon 中空闲连接的超时时间。 |
 | `keepalive_interval` | Go duration | SSH keepalive 间隔。 |
 | `log_level` | `debug`、`info`、`warn`、`error` | 日志级别。 |
@@ -60,6 +62,8 @@ knot config get servers.web-prod
 
 ```sh
 knot config set forward_agent true
+knot config set broadcast_escape_enable true
+knot config set broadcast_escape_char '~'
 knot config set idle_timeout 30m
 knot config set log_level error
 knot config set default_sync_provider home

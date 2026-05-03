@@ -70,14 +70,16 @@ type ServerConfig struct {
 }
 
 type SettingsConfig struct {
-	ForwardAgent         *bool  `toml:"forward_agent"`
-	ClearScreenOnConnect *bool  `toml:"clear_screen_on_connect"`
-	IdleTimeout          string `toml:"idle_timeout"`
-	KeepaliveInterval    string `toml:"keepalive_interval"`
-	LogLevel             string `toml:"log_level"`
-	RecentLimit          int    `toml:"recent_limit"`
-	DefaultSyncProvider  string `toml:"default_sync_provider,omitempty"`
-	SyncPassword         string `toml:"sync_password,omitempty"`
+	ForwardAgent          *bool  `toml:"forward_agent"`
+	ClearScreenOnConnect  *bool  `toml:"clear_screen_on_connect"`
+	BroadcastEscapeEnable *bool  `toml:"broadcast_escape_enable"`
+	BroadcastEscapeChar   string `toml:"broadcast_escape_char"`
+	IdleTimeout           string `toml:"idle_timeout"`
+	KeepaliveInterval     string `toml:"keepalive_interval"`
+	LogLevel              string `toml:"log_level"`
+	RecentLimit           int    `toml:"recent_limit"`
+	DefaultSyncProvider   string `toml:"default_sync_provider,omitempty"`
+	SyncPassword          string `toml:"sync_password,omitempty"`
 }
 
 func (s SettingsConfig) GetForwardAgent() bool {
@@ -92,6 +94,24 @@ func (s SettingsConfig) GetClearScreenOnConnect() bool {
 		return true
 	}
 	return *s.ClearScreenOnConnect
+}
+
+func (s SettingsConfig) GetBroadcastEscapeEnable() bool {
+	if s.BroadcastEscapeEnable == nil {
+		return false
+	}
+	return *s.BroadcastEscapeEnable
+}
+
+func (s SettingsConfig) GetBroadcastEscapeChar() string {
+	if s.BroadcastEscapeChar == "" {
+		return "~"
+	}
+	return s.BroadcastEscapeChar
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 type Config struct {
@@ -389,12 +409,14 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		defaultTrue := true
 		return &Config{
 			Settings: SettingsConfig{
-				ForwardAgent:         &defaultTrue,
-				ClearScreenOnConnect: &defaultTrue,
-				IdleTimeout:          "30m",
-				KeepaliveInterval:    "20s",
-				LogLevel:             "error",
-				RecentLimit:          5,
+				ForwardAgent:          &defaultTrue,
+				ClearScreenOnConnect:  &defaultTrue,
+				BroadcastEscapeEnable: boolPtr(false),
+				BroadcastEscapeChar:   "~",
+				IdleTimeout:           "30m",
+				KeepaliveInterval:     "20s",
+				LogLevel:              "error",
+				RecentLimit:           5,
 			},
 			Servers:       make(map[string]ServerConfig),
 			Proxies:       make(map[string]ProxyConfig),
@@ -424,6 +446,12 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 	if cfg.Settings.ClearScreenOnConnect == nil {
 		defaultTrue := true
 		cfg.Settings.ClearScreenOnConnect = &defaultTrue
+	}
+	if cfg.Settings.BroadcastEscapeEnable == nil {
+		cfg.Settings.BroadcastEscapeEnable = boolPtr(false)
+	}
+	if cfg.Settings.BroadcastEscapeChar == "" {
+		cfg.Settings.BroadcastEscapeChar = "~"
 	}
 
 	if cfg.Servers == nil {

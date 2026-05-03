@@ -71,6 +71,26 @@ func TestConfigLoadSave(t *testing.T) {
 	}
 }
 
+func TestSettingsBroadcastEscapeDefaults(t *testing.T) {
+	settings := SettingsConfig{}
+	if settings.GetBroadcastEscapeEnable() {
+		t.Fatal("broadcast escape should default to disabled")
+	}
+	if got := settings.GetBroadcastEscapeChar(); got != "~" {
+		t.Fatalf("broadcast escape char = %q, want ~", got)
+	}
+
+	enabled := true
+	settings.BroadcastEscapeEnable = &enabled
+	settings.BroadcastEscapeChar = ","
+	if !settings.GetBroadcastEscapeEnable() {
+		t.Fatal("broadcast escape should be enabled")
+	}
+	if got := settings.GetBroadcastEscapeChar(); got != "," {
+		t.Fatalf("broadcast escape char = %q, want comma", got)
+	}
+}
+
 type testProvider struct{}
 
 func (testProvider) Encrypt(plaintext []byte) ([]byte, error) {

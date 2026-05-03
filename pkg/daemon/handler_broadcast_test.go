@@ -56,6 +56,9 @@ func TestHandleBroadcastJoinNotifiesTarget(t *testing.T) {
 	if notify.Group != "deploy" || !strings.Contains(notify.Message, "joined deploy") {
 		t.Fatalf("notify = %+v", notify)
 	}
+	if notify.Action != "join" || notify.State != "active" {
+		t.Fatalf("notify state = %+v", notify)
+	}
 
 	resp := <-respCh
 	if resp.Error != "" {
@@ -129,6 +132,55 @@ func TestHandleBroadcastAmbiguousSelectorDoesNotMutate(t *testing.T) {
 	}
 	if groups := d.bm.List(); len(groups) != 0 {
 		t.Fatalf("groups = %+v", groups)
+	}
+}
+
+func TestHandleBroadcastActionForSessionUsesCurrentSession(t *testing.T) {
+	d := testDaemonWithBroadcast()
+	session := d.sm.Add("server", "web", nil, nil)
+	if err := d.bm.Join("deploy", session); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := d.handleBroadcastActionForSession(&protocol.BroadcastRequest{Action: "pause"}, session)
+
+	if resp.Error != "" {
+		t.Fatalf("error = %s", resp.Error)
+	}
+	_, members, err := d.bm.Show("deploy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0].State != "paused" {
+		t.Fatalf("members = %+v", members)
+	}
+}
+
+func TestHandleBroadcastActionForSessionCanJoinCurrentSession(t *testing.T) {
+	d := testDaemonWithBroadcast()
+	session := d.sm.Add("server", "web", nil, nil)
+
+	resp := d.handleBroadcastActionForSession(&protocol.BroadcastRequest{Action: "join", Group: "deploy"}, session)
+
+	if resp.Error != "" {
+		t.Fatalf("error = %s", resp.Error)
+	}
+	group, members, err := d.bm.Show("deploy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Group != "deploy" || len(members) != 1 || members[0].SessionID != session.ID {
+		t.Fatalf("group = %+v members = %+v", group, members)
+	}
+}
+
+func TestHandleBroadcastActionWithoutCurrentSessionRequiresSelector(t *testing.T) {
+	d := testDaemonWithBroadcast()
+
+	resp := d.handleBroadcastActionForSession(&protocol.BroadcastRequest{Action: "pause"}, nil)
+
+	if resp.Error == "" {
+		t.Fatal("expected selector error")
 	}
 }
 

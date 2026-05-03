@@ -19,6 +19,19 @@ func TestTerminalTitleManagerPushSetAndRestore(t *testing.T) {
 	}
 }
 
+func TestTerminalTitleManagerSetDoesNotPushRestoreStack(t *testing.T) {
+	var buf bytes.Buffer
+	mgr := newTerminalTitleManager(&buf)
+
+	mgr.Set("web [📢 cloud]")
+
+	got := buf.String()
+	want := "\033]0;web [📢 cloud]\a"
+	if got != want {
+		t.Fatalf("unexpected title control sequence: got %q want %q", got, want)
+	}
+}
+
 func TestSanitizeTerminalTitleRemovesControlChars(t *testing.T) {
 	got := sanitizeTerminalTitle("prod\tapp\n\x1btest")
 	if got != "prodapptest" {

@@ -172,6 +172,8 @@ type BroadcastResponse struct {
 type BroadcastNotify struct {
 	Group     string `json:"group,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	Action    string `json:"action,omitempty"`
+	State     string `json:"state,omitempty"`
 	Message   string `json:"message"`
 	Level     string `json:"level,omitempty"`
 }

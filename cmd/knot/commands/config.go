@@ -18,7 +18,7 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage global settings",
-	Long:  `View and modify global settings like forward_agent, clear_screen_on_connect, idle_timeout, keepalive_interval, and log_level.`,
+	Long:  `View and modify global settings like forward_agent, clear_screen_on_connect, idle_timeout, keepalive_interval, log_level, and broadcast escape controls.`,
 }
 
 var configInitCmd = &cobra.Command{
@@ -67,13 +67,16 @@ var configInitCmd = &cobra.Command{
 
 		// Set default settings
 		defaultTrue := true
+		defaultFalse := false
 		cfg.Settings = config.SettingsConfig{
-			ForwardAgent:         &defaultTrue,
-			ClearScreenOnConnect: &defaultTrue,
-			IdleTimeout:          "30m",
-			KeepaliveInterval:    "20s",
-			LogLevel:             "error",
-			RecentLimit:          5,
+			ForwardAgent:          &defaultTrue,
+			ClearScreenOnConnect:  &defaultTrue,
+			BroadcastEscapeEnable: &defaultFalse,
+			BroadcastEscapeChar:   "~",
+			IdleTimeout:           "30m",
+			KeepaliveInterval:     "20s",
+			LogLevel:              "error",
+			RecentLimit:           5,
 		}
 
 		if err := cfg.Save(provider); err != nil {
@@ -108,6 +111,8 @@ var configListCmd = &cobra.Command{
 		return formatter.Render(map[string]interface{}{"settings": settings}, func() error {
 			fmt.Printf("forward_agent:           %t\n", cfg.Settings.GetForwardAgent())
 			fmt.Printf("clear_screen_on_connect: %t\n", cfg.Settings.GetClearScreenOnConnect())
+			fmt.Printf("broadcast_escape_enable: %t\n", cfg.Settings.GetBroadcastEscapeEnable())
+			fmt.Printf("broadcast_escape_char:   %s\n", cfg.Settings.GetBroadcastEscapeChar())
 			fmt.Printf("idle_timeout:            %s\n", cfg.Settings.IdleTimeout)
 			fmt.Printf("keepalive_interval:      %s\n", cfg.Settings.KeepaliveInterval)
 			fmt.Printf("log_level:               %s\n", cfg.Settings.LogLevel)
@@ -178,16 +183,27 @@ var configSetCmd = &cobra.Command{
 		}
 
 		switch key {
-		case "forward_agent", "clear_screen_on_connect":
+		case "forward_agent", "clear_screen_on_connect", "broadcast_escape_enable":
 			val, err := strconv.ParseBool(value)
 			if err != nil {
 				return fmt.Errorf("invalid value for %s: %s (use true/false, 1/0, t/f)", key, value)
 			}
-			if key == "forward_agent" {
+			switch key {
+			case "forward_agent":
 				cfg.Settings.ForwardAgent = &val
-			} else {
+			case "clear_screen_on_connect":
 				cfg.Settings.ClearScreenOnConnect = &val
+			case "broadcast_escape_enable":
+				cfg.Settings.BroadcastEscapeEnable = &val
 			}
+		case "broadcast_escape_char":
+			if err := validateSSHEscapeValue(value); err != nil {
+				return err
+			}
+			if value == "none" || value == "" {
+				return fmt.Errorf("invalid broadcast_escape_char %q: use a single printable ASCII character", value)
+			}
+			cfg.Settings.BroadcastEscapeChar = value
 		case "idle_timeout", "keepalive_interval":
 			if _, err := time.ParseDuration(value); err != nil {
 				return fmt.Errorf("invalid duration format for %s: %w", key, err)
@@ -237,6 +253,8 @@ func sanitizedSettings(cfg *config.Config) map[string]interface{} {
 	return map[string]interface{}{
 		"forward_agent":           cfg.Settings.GetForwardAgent(),
 		"clear_screen_on_connect": cfg.Settings.GetClearScreenOnConnect(),
+		"broadcast_escape_enable": cfg.Settings.GetBroadcastEscapeEnable(),
+		"broadcast_escape_char":   cfg.Settings.GetBroadcastEscapeChar(),
 		"idle_timeout":            cfg.Settings.IdleTimeout,
 		"keepalive_interval":      cfg.Settings.KeepaliveInterval,
 		"log_level":               cfg.Settings.LogLevel,

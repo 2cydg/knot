@@ -64,6 +64,14 @@ func TestConfigValueCandidates(t *testing.T) {
 			want: []string{"false", "true"},
 		},
 		{
+			key:  "broadcast_escape_enable",
+			want: []string{"false", "true"},
+		},
+		{
+			key:  "broadcast_escape_char",
+			want: []string{"~"},
+		},
+		{
 			key:  "log_level",
 			want: []string{"debug", "error", "info", "warn"},
 		},

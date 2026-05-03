@@ -20,6 +20,15 @@ func (d *Daemon) handleBroadcastRequest(conn net.Conn, payload []byte) {
 }
 
 func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.BroadcastResponse {
+	return d.handleBroadcastActionForSession(req, nil)
+}
+
+func (d *Daemon) handleBroadcastActionForSession(req *protocol.BroadcastRequest, current *Session) protocol.BroadcastResponse {
+	origin := "external command"
+	if current != nil && req.Selector == "" {
+		origin = "session escape"
+	}
+
 	switch req.Action {
 	case "list":
 		return protocol.BroadcastResponse{Groups: d.bm.List()}
@@ -38,7 +47,7 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 		if req.Group == "" {
 			return protocol.BroadcastResponse{Error: "broadcast group is required"}
 		}
-		session, candidates, err := d.resolveBroadcastSelector(req.Selector)
+		session, candidates, err := d.resolveBroadcastSelectorForSession(req.Selector, current)
 		if err != nil {
 			return protocol.BroadcastResponse{Members: selectorCandidates(candidates), Error: err.Error()}
 		}
@@ -48,12 +57,14 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 		d.notifySession(session, protocol.BroadcastNotify{
 			Group:     req.Group,
 			SessionID: session.ID,
-			Message:   fmt.Sprintf("[broadcast: joined %s by external command]", req.Group),
+			Action:    "join",
+			State:     "active",
+			Message:   fmt.Sprintf("[broadcast: joined %s by %s]", req.Group, origin),
 			Level:     "info",
 		})
 		return protocol.BroadcastResponse{Message: fmt.Sprintf("session %s joined broadcast group %s", session.ID, req.Group)}
 	case "leave":
-		session, candidates, err := d.resolveBroadcastSelector(req.Selector)
+		session, candidates, err := d.resolveBroadcastSelectorForSession(req.Selector, current)
 		if err != nil {
 			return protocol.BroadcastResponse{Members: selectorCandidates(candidates), Error: err.Error()}
 		}
@@ -64,7 +75,8 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 		d.notifySession(session, protocol.BroadcastNotify{
 			Group:     group,
 			SessionID: session.ID,
-			Message:   "[broadcast: left group by external command]",
+			Action:    "leave",
+			Message:   fmt.Sprintf("[broadcast: left group by %s]", origin),
 			Level:     "info",
 		})
 		if ok {
@@ -72,7 +84,7 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 		}
 		return protocol.BroadcastResponse{Message: fmt.Sprintf("session %s left broadcast group", session.ID)}
 	case "pause":
-		session, candidates, err := d.resolveBroadcastSelector(req.Selector)
+		session, candidates, err := d.resolveBroadcastSelectorForSession(req.Selector, current)
 		if err != nil {
 			return protocol.BroadcastResponse{Members: selectorCandidates(candidates), Error: err.Error()}
 		}
@@ -83,12 +95,14 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 		d.notifySession(session, protocol.BroadcastNotify{
 			Group:     group,
 			SessionID: session.ID,
-			Message:   "[broadcast: paused by external command]",
+			Action:    "pause",
+			State:     "paused",
+			Message:   fmt.Sprintf("[broadcast: paused by %s]", origin),
 			Level:     "info",
 		})
 		return protocol.BroadcastResponse{Message: fmt.Sprintf("session %s paused broadcast", session.ID)}
 	case "resume":
-		session, candidates, err := d.resolveBroadcastSelector(req.Selector)
+		session, candidates, err := d.resolveBroadcastSelectorForSession(req.Selector, current)
 		if err != nil {
 			return protocol.BroadcastResponse{Members: selectorCandidates(candidates), Error: err.Error()}
 		}
@@ -99,7 +113,9 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 		d.notifySession(session, protocol.BroadcastNotify{
 			Group:     group,
 			SessionID: session.ID,
-			Message:   "[broadcast: resumed by external command]",
+			Action:    "resume",
+			State:     "active",
+			Message:   fmt.Sprintf("[broadcast: resumed by %s]", origin),
 			Level:     "info",
 		})
 		return protocol.BroadcastResponse{Message: fmt.Sprintf("session %s resumed broadcast", session.ID)}
@@ -116,6 +132,7 @@ func (d *Daemon) handleBroadcastAction(req *protocol.BroadcastRequest) protocol.
 				d.notifySession(session, protocol.BroadcastNotify{
 					Group:     req.Group,
 					SessionID: session.ID,
+					Action:    "disband",
 					Message:   fmt.Sprintf("[broadcast: group %s disbanded by external command]", req.Group),
 					Level:     "info",
 				})
@@ -142,6 +159,13 @@ func sessionCompletionMembers(sessions []*Session) []protocol.BroadcastMemberInf
 
 func (d *Daemon) resolveBroadcastSelector(selector string) (*Session, []protocol.SessionInfo, error) {
 	return d.sm.ResolveSelector(selector)
+}
+
+func (d *Daemon) resolveBroadcastSelectorForSession(selector string, current *Session) (*Session, []protocol.SessionInfo, error) {
+	if selector == "" && current != nil {
+		return current, nil, nil
+	}
+	return d.resolveBroadcastSelector(selector)
 }
 
 func (d *Daemon) writeBroadcastResponse(conn net.Conn, resp protocol.BroadcastResponse) {

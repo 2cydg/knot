@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	osc7Prefix              = "\x1b]7;"
-	osc7MaxBuffer           = 4096
-	initialOSC7GateMaxBytes = 8192
+	osc7Prefix    = "\x1b]7;"
+	osc7MaxBuffer = 4096
 )
 
 type osc7Parser struct {
@@ -108,35 +107,4 @@ func parseOSC7Payload(payload string) string {
 		return ""
 	}
 	return path.Clean(u.Path)
-}
-
-type initialOSC7Gate struct {
-	enabled bool
-	pending []byte
-}
-
-func newInitialOSC7Gate(enabled bool) initialOSC7Gate {
-	return initialOSC7Gate{enabled: enabled}
-}
-
-func (g *initialOSC7Gate) Filter(clean []byte, firstPathAt int) []byte {
-	if !g.enabled {
-		return clean
-	}
-	if firstPathAt >= 0 {
-		g.enabled = false
-		g.pending = nil
-		return clean[firstPathAt:]
-	}
-	if len(clean) == 0 {
-		return nil
-	}
-	g.pending = append(g.pending, clean...)
-	if len(g.pending) > initialOSC7GateMaxBytes {
-		g.enabled = false
-		out := g.pending
-		g.pending = nil
-		return out
-	}
-	return nil
 }

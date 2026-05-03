@@ -34,6 +34,27 @@ knot ssh web-prod
 
 为了避免歧义，快捷别名不能和内置命令同名，也不能包含空白、路径分隔符或常见 shell 元字符。
 
+### 命令广播
+
+交互式 SSH 会话可以加入 daemon 本地维护的广播组。同一组内的 active 成员会互相转发键盘输入：
+
+```sh
+knot ssh web-1 --broadcast cloud
+knot web-2 --broadcast cloud
+```
+
+可以用 `knot broadcast list` 和 `knot broadcast show cloud` 查看广播组。`knot broadcast pause`、`resume`、`leave` 和 `disband` 可以管理已有会话，不会关闭 SSH 连接。
+
+会话内 escape 控制默认关闭。可以用 `--escape` 为单次连接开启默认前缀，用 `--escape %` 指定单字符前缀，或用 `--escape none` 强制关闭：
+
+```sh
+knot ssh web-1 --broadcast cloud --escape
+knot ssh web-1 --broadcast cloud --escape %
+knot ssh web-1 --broadcast cloud --escape none
+```
+
+全局配置 `broadcast_escape_enable` 和 `broadcast_escape_char` 控制带 `--broadcast` 启动的 SSH 会话默认行为。命令行里的 `--escape` 优先级始终高于全局配置。普通 `knot ssh [alias]` 会话不会因为全局配置自动启用 broadcast escape。开启 escape 后，Knot 会在连接后打印可用的本地快捷键。
+
 ## 添加服务器
 
 ```sh

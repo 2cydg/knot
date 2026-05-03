@@ -133,6 +133,8 @@ func configKeyValueCompleter(cmd *cobra.Command, args []string, toComplete strin
 }
 
 var configKeys = []string{
+	"broadcast_escape_char",
+	"broadcast_escape_enable",
 	"clear_screen_on_connect",
 	"forward_agent",
 	"idle_timeout",
@@ -143,8 +145,10 @@ var configKeys = []string{
 
 func configValueCandidates(key string) []string {
 	switch strings.ToLower(key) {
-	case "forward_agent", "clear_screen_on_connect":
+	case "forward_agent", "clear_screen_on_connect", "broadcast_escape_enable":
 		return []string{"false", "true"}
+	case "broadcast_escape_char":
+		return []string{"~"}
 	case "log_level":
 		return []string{"debug", "error", "info", "warn"}
 	default:

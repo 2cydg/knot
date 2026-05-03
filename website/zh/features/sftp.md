@@ -34,7 +34,9 @@ knot sftp web-prod --follow
 
 被跟随的 SSH session 上报新目录后，SFTP shell 会尝试切换到同一路径，并输出简短的 `[follow]` 提示。如果该目录无法通过 SFTP 打开，SFTP shell 保持当前目录不变并继续等待下一次更新。被跟随的 SSH session 关闭后，SFTP shell 保持打开，停留在最后的目录并停止跟随。
 
-目录跟随依赖 OSC 7 current-directory escape sequence。Knot 只会在新的交互式 `knot ssh` shell 启动时，为 Bash 和 Zsh 安装临时 OSC 7 hook。其他 shell 只有在自己已经输出 OSC 7 时才会生效；如果没有 OSC 7，Knot 无法跟踪目录变化。这个 hook 只在当前 session 内临时存在，不会修改远端 `.bashrc`、`.zshrc` 或其他 shell 配置文件。
+目录跟随依赖 OSC 7 current-directory escape sequence。`knot sftp --follow` 绑定到活动 SSH session 时，Knot 会向被跟随的 session 注入一段临时 OSC 7 hook，适用于 Bash 和 Zsh。其他 shell 只有在自己已经输出 OSC 7 时才会生效；如果没有 OSC 7，Knot 无法跟踪目录变化。
+
+这段 hook 会作为键盘输入发送到被跟随的 SSH session，并以 Enter 结束。请只在被跟随的 session 停在普通 shell prompt 时使用 `--follow`。不要在 Vim、less、top、数据库 shell、语言 REPL 或其他全屏/交互程序处于前台时启动 follow，否则 hook 文本可能会被这些前台程序处理。这个 hook 只在当前 session 内临时存在，不会修改远端 `.bashrc`、`.zshrc` 或其他 shell 配置文件。
 
 ## SFTP shell 命令
 

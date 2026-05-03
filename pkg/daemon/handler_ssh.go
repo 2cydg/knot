@@ -160,13 +160,11 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		d.notifySession(s, protocol.BroadcastNotify{
 			Group:     req.BroadcastGroup,
 			SessionID: s.ID,
+			Action:    "join",
+			State:     "active",
 			Message:   fmt.Sprintf("[broadcast: joined %s]", req.BroadcastGroup),
 			Level:     "info",
 		})
-	}
-
-	if req.IsInteractive {
-		injectOSC7Hook(stdin)
 	}
 
 	// 4.5 Send port forward notifications (only on new connection)
@@ -206,16 +204,14 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		defer wg.Done()
 		defer cancel()
 		var osc7 osc7Parser
-		initialGate := newInitialOSC7Gate(req.IsInteractive)
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				clean, paths, firstPathAt := osc7.Observe(buf[:n])
+				clean, paths, _ := osc7.Observe(buf[:n])
 				for _, dir := range paths {
 					s.UpdateCurrentDir(dir)
 				}
-				clean = initialGate.Filter(clean, firstPathAt)
 				if len(clean) > 0 {
 					if err := s.WriteMessage(protocol.TypeData, protocol.DataStdout, clean); err != nil {
 						return
@@ -274,6 +270,22 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 					if msg.Header.Reserved == protocol.DataStdin {
 						d.broadcastInput(s, msg.Payload)
 					}
+				}
+			case protocol.TypeBroadcastReq:
+				var req protocol.BroadcastRequest
+				var resp protocol.BroadcastResponse
+				if err := json.Unmarshal(msg.Payload, &req); err != nil {
+					resp = protocol.BroadcastResponse{Error: "invalid broadcast request: " + err.Error()}
+				} else {
+					resp = d.handleBroadcastActionForSession(&req, s)
+				}
+				payload, err := json.Marshal(resp)
+				if err != nil {
+					logger.Error("Failed to marshal broadcast response", "error", err)
+					payload = []byte(`{"error":"marshal broadcast response failed"}`)
+				}
+				if err := s.WriteMessage(protocol.TypeBroadcastResp, 0, payload); err != nil {
+					return
 				}
 			case protocol.TypeSignal:
 				if msg.Header.Reserved == protocol.SignalResize {

@@ -85,10 +85,10 @@ var sshCmd = &cobra.Command{
 			IsInteractive:  term.IsTerminal(fd) && !jsonOutput,
 			HostKeyPolicy:  hostKeyPolicy,
 			BroadcastGroup: sshBroadcastGroup,
-			Escape:         sshEscape,
+			Escape:         resolveSSHEscape(cmd, cfg, sshBroadcastGroup),
 		}
-		if req.Escape == "" {
-			req.Escape = "~"
+		if err := validateSSHEscapeValue(req.Escape); err != nil {
+			return err
 		}
 		if req.BroadcastGroup != "" && !req.IsInteractive {
 			return fmt.Errorf("--broadcast requires an interactive SSH session")
@@ -225,8 +225,21 @@ var sshCmd = &cobra.Command{
 		var titleMgr *terminalTitleManager
 		if req.IsInteractive && term.IsTerminal(outFd) {
 			titleMgr = newTerminalTitleManager(os.Stdout)
-			titleMgr.PushAndSet(sshTerminalTitle(alias, req.BroadcastGroup))
+			titleMgr.PushAndSet(sshTerminalTitle(alias, req.BroadcastGroup, false))
 			defer titleMgr.Restore()
+			if req.Escape != "none" {
+				fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", sshEscapeHelpTextFor(req.Escape))
+			}
+		}
+
+		// Proxy I/O
+		errCh := make(chan error, 1)
+		var outMu sync.Mutex
+		var connWriteMu sync.Mutex
+		writeMessage := func(msgType, reserved uint8, payload []byte) error {
+			connWriteMu.Lock()
+			defer connWriteMu.Unlock()
+			return protocol.WriteMessage(conn, msgType, reserved, payload)
 		}
 
 		// Set terminal to raw mode
@@ -241,20 +254,17 @@ var sshCmd = &cobra.Command{
 
 			// Send initial resize to ensure remote side is synced
 			initialResizePayload, _ := json.Marshal(protocol.ResizePayload{Rows: rows, Cols: cols})
-			_ = protocol.WriteMessage(conn, protocol.TypeSignal, protocol.SignalResize, initialResizePayload)
+			_ = writeMessage(protocol.TypeSignal, protocol.SignalResize, initialResizePayload)
 		}
 
 		// Handle resize
-		setupResizeHandler(conn, fd)
-
-		// Proxy I/O
-		errCh := make(chan error, 1)
-		var outMu sync.Mutex
+		setupResizeHandler(writeMessage, fd)
 
 		// stdin -> daemon
 		go func() {
 			buf := make([]byte, 32*1024)
 			terminalResponses := terminalResponseClassifier{}
+			escapes := newSSHEscapeParser(req.Escape)
 			for {
 				n, err := os.Stdin.Read(buf)
 				if n > 0 {
@@ -262,11 +272,46 @@ var sshCmd = &cobra.Command{
 					if terminalResponses.IsTerminalResponse(buf[:n]) {
 						subtype = protocol.DataStdinNoForward
 					}
-					if err := protocol.WriteMessage(conn, protocol.TypeData, subtype, buf[:n]); err != nil {
-						return
+					if subtype == protocol.DataStdinNoForward {
+						if err := writeMessage(protocol.TypeData, subtype, buf[:n]); err != nil {
+							return
+						}
+					} else {
+						for _, result := range escapes.Process(buf[:n]) {
+							switch result.Action {
+							case sshEscapeSend:
+								if len(result.Payload) > 0 {
+									if err := writeMessage(protocol.TypeData, protocol.DataStdin, result.Payload); err != nil {
+										return
+									}
+								}
+							case sshEscapeBroadcast:
+								payload, err := marshalBroadcastRequest(result.Request)
+								if err != nil {
+									errCh <- err
+									return
+								}
+								if err := writeMessage(protocol.TypeBroadcastReq, 0, payload); err != nil {
+									return
+								}
+							case sshEscapeHelp:
+								outMu.Lock()
+								fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", result.Message)
+								outMu.Unlock()
+							case sshEscapeLocalOutput:
+								outMu.Lock()
+								_, _ = os.Stderr.Write(result.Payload)
+								outMu.Unlock()
+							}
+						}
 					}
 				}
 				if err != nil {
+					for _, result := range escapes.Flush() {
+						if result.Action == sshEscapeSend && len(result.Payload) > 0 {
+							_ = writeMessage(protocol.TypeData, protocol.DataStdin, result.Payload)
+						}
+					}
 					if err != io.EOF {
 						errCh <- err
 					}
@@ -315,7 +360,14 @@ var sshCmd = &cobra.Command{
 					outMu.Unlock()
 				case protocol.TypeBroadcastNotify:
 					outMu.Lock()
+					if titleMgr != nil {
+						updateSSHTerminalTitleFromBroadcastNotify(titleMgr, alias, msg.Payload)
+					}
 					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", formatBroadcastNotify(msg.Payload))
+					outMu.Unlock()
+				case protocol.TypeBroadcastResp:
+					outMu.Lock()
+					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", formatBroadcastResponse(msg.Payload))
 					outMu.Unlock()
 				case protocol.TypeData:
 					func() {
@@ -352,9 +404,41 @@ func formatBroadcastNotify(payload []byte) string {
 	return notify.Message
 }
 
-func sshTerminalTitle(alias, broadcastGroup string) string {
+func updateSSHTerminalTitleFromBroadcastNotify(titleMgr *terminalTitleManager, alias string, payload []byte) {
+	var notify protocol.BroadcastNotify
+	if err := json.Unmarshal(payload, &notify); err != nil {
+		return
+	}
+	switch notify.Action {
+	case "join", "resume":
+		titleMgr.Set(sshTerminalTitle(alias, notify.Group, false))
+	case "pause":
+		titleMgr.Set(sshTerminalTitle(alias, notify.Group, true))
+	case "leave", "disband":
+		titleMgr.Set(sshTerminalTitle(alias, "", false))
+	}
+}
+
+func formatBroadcastResponse(payload []byte) string {
+	var resp protocol.BroadcastResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		return string(payload)
+	}
+	if resp.Error != "" {
+		return "[broadcast: " + resp.Error + "]"
+	}
+	if resp.Message != "" {
+		return "[broadcast: " + resp.Message + "]"
+	}
+	return "[broadcast: ok]"
+}
+
+func sshTerminalTitle(alias, broadcastGroup string, paused bool) string {
 	if broadcastGroup == "" {
 		return alias
+	}
+	if paused {
+		return fmt.Sprintf("%s [📢 %s ⏸️]", alias, broadcastGroup)
 	}
 	return fmt.Sprintf("%s [📢 %s]", alias, broadcastGroup)
 }
@@ -481,9 +565,36 @@ func isCSIResponseFinal(b byte) bool {
 
 func init() {
 	sshCmd.Flags().StringVar(&sshBroadcastGroup, "broadcast", "", "Join or create a broadcast group for this SSH session")
-	sshCmd.Flags().StringVarP(&sshEscape, "escape", "e", "~", "Local escape character for SSH session controls, or 'none'")
+	sshCmd.Flags().StringVarP(&sshEscape, "escape", "e", "none", "Enable local SSH session controls with an optional escape character")
+	sshCmd.Flags().Lookup("escape").NoOptDefVal = "~"
 	_ = sshCmd.RegisterFlagCompletionFunc("broadcast", sshBroadcastGroupCompleter)
 	_ = sshCmd.RegisterFlagCompletionFunc("escape", sshEscapeCompleter)
 	sshCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(sshCmd)
+}
+
+func resolveSSHEscape(cmd *cobra.Command, cfg *config.Config, broadcastGroup string) string {
+	if broadcastGroup == "" {
+		return "none"
+	}
+	if cmd != nil && cmd.Flags().Changed("escape") {
+		if flag := cmd.Flags().Lookup("escape"); flag != nil {
+			return flag.Value.String()
+		}
+		return sshEscape
+	}
+	if cfg != nil && cfg.Settings.GetBroadcastEscapeEnable() {
+		return cfg.Settings.GetBroadcastEscapeChar()
+	}
+	return "none"
+}
+
+func validateSSHEscapeValue(value string) error {
+	if value == "" || value == "none" {
+		return nil
+	}
+	if len(value) != 1 || value[0] <= 0x20 || value[0] == 0x7f {
+		return fmt.Errorf("invalid escape character %q: use a single printable ASCII character or 'none'", value)
+	}
+	return nil
 }

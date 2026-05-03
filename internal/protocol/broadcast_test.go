@@ -91,6 +91,32 @@ func TestBroadcastJSONFieldNames(t *testing.T) {
 	}
 }
 
+func TestBroadcastNotifyJSONFieldNames(t *testing.T) {
+	notify := BroadcastNotify{
+		Group:     "deploy",
+		SessionID: "abc123",
+		Action:    "pause",
+		State:     "paused",
+		Message:   "[broadcast: paused]",
+		Level:     "info",
+	}
+
+	data, err := json.Marshal(notify)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"group", "session_id", "action", "state", "message", "level"} {
+		if _, ok := fields[field]; !ok {
+			t.Fatalf("missing field %q in %s", field, data)
+		}
+	}
+}
+
 func TestSSHRequestBroadcastJSONFields(t *testing.T) {
 	req := SSHRequest{
 		Alias:          "web",
