@@ -19,6 +19,11 @@ import (
 	"golang.org/x/term"
 )
 
+var (
+	sshBroadcastGroup string
+	sshEscape         string
+)
+
 var sshCmd = &cobra.Command{
 	Use:               "ssh [alias]",
 	Short:             "Connect to a server via SSH",
@@ -71,14 +76,22 @@ var sshCmd = &cobra.Command{
 		}
 
 		req := protocol.SSHRequest{
-			Alias:         alias,
-			Term:          envTerm,
-			Rows:          rows,
-			Cols:          cols,
-			ForwardAgent:  cfg.Settings.GetForwardAgent(),
-			SSHAuthSock:   sshpool.GetAgentPath(),
-			IsInteractive: term.IsTerminal(fd) && !jsonOutput,
-			HostKeyPolicy: hostKeyPolicy,
+			Alias:          alias,
+			Term:           envTerm,
+			Rows:           rows,
+			Cols:           cols,
+			ForwardAgent:   cfg.Settings.GetForwardAgent(),
+			SSHAuthSock:    sshpool.GetAgentPath(),
+			IsInteractive:  term.IsTerminal(fd) && !jsonOutput,
+			HostKeyPolicy:  hostKeyPolicy,
+			BroadcastGroup: sshBroadcastGroup,
+			Escape:         sshEscape,
+		}
+		if req.Escape == "" {
+			req.Escape = "~"
+		}
+		if req.BroadcastGroup != "" && !req.IsInteractive {
+			return fmt.Errorf("--broadcast requires an interactive SSH session")
 		}
 
 		payload, err := json.Marshal(req)
@@ -212,7 +225,7 @@ var sshCmd = &cobra.Command{
 		var titleMgr *terminalTitleManager
 		if req.IsInteractive && term.IsTerminal(outFd) {
 			titleMgr = newTerminalTitleManager(os.Stdout)
-			titleMgr.PushAndSet(alias)
+			titleMgr.PushAndSet(sshTerminalTitle(alias, req.BroadcastGroup))
 			defer titleMgr.Restore()
 		}
 
@@ -241,10 +254,15 @@ var sshCmd = &cobra.Command{
 		// stdin -> daemon
 		go func() {
 			buf := make([]byte, 32*1024)
+			terminalResponses := terminalResponseClassifier{}
 			for {
 				n, err := os.Stdin.Read(buf)
 				if n > 0 {
-					if err := protocol.WriteMessage(conn, protocol.TypeData, protocol.DataStdin, buf[:n]); err != nil {
+					subtype := protocol.DataStdin
+					if terminalResponses.IsTerminalResponse(buf[:n]) {
+						subtype = protocol.DataStdinNoForward
+					}
+					if err := protocol.WriteMessage(conn, protocol.TypeData, subtype, buf[:n]); err != nil {
 						return
 					}
 				}
@@ -295,6 +313,10 @@ var sshCmd = &cobra.Command{
 					outMu.Lock()
 					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", string(msg.Payload))
 					outMu.Unlock()
+				case protocol.TypeBroadcastNotify:
+					outMu.Lock()
+					fmt.Fprintf(os.Stderr, "\r\n[knot] %s\r\n", formatBroadcastNotify(msg.Payload))
+					outMu.Unlock()
 				case protocol.TypeData:
 					func() {
 						outMu.Lock()
@@ -322,7 +344,146 @@ var sshCmd = &cobra.Command{
 	},
 }
 
+func formatBroadcastNotify(payload []byte) string {
+	var notify protocol.BroadcastNotify
+	if err := json.Unmarshal(payload, &notify); err != nil || notify.Message == "" {
+		return string(payload)
+	}
+	return notify.Message
+}
+
+func sshTerminalTitle(alias, broadcastGroup string) string {
+	if broadcastGroup == "" {
+		return alias
+	}
+	return fmt.Sprintf("%s [📢 %s]", alias, broadcastGroup)
+}
+
+func isTerminalResponse(payload []byte) bool {
+	classifier := terminalResponseClassifier{}
+	return classifier.IsTerminalResponse(payload)
+}
+
+type terminalResponseClassifier struct {
+	inStringControl bool
+	inCSIResponse   bool
+}
+
+func (c *terminalResponseClassifier) IsTerminalResponse(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if c.inStringControl {
+		if hasStringControlTerminator(payload) {
+			c.inStringControl = false
+		}
+		return true
+	}
+	if c.inCSIResponse {
+		if hasCSIFinalByte(payload) {
+			c.inCSIResponse = false
+		}
+		return true
+	}
+	if len(payload) == 0 || payload[0] != 0x1b {
+		return false
+	}
+	if len(payload) >= 2 {
+		switch payload[1] {
+		case ']':
+			if !isCompleteStringControl(payload[2:]) {
+				c.inStringControl = true
+			}
+			return true
+		case '[':
+			return c.isCSIResponse(payload[2:])
+		case 'P', '^', '_':
+			if !isCompleteStringControl(payload[2:]) {
+				c.inStringControl = true
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func isCompleteStringControl(payload []byte) bool {
+	return hasStringControlTerminator(payload)
+}
+
+func hasStringControlTerminator(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if payload[len(payload)-1] == 0x07 {
+		return true
+	}
+	return len(payload) >= 2 && payload[len(payload)-2] == 0x1b && payload[len(payload)-1] == '\\'
+}
+
+func (c *terminalResponseClassifier) isCSIResponse(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	complete, final, valid := parseCSISequence(payload)
+	if !valid {
+		return false
+	}
+	if !complete {
+		c.inCSIResponse = true
+		return true
+	}
+	return isCSIResponseFinal(final)
+}
+
+func parseCSISequence(payload []byte) (complete bool, final byte, valid bool) {
+	inIntermediates := false
+	for _, b := range payload {
+		switch {
+		case b >= 0x30 && b <= 0x3f:
+			if inIntermediates {
+				return false, 0, false
+			}
+			continue
+		case b >= 0x20 && b <= 0x2f:
+			inIntermediates = true
+			continue
+		case isCSIFinalByte(b):
+			return true, b, true
+		default:
+			return false, 0, false
+		}
+	}
+	return false, 0, true
+}
+
+func hasCSIFinalByte(payload []byte) bool {
+	for _, b := range payload {
+		if isCSIFinalByte(b) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCSIFinalByte(b byte) bool {
+	return b >= 0x40 && b <= 0x7e
+}
+
+func isCSIResponseFinal(b byte) bool {
+	switch b {
+	case 'R', 'c', 'n', 't', 'u', 'x', 'y':
+		return true
+	default:
+		return false
+	}
+}
+
 func init() {
+	sshCmd.Flags().StringVar(&sshBroadcastGroup, "broadcast", "", "Join or create a broadcast group for this SSH session")
+	sshCmd.Flags().StringVarP(&sshEscape, "escape", "e", "~", "Local escape character for SSH session controls, or 'none'")
+	_ = sshCmd.RegisterFlagCompletionFunc("broadcast", sshBroadcastGroupCompleter)
+	_ = sshCmd.RegisterFlagCompletionFunc("escape", sshEscapeCompleter)
 	sshCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(sshCmd)
 }

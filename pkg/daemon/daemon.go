@@ -36,6 +36,7 @@ type Daemon struct {
 	pool       *sshpool.Pool
 	crypto     crypto.Provider
 	sm         *SessionManager
+	bm         *BroadcastManager
 	fm         *ForwardManager
 	startTime  time.Time
 	stopOnce   sync.Once
@@ -70,6 +71,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		pool:       sshpool.NewPool(),
 		crypto:     provider,
 		sm:         NewSessionManager(),
+		bm:         NewBroadcastManager(),
 		startTime:  time.Now(),
 	}
 	d.fm = NewForwardManager(d.pool)
@@ -128,12 +130,7 @@ func NewDaemon(provider crypto.Provider) (*Daemon, error) {
 		d.fm.StopAllForServer(serverID)
 		sessions := d.sm.ListByServer(serverID)
 		for _, s := range sessions {
-			s.mu.Lock()
-			conn := s.primaryConn
-			s.mu.Unlock()
-			if conn != nil {
-				protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
-			}
+			_ = s.WriteMessage(protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
 		}
 	}
 
@@ -231,12 +228,7 @@ func (d *Daemon) Stop() error {
 		if d.sm != nil {
 			sessions := d.sm.ListAll()
 			for _, s := range sessions {
-				s.mu.Lock()
-				conn := s.primaryConn
-				s.mu.Unlock()
-				if conn != nil {
-					protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("Daemon is shutting down"))
-				}
+				_ = s.WriteMessage(protocol.TypeDisconnect, 0, []byte("Daemon is shutting down"))
 			}
 		}
 
@@ -323,6 +315,8 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 			return
 		case protocol.TypeSessionListReq:
 			d.handleSessionListRequest(conn, msg.Payload)
+		case protocol.TypeBroadcastReq:
+			d.handleBroadcastRequest(conn, msg.Payload)
 		case protocol.TypeStatusReq:
 			d.handleStatusRequest(conn)
 		case protocol.TypeForwardReq:

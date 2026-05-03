@@ -10,6 +10,7 @@ import (
 func TestRewriteArgsForAlias(t *testing.T) {
 	root := &cobra.Command{Use: "knot"}
 	root.AddCommand(&cobra.Command{Use: "ssh"})
+	root.AddCommand(&cobra.Command{Use: "broadcast"})
 	root.AddCommand(&cobra.Command{Use: "completion"})
 
 	tests := []struct {
@@ -29,6 +30,11 @@ func TestRewriteArgsForAlias(t *testing.T) {
 			want: []string{"knot", "completion", "zsh"},
 		},
 		{
+			name: "preserves broadcast command",
+			args: []string{"knot", "broadcast", "list"},
+			want: []string{"knot", "broadcast", "list"},
+		},
+		{
 			name: "preserves default help command",
 			args: []string{"knot", "help"},
 			want: []string{"knot", "help"},
@@ -42,6 +48,16 @@ func TestRewriteArgsForAlias(t *testing.T) {
 			name: "preserves shell completion request",
 			args: []string{"knot", cobra.ShellCompRequestCmd, ""},
 			want: []string{"knot", cobra.ShellCompRequestCmd, ""},
+		},
+		{
+			name: "rewrites shell completion shortcut to ssh alias",
+			args: []string{"knot", cobra.ShellCompRequestCmd, "prod", "--broadcast", ""},
+			want: []string{"knot", cobra.ShellCompRequestCmd, "ssh", "prod", "--broadcast", ""},
+		},
+		{
+			name: "preserves shell completion known subcommand",
+			args: []string{"knot", cobra.ShellCompRequestCmd, "broadcast", "show", ""},
+			want: []string{"knot", cobra.ShellCompRequestCmd, "broadcast", "show", ""},
 		},
 		{
 			name: "preserves shell completion no desc request",

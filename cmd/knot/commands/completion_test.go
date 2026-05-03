@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 
@@ -79,6 +80,53 @@ func TestConfigValueCandidates(t *testing.T) {
 				t.Fatalf("configValueCandidates(%q) = %#v, want %#v", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSSHEscapeCompleter(t *testing.T) {
+	got, directive := sshEscapeCompleter(nil, nil, "n")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("sshEscapeCompleter directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if want := []string{"none"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("sshEscapeCompleter() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSSHFlagCompletionRegistration(t *testing.T) {
+	if _, ok := sshCmd.GetFlagCompletionFunc("broadcast"); !ok {
+		t.Fatal("broadcast flag completion not registered")
+	}
+	if _, ok := sshCmd.GetFlagCompletionFunc("escape"); !ok {
+		t.Fatal("escape flag completion not registered")
+	}
+}
+
+func TestSSHBroadcastGroupCompleterAllowsAliasArg(t *testing.T) {
+	old := sendBroadcastCompletionRequest
+	defer func() { sendBroadcastCompletionRequest = old }()
+	sendBroadcastCompletionRequest = func(req protocol.BroadcastRequest) (*protocol.BroadcastResponse, error) {
+		return &protocol.BroadcastResponse{
+			Groups: []protocol.BroadcastGroupInfo{{Group: "cloud"}, {Group: "deploy"}},
+		}, nil
+	}
+
+	got, directive := sshBroadcastGroupCompleter(nil, []string{"web-prod"}, "cl")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("sshBroadcastGroupCompleter directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if want := []string{"cloud"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("sshBroadcastGroupCompleter() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBroadcastGroupCompleterRejectsExtraArgs(t *testing.T) {
+	got, directive := broadcastGroupCompleter(nil, []string{"existing"}, "")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("broadcastGroupCompleter directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if got != nil {
+		t.Fatalf("broadcastGroupCompleter() = %#v, want nil", got)
 	}
 }
 

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
+	"knot/pkg/daemon"
 	"sort"
 	"strings"
 
@@ -165,6 +167,101 @@ func filterAndSortCompletions(values []string, toComplete string) []string {
 
 	sort.Strings(filtered)
 	return filtered
+}
+
+func broadcastGroupCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return completeBroadcastGroups(toComplete)
+}
+
+func broadcastSelectorCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	selectors, err := broadcastSelectorCompletions()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return filterAndSortCompletions(selectors, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func broadcastJoinCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		groups, err := broadcastGroupCompletions()
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return filterAndSortCompletions(groups, toComplete), cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		selectors, err := broadcastSelectorCompletions()
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return filterAndSortCompletions(selectors, toComplete), cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+}
+
+func sshEscapeCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return filterAndSortCompletions([]string{"~", "none"}, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func sshBroadcastGroupCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return completeBroadcastGroups(toComplete)
+}
+
+func completeBroadcastGroups(toComplete string) ([]string, cobra.ShellCompDirective) {
+	groups, err := broadcastGroupCompletions()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return filterAndSortCompletions(groups, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func broadcastGroupCompletions() ([]string, error) {
+	resp, err := sendBroadcastCompletionRequest(protocol.BroadcastRequest{Action: "list"})
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]string, 0, len(resp.Groups))
+	for _, group := range resp.Groups {
+		groups = append(groups, group.Group)
+	}
+	return groups, nil
+}
+
+func broadcastSelectorCompletions() ([]string, error) {
+	resp, err := sendBroadcastCompletionRequest(protocol.BroadcastRequest{Action: "sessions"})
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	var selectors []string
+	for _, member := range resp.Members {
+		for _, value := range []string{member.SessionID, member.Alias} {
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			selectors = append(selectors, value)
+		}
+	}
+	return selectors, nil
+}
+
+var sendBroadcastCompletionRequest = func(req protocol.BroadcastRequest) (*protocol.BroadcastResponse, error) {
+	client, err := daemon.NewClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.SendBroadcastRequest(req)
 }
 
 func generateZshCompletion(cmd *cobra.Command, out io.Writer, noDesc bool) error {

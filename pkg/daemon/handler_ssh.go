@@ -128,19 +128,41 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 
 	// Register session in SessionManager
 	s := d.sm.Add(serverID, req.Alias, conn, poolKeys)
+	s.SetInput(stdin)
 	for _, k := range poolKeys {
 		d.pool.IncRef(k)
 	}
 	defer func() {
+		d.bm.RemoveSession(s.ID)
 		d.sm.Remove(s.ID)
 		for _, k := range poolKeys {
 			d.pool.DecRef(k)
 		}
 	}()
 
+	if req.BroadcastGroup != "" {
+		if !req.IsInteractive {
+			sendError("--broadcast requires an interactive SSH session")
+			return
+		}
+		if err := d.bm.Join(req.BroadcastGroup, s); err != nil {
+			sendError("failed to join broadcast group: " + err.Error())
+			return
+		}
+	}
+
 	// Send success response with session ID
 	if err := protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("ok:"+s.ID)); err != nil {
 		return
+	}
+
+	if req.BroadcastGroup != "" {
+		d.notifySession(s, protocol.BroadcastNotify{
+			Group:     req.BroadcastGroup,
+			SessionID: s.ID,
+			Message:   fmt.Sprintf("[broadcast: joined %s]", req.BroadcastGroup),
+			Level:     "info",
+		})
 	}
 
 	if req.IsInteractive {
@@ -170,7 +192,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 					msgStr += " [Inactive]"
 				}
 
-				protocol.WriteMessage(conn, protocol.TypeForwardNotify, 0, []byte(msgStr))
+				s.WriteMessage(protocol.TypeForwardNotify, 0, []byte(msgStr))
 			}
 		}
 	}
@@ -195,7 +217,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 				}
 				clean = initialGate.Filter(clean, firstPathAt)
 				if len(clean) > 0 {
-					if err := protocol.WriteMessage(conn, protocol.TypeData, protocol.DataStdout, clean); err != nil {
+					if err := s.WriteMessage(protocol.TypeData, protocol.DataStdout, clean); err != nil {
 						return
 					}
 				}
@@ -220,7 +242,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 					s.UpdateCurrentDir(dir)
 				}
 				if len(clean) > 0 {
-					if err := protocol.WriteMessage(conn, protocol.TypeData, protocol.DataStderr, clean); err != nil {
+					if err := s.WriteMessage(protocol.TypeData, protocol.DataStderr, clean); err != nil {
 						return
 					}
 				}
@@ -245,14 +267,12 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			}
 			switch msg.Header.Type {
 			case protocol.TypeData:
-				if msg.Header.Reserved == protocol.DataStdin {
-					if _, err := stdin.Write(msg.Payload); err != nil {
-						if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "closed pipe") {
-							logger.Debug("Stdin pipe closed", "alias", req.Alias)
-						} else {
-							logger.Error("Failed to write to stdin", "alias", req.Alias, "error", err)
-						}
+				if msg.Header.Reserved == protocol.DataStdin || msg.Header.Reserved == protocol.DataStdinNoForward {
+					if err := d.writeSessionInput(s, msg.Payload); err != nil {
 						return
+					}
+					if msg.Header.Reserved == protocol.DataStdin {
+						d.broadcastInput(s, msg.Payload)
 					}
 				}
 			case protocol.TypeSignal:
@@ -306,7 +326,32 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			}
 		}
 		if !isAlive {
-			protocol.WriteMessage(conn, protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
+			s.WriteMessage(protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
+		}
+	}
+}
+
+func (d *Daemon) writeSessionInput(s *Session, payload []byte) error {
+	if err := s.WriteInput(payload); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, errSessionInputClosed) || strings.Contains(err.Error(), "closed pipe") {
+			logger.Debug("Stdin pipe closed", "alias", s.Alias)
+		} else {
+			logger.Error("Failed to write to stdin", "alias", s.Alias, "error", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func (d *Daemon) broadcastInput(source *Session, payload []byte) {
+	for _, peerID := range d.bm.ActivePeerIDs(source.ID) {
+		peer, ok := d.sm.Get(peerID)
+		if !ok {
+			d.bm.RemoveSession(peerID)
+			continue
+		}
+		if err := peer.WriteInput(payload); err != nil {
+			logger.Warn("Failed to write broadcast input", "source", source.ID, "target", peer.ID, "error", err)
 		}
 	}
 }

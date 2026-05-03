@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"errors"
+	"io"
 	"knot/internal/protocol"
 	"net"
 	"sort"
@@ -9,6 +11,8 @@ import (
 	"time"
 )
 
+var errSessionInputClosed = errors.New("session input is closed")
+
 // Session represents an active SSH session.
 type Session struct {
 	ID           string `json:"id"`
@@ -16,12 +20,43 @@ type Session struct {
 	Alias        string `json:"alias"`
 	PoolKeys     []string
 	primaryConn  net.Conn
+	connMu       sync.Mutex
+	stdin        io.Writer
+	inputMu      sync.Mutex
 	StartedAt    time.Time
 	CurrentDir   string
 	CWDUpdatedAt time.Time
 	followers    map[chan protocol.SessionCWDNotify]struct{}
 	closed       bool
 	mu           sync.Mutex
+}
+
+func (s *Session) WriteMessage(msgType uint8, reserved uint8, payload []byte) error {
+	s.mu.Lock()
+	conn := s.primaryConn
+	s.mu.Unlock()
+	if conn == nil {
+		return net.ErrClosed
+	}
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return protocol.WriteMessage(conn, msgType, reserved, payload)
+}
+
+func (s *Session) SetInput(stdin io.Writer) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.stdin = stdin
+}
+
+func (s *Session) WriteInput(p []byte) error {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	if s.stdin == nil {
+		return errSessionInputClosed
+	}
+	_, err := s.stdin.Write(p)
+	return err
 }
 
 // SessionManager tracks active sessions in the daemon.
