@@ -6,27 +6,26 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
+**Knot** is a CLI-based SSH/SFTP client.
+
 Full documentation: [https://knot.clay.li](https://knot.clay.li)
 
-**Knot** is an SSH/SFTP connection manager for your native terminal. Keep using Windows Terminal, iTerm2, Kitty, or any terminal you already like, while Knot keeps server profiles, credentials, proxies, jump hosts, file transfer, and port forwarding behind one CLI.
+---
 
-Knot does not try to replace your terminal. It makes the connection workflow smoother: `knot web-prod` opens a shell, `knot exec web-prod "uptime"` runs a remote command, and `knot cp ./dist/. web-prod:/var/www/html/` transfers files. A background daemon keeps physical SSH connections alive, so later shells, commands, and transfers can reuse them instead of repeating the SSH handshake.
+## Why Knot?
+
+*   🔁 **SSH connection reuse**
+*   📡 **SSH command broadcast**
+*   📂 **SFTP directory following**
+*   🌉 **Jump hosts, proxies, and port forwarding**
+*   🔑 **SSH Agent authentication and forwarding**
+*   🔐 **Platform-native credential encryption**
+*   🧾 **AI-friendly JSON output with exit codes**
+*   🪶 **Low memory footprint**
 
 ---
 
-## 🚀 Why Knot?
-
-*   **Connection reuse**: a background daemon keeps physical SSH connections alive, so new shells, remote commands, and file transfers can reuse them.
-*   **SSH Agent authentication**: use keys already loaded in your system SSH Agent instead of importing every private key into Knot.
-*   **Agent forwarding**: keep using your local SSH Agent after connecting to remote servers.
-*   **Native credential encryption**: sensitive values are encrypted with platform facilities such as Windows DPAPI, macOS Keychain, Linux Secret Service, or a machine-ID fallback.
-*   **File transfer**: copy files with Docker-style `alias:/path` syntax through `knot cp`, or use the interactive SFTP shell and scriptable SFTP subcommands.
-*   **Network paths**: manage jump host chains, SOCKS5/HTTP proxies, and local/remote/dynamic port forwarding from the same CLI.
-*   **AI and scripting friendly**: structured `--json` output and non-interactive commands work well in scripts, CI, and AI coding agents.
-
----
-
-## 📦 Installation
+## Installation
 
 Linux/macOS:
 
@@ -100,7 +99,7 @@ if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null 
 
 ---
 
-## 🛠️ Quick Start
+## Quick Start
 
 ### 1. Add a Server
 Knot will guide you through the setup or you can use flags for automation.
@@ -108,7 +107,7 @@ Knot will guide you through the setup or you can use flags for automation.
 knot add web-prod --host 1.2.3.4 --user deploy --key my_key --tags prod
 ```
 
-### 2. Connect Instantly
+### 2. Connect
 Unknown subcommands are treated as aliases. `knot [alias]` is all you need.
 ```bash
 knot web-prod
@@ -132,7 +131,25 @@ knot cp ./dist/. web-prod:/var/www/html/
 knot cp web-prod:/var/log/nginx/access.log ./
 ```
 
-### 5. Remote Execution
+### 5. Follow an SSH Session from SFTP
+```bash
+# In one terminal
+knot web-prod
+
+# In another terminal, follow that SSH session's current directory
+knot sftp web-prod --follow
+```
+
+### 6. Broadcast Input Across SSH Sessions
+```bash
+knot ssh web-1 --broadcast deploy
+knot ssh web-2 --broadcast deploy
+
+knot broadcast list
+knot broadcast pause web-2
+```
+
+### 7. Remote Execution
 ```bash
 knot exec web-prod "uptime" --json
 ```
@@ -141,7 +158,7 @@ For automation, `--json` keeps failure exit codes meaningful while returning mac
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 Knot uses a Client/Server model to maintain persistent SSH connections in the background.
 
@@ -154,7 +171,7 @@ Knot uses a Client/Server model to maintain persistent SSH connections in the ba
 
 ---
 
-## 🔒 Security
+## Security
 
 Sensitive data in `~/.config/knot/config.toml` is encrypted with an `ENC:` prefix:
 - **Windows**: DPAPI
@@ -171,14 +188,17 @@ Knot stores host keys in its own `known_hosts` file. Non-interactive commands ca
 
 ---
 
-## ⌨️ Command Reference
+## Command Reference
 
 | Category | Command | Description |
 | :--- | :--- | :--- |
 | **Sessions** | `knot [alias]` | Shortcut for `knot ssh [alias]` |
+| | `knot ssh [alias] --broadcast [group]` | Join an interactive SSH input broadcast group |
+| | `knot broadcast list/show/pause/resume/leave/disband` | Inspect and manage broadcast groups |
 | | `knot sftp [alias]` | Interactive SFTP shell |
+| | `knot sftp [alias] --follow` | Follow the current directory of an active SSH session |
 | | `knot sftp ls/stat/rm/mkdir/rmdir/mv` | Scriptable SFTP operations |
-| **Files** | `knot cp [src] [dst]` | High-speed file transfer (Local ↔ Remote) |
+| **Files** | `knot cp [src] [dst]` | File transfer (Local ↔ Remote) |
 | **Remote** | `knot exec [alias] [cmd]` | Non-interactive command execution |
 | **Network** | `knot forward` | Manage L/R/D port forwarding rules |
 | **Manager** | `knot list [pattern]` | List servers by alias, target, tags, and recent usage |
@@ -187,6 +207,6 @@ Knot stores host keys in its own `known_hosts` file. Non-interactive commands ca
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the [MIT License](LICENSE).

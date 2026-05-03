@@ -6,27 +6,26 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue.svg)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#)
 
+**Knot** 是一个基于命令行的 SSH/SFTP 客户端。
+
 详细文档：[https://knot.clay.li](https://knot.clay.li)
 
-**Knot** 是一个面向原生终端的 SSH/SFTP 连接管理工具。你可以继续使用 Windows Terminal、iTerm2、Kitty 或任何自己习惯的终端，同时把服务器配置、凭据、代理、跳板机、文件传输和端口转发收拢到一套命令里。
+---
 
-它不试图替代终端，而是把终端里的连接体验变顺手：`knot web-prod` 打开会话，`knot exec web-prod "uptime"` 执行远程命令，`knot cp ./dist/. web-prod:/var/www/html/` 传文件。后台 daemon 会维护 SSH 物理连接，后续 shell、命令执行和文件传输都可以复用已有连接，减少重复握手的等待。
+## 为什么选择 Knot?
+
+*   🔁 **SSH连接复用**
+*   📡 **SSH命令广播**
+*   📂 **SFTP 目录跟随**
+*   🌉 **跳板机、代理、端口转发**
+*   🔑 **SSH Agent 认证与转发**
+*   🔐 **平台原生凭据加密**
+*   🧾 **AI友好的JSON 输出，保留退出码**
+*   🪶 **低内存占用**
 
 ---
 
-## 🚀 为什么选择 Knot?
-
-*   **连接复用**：后台 daemon 维护 SSH 物理连接，新建 shell、执行远程命令和传文件都可以复用已有连接。
-*   **SSH Agent 认证支持**：可以使用系统 SSH Agent 中已有的密钥，不需要把所有私钥都导入 Knot。
-*   **Agent 转发支持**：连接到远程服务器后，也可以继续使用本机 SSH Agent 做后续认证。
-*   **平台原生加密**：敏感信息会通过 Windows DPAPI、macOS Keychain、Linux Secret Service 或 machine-ID 降级方案加密保存。
-*   **文件传输**：通过 `knot cp` 使用 Docker 风格的 `alias:/path` 语法复制文件，也支持交互式 SFTP Shell 和脚本化 SFTP 子命令。
-*   **网络路径管理**：统一管理跳板机链、SOCKS5/HTTP 代理，以及本地、远程、动态端口转发。
-*   **AI 和脚本友好**：结构化 `--json` 输出与非交互命令适合脚本、CI 和 AI 编码助手调用。
-
----
-
-## 📦 安装
+## 安装
 
 Linux/macOS：
 
@@ -100,7 +99,7 @@ if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null 
 
 ---
 
-## 🛠️ 快速上手
+## 快速上手
 
 ### 1. 添加服务器
 Knot 提供交互式引导，也支持通过参数快速添加。
@@ -108,7 +107,7 @@ Knot 提供交互式引导，也支持通过参数快速添加。
 knot add web-prod --host 1.2.3.4 --user deploy --key my_key --tags prod
 ```
 
-### 2. 瞬时连接
+### 2. 连接
 未识别的子命令会被自动作为别名处理。只需输入 `knot [别名]` 即可。
 ```bash
 knot web-prod
@@ -132,7 +131,25 @@ knot cp ./dist/. web-prod:/var/www/html/
 knot cp web-prod:/var/log/nginx/access.log ./
 ```
 
-### 5. 远程命令执行
+### 5. 从 SFTP 跟随 SSH 会话目录
+```bash
+# 在一个终端中
+knot web-prod
+
+# 在另一个终端中，跟随该 SSH 会话的当前目录
+knot sftp web-prod --follow
+```
+
+### 6. 在多个 SSH 会话间广播输入
+```bash
+knot ssh web-1 --broadcast deploy
+knot ssh web-2 --broadcast deploy
+
+knot broadcast list
+knot broadcast pause web-2
+```
+
+### 7. 远程命令执行
 ```bash
 knot exec web-prod "uptime" --json
 ```
@@ -141,7 +158,7 @@ knot exec web-prod "uptime" --json
 
 ---
 
-## 🏗️ 架构设计
+## 架构设计
 
 Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
 
@@ -153,7 +170,7 @@ Knot 采用 C/S 模型，在后台维护持久的 SSH 连接。
 
 ---
 
-## 🔒 安全性
+## 安全性
 
 `~/.config/knot/config.toml` 中的敏感数据均带有 `ENC:` 前缀进行加密存储：
 - **Windows**: DPAPI
@@ -170,14 +187,17 @@ Knot 使用自己的 `known_hosts` 文件保存主机密钥。非交互命令可
 
 ---
 
-## ⌨️ 常用命令参考
+## 常用命令参考
 
 | 分类 | 命令 | 说明 |
 | :--- | :--- | :--- |
 | **会话管理** | `knot [别名]` | `knot ssh [别名]` 的快捷方式 |
+| | `knot ssh [别名] --broadcast [组名]` | 加入交互式 SSH 输入广播组 |
+| | `knot broadcast list/show/pause/resume/leave/disband` | 查看和管理广播组 |
 | | `knot sftp [alias]` | 交互式 SFTP Shell |
+| | `knot sftp [alias] --follow` | 跟随活动 SSH 会话的当前目录 |
 | | `knot sftp ls/stat/rm/mkdir/rmdir/mv` | 脚本化 SFTP 操作 |
-| **文件操作** | `knot cp [源] [目标]` | 高速文件传输（本地 ↔ 远程） |
+| **文件操作** | `knot cp [源] [目标]` | 文件传输（本地 ↔ 远程） |
 | **远程执行** | `knot exec [别名] [命令]` | 非交互式远程命令执行 |
 | **网络功能** | `knot forward` | 管理 L/R/D 端口转发规则 |
 | **管理工具** | `knot list [模式]` | 查看服务器别名、目标地址、标签和最近使用情况 |
@@ -186,6 +206,6 @@ Knot 使用自己的 `known_hosts` 文件保存主机密钥。非交互命令可
 
 ---
 
-## 📄 许可证
+## 许可证
 
 本项目采用 [MIT License](LICENSE) 许可证。
