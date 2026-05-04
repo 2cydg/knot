@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -279,6 +280,49 @@ func TestHostKeyPolicyAcceptNewAddsUnknownHost(t *testing.T) {
 	}
 	if len(knownHosts) == 0 {
 		t.Fatal("expected accept-new policy to write known_hosts entry")
+	}
+}
+
+func TestAppendKnownHostConcurrentWrites(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+
+	knownHostsPath := filepath.Join(t.TempDir(), "nested", "known_hosts")
+	const hosts = 16
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, hosts)
+	for i := 0; i < hosts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errCh <- appendKnownHost(knownHostsPath, fmt.Sprintf("host-%d.example.invalid", i), signer.PublicKey())
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("appendKnownHost failed: %v", err)
+		}
+	}
+
+	data, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to read known_hosts: %v", err)
+	}
+	contents := string(data)
+	for i := 0; i < hosts; i++ {
+		if !strings.Contains(contents, fmt.Sprintf("host-%d.example.invalid", i)) {
+			t.Fatalf("known_hosts missing host-%d:\n%s", i, contents)
+		}
 	}
 }
 

@@ -2,12 +2,15 @@ package sshpool
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"knot/internal/fileutil"
 	"knot/internal/paths"
 	"knot/pkg/config"
 	"net"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -48,11 +51,9 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 		hkb, err := knownhosts.New(khPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				f, err := os.OpenFile(khPath, os.O_CREATE|os.O_WRONLY, 0600)
-				if err != nil {
+				if err := ensureKnownHostsFile(khPath); err != nil {
 					return err
 				}
-				f.Close()
 				hkb, err = knownhosts.New(khPath)
 				if err != nil {
 					return err
@@ -126,7 +127,86 @@ func changedHostKeyError() error {
 }
 
 func appendKnownHost(khPath string, hostname string, key ssh.PublicKey) error {
-	f, err := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY, 0600)
+	return withKnownHostsLock(khPath, func() error {
+		if err := os.MkdirAll(filepath.Dir(khPath), 0700); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(khPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		line := knownhosts.Line([]string{hostname}, key)
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []knownhosts.KnownKey) error {
+	return withKnownHostsLock(khPath, func() error {
+		lineSet := make(map[int]struct{})
+		for _, known := range want {
+			if known.Filename == khPath && known.Line > 0 {
+				lineSet[known.Line] = struct{}{}
+			}
+		}
+		if len(lineSet) == 0 {
+			return appendKnownHostLocked(khPath, hostname, key)
+		}
+
+		f, err := os.Open(khPath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		var lines []string
+		scanner := bufio.NewScanner(f)
+		for lineNo := 1; scanner.Scan(); lineNo++ {
+			if _, remove := lineSet[lineNo]; remove {
+				continue
+			}
+			lines = append(lines, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		lines = append(lines, knownhosts.Line([]string{hostname}, key))
+
+		var buf bytes.Buffer
+		for _, line := range lines {
+			if _, err := buf.WriteString(line + "\n"); err != nil {
+				return err
+			}
+		}
+		return fileutil.AtomicWriteFile(khPath, buf.Bytes(), 0600)
+	})
+}
+
+func ensureKnownHostsFile(khPath string) error {
+	return withKnownHostsLock(khPath, func() error {
+		if err := os.MkdirAll(filepath.Dir(khPath), 0700); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(khPath, os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	})
+}
+
+func appendKnownHostLocked(khPath string, hostname string, key ssh.PublicKey) error {
+	if err := os.MkdirAll(filepath.Dir(khPath), 0700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(khPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -136,58 +216,11 @@ func appendKnownHost(khPath string, hostname string, key ssh.PublicKey) error {
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		return err
 	}
-	return nil
+	return f.Sync()
 }
 
-func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []knownhosts.KnownKey) error {
-	lineSet := make(map[int]struct{})
-	for _, known := range want {
-		if known.Filename == khPath && known.Line > 0 {
-			lineSet[known.Line] = struct{}{}
-		}
-	}
-	if len(lineSet) == 0 {
-		return appendKnownHost(khPath, hostname, key)
-	}
-
-	f, err := os.Open(khPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for lineNo := 1; scanner.Scan(); lineNo++ {
-		if _, remove := lineSet[lineNo]; remove {
-			continue
-		}
-		lines = append(lines, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	lines = append(lines, knownhosts.Line([]string{hostname}, key))
-
-	out, err := os.OpenFile(khPath, os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	w := bufio.NewWriter(out)
-	for _, line := range lines {
-		if _, err := w.WriteString(line + "\n"); err != nil {
-			out.Close()
-			return err
-		}
-	}
-	if err := w.Flush(); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return nil
+func withKnownHostsLock(khPath string, fn func() error) error {
+	return fileutil.WithLock(khPath+".lock", fn)
 }
 
 func resolveKnownHostsPath(srv config.ServerConfig) (string, error) {

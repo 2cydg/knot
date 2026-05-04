@@ -44,23 +44,51 @@ func GetSalt() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	saltPath := filepath.Join(configDir, saltFile)
-	if _, err := os.Stat(saltPath); os.IsNotExist(err) {
-		salt := make([]byte, saltLength)
-		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-			return nil, err
-		}
-		if err := os.MkdirAll(configDir, 0700); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(saltPath, salt, 0600); err != nil {
-			return nil, err
-		}
-		return salt, nil
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return nil, err
 	}
 
-	return os.ReadFile(saltPath)
+	saltPath := filepath.Join(configDir, saltFile)
+
+	salt := make([]byte, saltLength)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(saltPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err == nil {
+		cleanup := true
+		defer func() {
+			if cleanup {
+				_ = os.Remove(saltPath)
+			}
+		}()
+		if _, err := f.Write(salt); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if err := f.Close(); err != nil {
+			return nil, err
+		}
+		cleanup = false
+		return salt, nil
+	}
+	if !os.IsExist(err) {
+		return nil, err
+	}
+
+	existing, err := os.ReadFile(saltPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) != saltLength {
+		return nil, fmt.Errorf("invalid salt length: %d", len(existing))
+	}
+	return existing, nil
 }
 
 // EncryptWithKey encrypts data using AES-GCM with the provided key.
