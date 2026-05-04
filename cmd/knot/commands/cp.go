@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -156,7 +157,9 @@ func runTransfer(alias string, fn func(*sftp.Client) error) error {
 			state, _ := config.LoadState()
 			if state != nil {
 				state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
-				_ = state.Save()
+				if err := state.Save(); err != nil {
+					logger.Warn("failed to save recent state", "error", err)
+				}
 			}
 		}
 	}

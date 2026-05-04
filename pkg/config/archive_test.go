@@ -138,3 +138,91 @@ func TestMergeConfigs(t *testing.T) {
 		}
 	})
 }
+
+func TestMergeConfigsLocalFirstRemapsImportedReferencesToKeptLocalIDs(t *testing.T) {
+	local := &Config{
+		Servers: map[string]ServerConfig{
+			"local-server": {ID: "local-server", Alias: "web", Host: "local"},
+		},
+		Proxies: map[string]ProxyConfig{
+			"local-proxy": {ID: "local-proxy", Alias: "proxy", Host: "local"},
+		},
+		Keys: map[string]KeyConfig{
+			"local-key": {ID: "local-key", Alias: "key", PrivateKey: "local"},
+		},
+	}
+	imported := &Config{
+		Servers: map[string]ServerConfig{
+			"remote-server": {
+				ID:          "remote-server",
+				Alias:       "api",
+				Host:        "imported",
+				KeyID:       "remote-key",
+				ProxyID:     "remote-proxy",
+				JumpHostIDs: []string{"remote-jump"},
+			},
+			"remote-jump": {ID: "remote-jump", Alias: "web", Host: "imported"},
+		},
+		Proxies: map[string]ProxyConfig{
+			"remote-proxy": {ID: "remote-proxy", Alias: "proxy", Host: "imported"},
+		},
+		Keys: map[string]KeyConfig{
+			"remote-key": {ID: "remote-key", Alias: "key", PrivateKey: "imported"},
+		},
+	}
+
+	merged := MergeConfigs(local, imported, MergeModeLocalFirst)
+	api := merged.Servers["remote-server"]
+	if api.KeyID != "local-key" {
+		t.Fatalf("KeyID = %q, want local-key", api.KeyID)
+	}
+	if api.ProxyID != "local-proxy" {
+		t.Fatalf("ProxyID = %q, want local-proxy", api.ProxyID)
+	}
+	if len(api.JumpHostIDs) != 1 || api.JumpHostIDs[0] != "local-server" {
+		t.Fatalf("JumpHostIDs = %v, want [local-server]", api.JumpHostIDs)
+	}
+}
+
+func TestMergeConfigsImportFirstRemapsLocalReferencesToImportedIDs(t *testing.T) {
+	local := &Config{
+		Servers: map[string]ServerConfig{
+			"local-server": {
+				ID:      "local-server",
+				Alias:   "web",
+				Host:    "local",
+				KeyID:   "local-key",
+				ProxyID: "local-proxy",
+			},
+		},
+		Proxies: map[string]ProxyConfig{
+			"local-proxy": {ID: "local-proxy", Alias: "proxy", Host: "local"},
+		},
+		Keys: map[string]KeyConfig{
+			"local-key": {ID: "local-key", Alias: "key", PrivateKey: "local"},
+		},
+	}
+	imported := &Config{
+		Servers: map[string]ServerConfig{
+			"remote-server": {ID: "remote-server", Alias: "web", Host: "imported", KeyID: "remote-key", ProxyID: "remote-proxy"},
+		},
+		Proxies: map[string]ProxyConfig{
+			"remote-proxy": {ID: "remote-proxy", Alias: "proxy", Host: "imported"},
+		},
+		Keys: map[string]KeyConfig{
+			"remote-key": {ID: "remote-key", Alias: "key", PrivateKey: "imported"},
+		},
+	}
+
+	merged := MergeConfigs(local, imported, MergeModeImportFirst)
+	web := merged.Servers["remote-server"]
+	if web.KeyID != "remote-key" {
+		t.Fatalf("KeyID = %q, want remote-key", web.KeyID)
+	}
+	if web.ProxyID != "remote-proxy" {
+		t.Fatalf("ProxyID = %q, want remote-proxy", web.ProxyID)
+	}
+	if _, ok := merged.Servers["local-server"]; ok {
+		t.Fatal("local conflicting server should be replaced")
+	}
+}

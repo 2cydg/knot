@@ -151,7 +151,12 @@ func (d *Daemon) sendExecResponse(conn net.Conn, exitCode int, stdout, stderr, e
 		Truncated:     truncated,
 		TruncatedSize: truncatedSize,
 	}
-	payload, _ := json.Marshal(resp)
+	payload, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.Error("Failed to marshal exec response", "error", marshalErr)
+		_ = protocol.WriteMessage(conn, protocol.TypeExecResp, 1, []byte("internal marshal error"))
+		return
+	}
 	_ = protocol.WriteMessage(conn, protocol.TypeExecResp, 0, payload)
 }
 

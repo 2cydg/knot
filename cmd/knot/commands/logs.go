@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"knot/internal/paths"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -167,9 +166,4 @@ func init() {
 	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output")
 	logsCmd.GroupID = managementGroup.ID
 	rootCmd.AddCommand(logsCmd)
-}
-
-// Convert int to string helper
-func intToString(n int) string {
-	return strconv.Itoa(n)
 }

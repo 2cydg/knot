@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -115,7 +116,9 @@ paths support ~/... expansion.`,
 		state, err := config.LoadState()
 		if err == nil {
 			state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
-			_ = state.Save()
+			if err := state.Save(); err != nil {
+				logger.Warn("failed to save recent state", "error", err)
+			}
 		}
 
 		var authUpdated bool

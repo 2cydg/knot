@@ -194,20 +194,38 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 
 	// Merge imported
 	if mode == MergeModeLocalFirst {
-		for k, v := range imported.Servers {
-			if !result.ServerAliasExists(v.Alias, "") {
-				result.Servers[k] = v
-			}
-		}
+		serverIDMap := make(map[string]string)
+		proxyIDMap := make(map[string]string)
+		keyIDMap := make(map[string]string)
 		for k, v := range imported.Proxies {
-			if !result.ProxyAliasExists(v.Alias, "") {
+			if id, _, ok := result.FindProxyByAlias(v.Alias); ok {
+				proxyIDMap[k] = id
+			} else {
 				result.Proxies[k] = v
+				proxyIDMap[k] = k
 			}
 		}
 		for k, v := range imported.Keys {
-			if !result.KeyAliasExists(v.Alias, "") {
+			if id, _, ok := result.FindKeyByAlias(v.Alias); ok {
+				keyIDMap[k] = id
+			} else {
 				result.Keys[k] = v
+				keyIDMap[k] = k
 			}
+		}
+		for k, v := range imported.Servers {
+			if id, _, ok := result.FindServerByAlias(v.Alias); ok {
+				serverIDMap[k] = id
+			} else {
+				serverIDMap[k] = k
+			}
+		}
+		for k, v := range imported.Servers {
+			if _, exists := result.Servers[serverIDMap[k]]; exists {
+				continue
+			}
+			remapArchiveServerRefs(&v, keyIDMap, proxyIDMap, serverIDMap)
+			result.Servers[k] = v
 		}
 	} else if mode == MergeModeImportFirst {
 		result.Settings = imported.Settings // Use imported settings
@@ -215,31 +233,62 @@ func MergeConfigs(local, imported *Config, mode int) *Config {
 		for k, v := range imported.SyncProviders {
 			result.SyncProviders[k] = v
 		}
+		serverIDMap := make(map[string]string)
+		proxyIDMap := make(map[string]string)
+		keyIDMap := make(map[string]string)
 		for k, v := range imported.Servers {
 			for localID, local := range result.Servers {
 				if localID != k && local.Alias == v.Alias {
 					delete(result.Servers, localID)
+					serverIDMap[localID] = k
 				}
 			}
+			serverIDMap[k] = k
 			result.Servers[k] = v
 		}
 		for k, v := range imported.Proxies {
 			for localID, local := range result.Proxies {
 				if localID != k && local.Alias == v.Alias {
 					delete(result.Proxies, localID)
+					proxyIDMap[localID] = k
 				}
 			}
+			proxyIDMap[k] = k
 			result.Proxies[k] = v
 		}
 		for k, v := range imported.Keys {
 			for localID, local := range result.Keys {
 				if localID != k && local.Alias == v.Alias {
 					delete(result.Keys, localID)
+					keyIDMap[localID] = k
 				}
 			}
+			keyIDMap[k] = k
 			result.Keys[k] = v
+		}
+		for id, server := range result.Servers {
+			remapArchiveServerRefs(&server, keyIDMap, proxyIDMap, serverIDMap)
+			result.Servers[id] = server
 		}
 	}
 
 	return result
+}
+
+func remapArchiveServerRefs(server *ServerConfig, keyIDMap, proxyIDMap, serverIDMap map[string]string) {
+	if server.KeyID != "" {
+		if id, ok := keyIDMap[server.KeyID]; ok {
+			server.KeyID = id
+		}
+	}
+	if server.ProxyID != "" {
+		if id, ok := proxyIDMap[server.ProxyID]; ok {
+			server.ProxyID = id
+		}
+	}
+	for i, id := range server.JumpHostIDs {
+		if newID, ok := serverIDMap[id]; ok {
+			server.JumpHostIDs[i] = newID
+		}
+	}
 }

@@ -173,7 +173,12 @@ func (d *Daemon) handleForwardListRequest(conn net.Conn, alias string) {
 	}
 	resp.Forwards = forwardStatusesForServer(rules, cfg, serverID)
 
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.Error("Failed to marshal forward list response", "alias", alias, "error", err)
+		protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte("marshal forward list failed"))
+		return
+	}
 	protocol.WriteMessage(conn, protocol.TypeForwardListResp, 0, data)
 }
 

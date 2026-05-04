@@ -46,7 +46,10 @@ var execCmd = &cobra.Command{
 		}
 
 		start := time.Now()
-		payload, _ := json.Marshal(req)
+		payload, err := json.Marshal(req)
+		if err != nil {
+			return err
+		}
 		if err := protocol.WriteMessage(conn, protocol.TypeExecReq, 0, payload); err != nil {
 			return err
 		}

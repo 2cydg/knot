@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -192,7 +193,10 @@ var sshCmd = &cobra.Command{
 				cfg.Servers[serverID] = srv // Update in-memory config
 				authUpdated = true
 
-				respPayload, _ := json.Marshal(resp)
+				respPayload, err := json.Marshal(resp)
+				if err != nil {
+					return fmt.Errorf("failed to marshal auth response: %w", err)
+				}
 				if err := protocol.WriteMessage(conn, protocol.TypeAuthResponse, 0, respPayload); err != nil {
 					return fmt.Errorf("failed to send auth response: %w", err)
 				}
@@ -206,7 +210,9 @@ var sshCmd = &cobra.Command{
 				state, err := config.LoadState()
 				if err == nil {
 					state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
-					state.Save()
+					if err := state.Save(); err != nil {
+						logger.Warn("failed to save recent state", "error", err)
+					}
 				}
 				// Save config if it was updated during auth retry
 				if authUpdated {

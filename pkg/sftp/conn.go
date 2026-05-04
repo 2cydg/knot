@@ -112,7 +112,11 @@ func (s *SFTPConn) Start() {
 							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 							continue
 						}
-						payload, _ := json.Marshal(resp)
+						payload, err := json.Marshal(resp)
+						if err != nil {
+							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
+							continue
+						}
 						_ = s.writeProtocolMessage(protocol.TypeAuthResponse, 0, payload)
 					} else {
 						_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)

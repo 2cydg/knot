@@ -137,7 +137,11 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 			logger.Warn("Failed to inject OSC 7 hook into followed session", "alias", alias, "session", followSession.ID, "error", err)
 		}
 		if info.CurrentDir != "" {
-			payload, _ := json.Marshal(protocol.SessionCWDNotify{SessionID: info.ID, Path: info.CurrentDir})
+			payload, err := json.Marshal(protocol.SessionCWDNotify{SessionID: info.ID, Path: info.CurrentDir})
+			if err != nil {
+				logger.Error("Failed to marshal session cwd notification", "session", info.ID, "error", err)
+				return
+			}
 			if err := writeMessage(protocol.TypeSessionCWDNotify, 0, payload); err != nil {
 				return
 			}
