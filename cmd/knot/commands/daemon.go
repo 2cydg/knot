@@ -58,7 +58,13 @@ var daemonStartCmd = &cobra.Command{
 			backgroundCmd.Stdin = nil
 
 			if err := backgroundCmd.Start(); err != nil {
+				if logFile != nil {
+					_ = logFile.Close()
+				}
 				return fmt.Errorf("failed to start daemon in background: %w", err)
+			}
+			if logFile != nil {
+				_ = logFile.Close()
 			}
 
 			// Wait a bit to see if the process exits immediately

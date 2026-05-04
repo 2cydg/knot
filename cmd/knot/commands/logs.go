@@ -120,10 +120,13 @@ func watchFile(path string) error {
 		if fi, err := file.Stat(); err == nil {
 			if fi.Size() < lastSize {
 				// File was truncated/rotated, reopen
-				file.Close()
 				newFile, err := os.Open(path)
 				if err != nil {
 					return fmt.Errorf("failed to reopen log file: %w", err)
+				}
+				if err := file.Close(); err != nil {
+					newFile.Close()
+					return fmt.Errorf("failed to close rotated log file: %w", err)
 				}
 				file = newFile
 				reader = bufio.NewReader(file)

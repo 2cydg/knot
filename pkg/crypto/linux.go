@@ -10,6 +10,7 @@ import (
 	"io"
 	"knot/internal/logger"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,8 +31,9 @@ var ssItemAttributes = map[string]string{
 }
 
 type linuxProvider struct {
-	key         []byte
-	fallbackKey []byte
+	key           []byte
+	fallbackKey   []byte
+	fallbackKeyV1 []byte
 }
 
 func NewLinuxProvider() (Provider, error) {
@@ -48,7 +50,8 @@ func NewLinuxProvider() (Provider, error) {
 		return nil, fmt.Errorf("failed to get salt: %w", err)
 	}
 
-	fallbackKey := DeriveKey(machineID, salt)
+	fallbackKey := DeriveKey(linuxFallbackKeyMaterial(machineID), salt)
+	fallbackKeyV1 := DeriveKey(machineID, salt)
 
 	// Try secret-service via D-Bus
 	ssKey, err := getSecretServiceKey()
@@ -59,8 +62,9 @@ func NewLinuxProvider() (Provider, error) {
 	}
 
 	return &linuxProvider{
-		key:         ssKey,
-		fallbackKey: fallbackKey,
+		key:           ssKey,
+		fallbackKey:   fallbackKey,
+		fallbackKeyV1: fallbackKeyV1,
 	}, nil
 }
 
@@ -96,7 +100,19 @@ func (p *linuxProvider) Decrypt(ciphertext []byte) ([]byte, error) {
 
 	// Fallback to machine-id key
 	logger.Debug("Attempting decryption with Machine ID fallback key")
-	return DecryptWithKey(ciphertext, p.fallbackKey)
+	plaintext, err := DecryptWithKey(ciphertext, p.fallbackKey)
+	if err == nil {
+		return plaintext, nil
+	}
+	if p.fallbackKeyV1 != nil {
+		logger.Debug("Attempting decryption with legacy Machine ID fallback key")
+		return DecryptWithKey(ciphertext, p.fallbackKeyV1)
+	}
+	return nil, err
+}
+
+func linuxFallbackKeyMaterial(machineID string) string {
+	return machineID + "\x00" + strconv.Itoa(os.Getuid())
 }
 
 func getDBusConn() (*dbus.Conn, error) {

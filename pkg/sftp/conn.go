@@ -19,6 +19,7 @@ type SFTPConn struct {
 	Closed      chan struct{}
 	StartOnce   sync.Once
 	CloseOnce   sync.Once
+	WriteMu     sync.Mutex
 	Buf         []byte
 	Interactive bool // If true, handles HostKeyConfirm interactively
 	AuthHandler func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error)
@@ -103,18 +104,18 @@ func (s *SFTPConn) Start() {
 					if s.AuthHandler != nil {
 						var challenge protocol.AuthChallengePayload
 						if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
-							_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 							continue
 						}
 						resp, err := s.AuthHandler(challenge)
 						if err != nil {
-							_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 							continue
 						}
 						payload, _ := json.Marshal(resp)
-						_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthResponse, 0, payload)
+						_ = s.writeProtocolMessage(protocol.TypeAuthResponse, 0, payload)
 					} else {
-						_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+						_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 					}
 				case protocol.TypeHostKeyConfirm:
 					if s.Interactive {
@@ -123,7 +124,7 @@ func (s *SFTPConn) Start() {
 						if _, err := fmt.Scanln(&response); err != nil {
 							response = "no"
 						}
-						_ = protocol.WriteMessage(s.Conn, protocol.TypeHostKeyConfirm, 0, []byte(response))
+						_ = s.writeProtocolMessage(protocol.TypeHostKeyConfirm, 0, []byte(response))
 					} else {
 						err := fmt.Errorf("host key verification failed. Run 'knot ssh' first to accept the key")
 						if !handshakeDone {
@@ -177,10 +178,16 @@ func (s *SFTPConn) Write(p []byte) (int, error) {
 	<-s.Ready
 
 	// Subtype 0 is used for SFTP data (standard)
-	if err := protocol.WriteMessage(s.Conn, protocol.TypeData, 0, p); err != nil {
+	if err := s.writeProtocolMessage(protocol.TypeData, 0, p); err != nil {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+func (s *SFTPConn) writeProtocolMessage(msgType uint8, reserved uint8, payload []byte) error {
+	s.WriteMu.Lock()
+	defer s.WriteMu.Unlock()
+	return protocol.WriteMessage(s.Conn, msgType, reserved, payload)
 }
 
 func (s *SFTPConn) Close() error {
