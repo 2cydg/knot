@@ -47,7 +47,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		}
 
 		// Wait for response from CLI
-		msg, err := protocol.ReadMessage(conn)
+		msg, err := readMessageWithDeadline(conn, daemonHostKeyConfirmTimeout)
 		if err != nil {
 			logger.Error("Failed to read confirmation response", "alias", req.Alias, "error", err)
 			return false
@@ -245,7 +245,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		defer wg.Done()
 		defer cancel()
 		for {
-			msg, err := protocol.ReadMessage(conn)
+			msg, err := readMessageWithDeadline(conn, daemonReadTimeout)
 			if err != nil {
 				return
 			}

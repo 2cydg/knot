@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"bytes"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionManagerCountByPoolKeyUsesTargetConnection(t *testing.T) {
@@ -139,5 +141,28 @@ func TestFilterSuppressedInputEchoKeepsPartialMismatch(t *testing.T) {
 	got := string(session.FilterSuppressedInputEcho([]byte("secops\n")))
 	if got != "secops\n" {
 		t.Fatalf("filtered output = %q", got)
+	}
+}
+
+func TestSessionManagerClearClosesConnectionsOutsideLock(t *testing.T) {
+	sm := NewSessionManager()
+	client, server := net.Pipe()
+	defer client.Close()
+	sm.Add("server", "alias", server, nil)
+
+	done := make(chan struct{})
+	go func() {
+		sm.Clear()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Clear did not return")
+	}
+
+	if got := sm.Count(); got != 0 {
+		t.Fatalf("session count = %d, want 0", got)
 	}
 }

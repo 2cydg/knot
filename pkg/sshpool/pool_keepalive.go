@@ -91,12 +91,24 @@ func (p *Pool) autoCleanup() {
 
 func (p *Pool) cleanupIdleEntries(now time.Time) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
+	var stale []struct {
+		key   string
+		entry *clientEntry
+	}
 	for key, entry := range p.entries {
 		if entry.refCount == 0 && now.Sub(entry.lastAccess) > p.idleTimeout {
-			entry.client.Close()
 			delete(p.entries, key)
+			stale = append(stale, struct {
+				key   string
+				entry *clientEntry
+			}{key: key, entry: entry})
 		}
+	}
+	p.mu.Unlock()
+
+	for _, item := range stale {
+		item.entry.client.Close()
+		p.notifyDisconnect(item.key)
 	}
 }

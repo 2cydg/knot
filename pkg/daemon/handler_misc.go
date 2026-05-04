@@ -66,5 +66,9 @@ func (d *Daemon) handleClearRequest(conn net.Conn) {
 	// 2. Close all physical connections
 	count := d.pool.CloseAll()
 	// 3. Respond with count in Reserved field and TypeClearResp
-	protocol.WriteMessage(conn, protocol.TypeClearResp, uint8(count), []byte(fmt.Sprintf("ok: %d connections cleared", count)))
+	reserved := uint8(count)
+	if count > 255 {
+		reserved = 255
+	}
+	protocol.WriteMessage(conn, protocol.TypeClearResp, reserved, []byte(fmt.Sprintf("ok: %d connections cleared", count)))
 }

@@ -57,7 +57,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		}
 
 		// Wait for response from CLI
-		msg, err := protocol.ReadMessage(conn)
+		msg, err := readMessageWithDeadline(conn, daemonHostKeyConfirmTimeout)
 		if err != nil {
 			logger.Error("Failed to read confirmation response", "alias", alias, "error", err)
 			return false
@@ -195,7 +195,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		defer wg.Done()
 		defer cancel()
 		for {
-			msg, err := protocol.ReadMessage(conn)
+			msg, err := readMessageWithDeadline(conn, daemonReadTimeout)
 			if err != nil {
 				return
 			}

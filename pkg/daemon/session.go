@@ -247,14 +247,19 @@ func (sm *SessionManager) CountByPoolKey() map[string]int {
 
 func (sm *SessionManager) Clear() {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	var conns []net.Conn
 	for _, s := range sm.sessions {
 		if s.primaryConn != nil {
-			s.primaryConn.Close()
+			conns = append(conns, s.primaryConn)
 		}
 	}
 	sm.sessions = make(map[string]*Session)
 	sm.nextID = 1
+	sm.mu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 func cloneSessionPoolKeys(keys []string) []string {
