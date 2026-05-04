@@ -1,6 +1,7 @@
 package sshpool
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"knot/internal/paths"
@@ -69,10 +70,27 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) {
 			if len(keyErr.Want) > 0 {
-				return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
-					"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
-					"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
-					"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
+				if policy == HostKeyPolicyFail || policy == HostKeyPolicyStrict || policy == HostKeyPolicyAcceptNew {
+					return changedHostKeyError()
+				}
+				if confirmCallback != nil {
+					prompt := fmt.Sprintf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+						"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
+						"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+						"The host key for '%s' has changed.\n"+
+						"New %s key fingerprint is %s.\n"+
+						"Overwrite the saved host key and continue connecting (yes/no)? ",
+						hostname, key.Type(), ssh.FingerprintSHA256(key))
+
+					if confirmCallback(prompt) {
+						if err := replaceKnownHost(khPath, hostname, key, keyErr.Want); err != nil {
+							return err
+						}
+						return nil
+					}
+					return fmt.Errorf("host key verification failed (user rejected changed key): %w", ErrHostKeyReject)
+				}
+				return changedHostKeyError()
 			}
 
 			if policy == HostKeyPolicyAcceptNew {
@@ -100,6 +118,13 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 	}, nil
 }
 
+func changedHostKeyError() error {
+	return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+		"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
+		"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+		"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
+}
+
 func appendKnownHost(khPath string, hostname string, key ssh.PublicKey) error {
 	f, err := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
@@ -109,6 +134,57 @@ func appendKnownHost(khPath string, hostname string, key ssh.PublicKey) error {
 
 	line := knownhosts.Line([]string{hostname}, key)
 	if _, err := f.WriteString(line + "\n"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []knownhosts.KnownKey) error {
+	lineSet := make(map[int]struct{})
+	for _, known := range want {
+		if known.Filename == khPath && known.Line > 0 {
+			lineSet[known.Line] = struct{}{}
+		}
+	}
+	if len(lineSet) == 0 {
+		return appendKnownHost(khPath, hostname, key)
+	}
+
+	f, err := os.Open(khPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for lineNo := 1; scanner.Scan(); lineNo++ {
+		if _, remove := lineSet[lineNo]; remove {
+			continue
+		}
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	lines = append(lines, knownhosts.Line([]string{hostname}, key))
+
+	out, err := os.OpenFile(khPath, os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriter(out)
+	for _, line := range lines {
+		if _, err := w.WriteString(line + "\n"); err != nil {
+			out.Close()
+			return err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
 		return err
 	}
 	return nil

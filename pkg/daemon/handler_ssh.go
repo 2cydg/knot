@@ -198,7 +198,8 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				clean, paths, _ := osc7.Observe(buf[:n])
+				filtered := s.FilterSuppressedInputEcho(buf[:n])
+				clean, paths, _ := osc7.Observe(filtered)
 				for _, dir := range paths {
 					s.UpdateCurrentDir(dir)
 				}

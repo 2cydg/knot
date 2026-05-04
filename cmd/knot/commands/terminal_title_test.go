@@ -38,3 +38,9 @@ func TestSanitizeTerminalTitleRemovesControlChars(t *testing.T) {
 		t.Fatalf("unexpected sanitized title: %q", got)
 	}
 }
+
+func TestSFTPTerminalTitle(t *testing.T) {
+	if got := sftpTerminalTitle("web-prod"); got != "SFTP: web-prod" {
+		t.Fatalf("sftpTerminalTitle() = %q, want %q", got, "SFTP: web-prod")
+	}
+}

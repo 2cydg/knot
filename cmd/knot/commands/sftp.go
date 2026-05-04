@@ -19,6 +19,7 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var sftpFollow bool
@@ -174,6 +175,14 @@ paths support ~/... expansion.`,
 		}
 		defer sftpClient.Close()
 
+		outFd := int(os.Stdout.Fd())
+		var titleMgr *terminalTitleManager
+		if term.IsTerminal(outFd) {
+			titleMgr = newTerminalTitleManager(os.Stdout)
+			titleMgr.PushAndSet(sftpTerminalTitle(alias))
+			defer titleMgr.Restore()
+		}
+
 		replOpts := knotsftp.REPLOptions{InitialDir: initialDir}
 		if sftpFollow {
 			replOpts.InitialDir = followInitialDir
@@ -186,6 +195,10 @@ paths support ~/... expansion.`,
 		}
 		return err
 	},
+}
+
+func sftpTerminalTitle(alias string) string {
+	return fmt.Sprintf("SFTP: %s", alias)
 }
 
 func init() {

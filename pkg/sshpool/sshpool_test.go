@@ -94,6 +94,11 @@ type testSSHServer struct {
 
 func startTestSSHServer(t *testing.T, user string, password string) *testSSHServer {
 	t.Helper()
+	return startTestSSHServerOnAddr(t, "127.0.0.1:0", user, password)
+}
+
+func startTestSSHServerOnAddr(t *testing.T, addr string, user string, password string) *testSSHServer {
+	t.Helper()
 
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -114,7 +119,7 @@ func startTestSSHServer(t *testing.T, user string, password string) *testSSHServ
 	}
 	serverConfig.AddHostKey(signer)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
@@ -274,6 +279,118 @@ func TestHostKeyPolicyAcceptNewAddsUnknownHost(t *testing.T) {
 	}
 	if len(knownHosts) == 0 {
 		t.Fatal("expected accept-new policy to write known_hosts entry")
+	}
+}
+
+func TestHostKeyMismatchCanReplaceKnownHost(t *testing.T) {
+	const (
+		user     = "tester"
+		password = "secret"
+	)
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	server1 := startTestSSHServer(t, user, password)
+	defer server1.Close()
+
+	srv := makePasswordServer("target", server1.Addr(), user, password, knownHostsPath)
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+	}
+
+	pool := NewPool()
+	client, _, _, err := pool.GetClient(srv, cfg, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("failed to accept initial host key: %v", err)
+	}
+	client.Close()
+	pool.CloseAll()
+	reusedAddr := server1.Addr()
+	server1.Close()
+
+	server2 := startTestSSHServerOnAddr(t, reusedAddr, user, password)
+	defer server2.Close()
+	srv = makePasswordServer("target", server2.Addr(), user, password, knownHostsPath)
+	cfg.Servers[srv.ID] = srv
+
+	var prompt string
+	pool = NewPool()
+	defer pool.CloseAll()
+	client, _, _, err = pool.GetClient(srv, cfg, func(p string) bool {
+		prompt = p
+		return true
+	})
+	if err != nil {
+		t.Fatalf("changed host key should be replaced when confirmed: %v", err)
+	}
+	client.Close()
+
+	if !strings.Contains(prompt, "Overwrite the saved host key") {
+		t.Fatalf("expected overwrite prompt, got %q", prompt)
+	}
+
+	knownHosts, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to read known_hosts: %v", err)
+	}
+	entries := strings.Count(strings.TrimSpace(string(knownHosts)), "\n") + 1
+	if entries != 1 {
+		t.Fatalf("expected replaced known_hosts to contain one entry, got %d:\n%s", entries, knownHosts)
+	}
+}
+
+func TestHostKeyMismatchRejectKeepsKnownHost(t *testing.T) {
+	const (
+		user     = "tester"
+		password = "secret"
+	)
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	server1 := startTestSSHServer(t, user, password)
+	defer server1.Close()
+
+	srv := makePasswordServer("target", server1.Addr(), user, password, knownHostsPath)
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+	}
+
+	pool := NewPool()
+	client, _, _, err := pool.GetClient(srv, cfg, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("failed to accept initial host key: %v", err)
+	}
+	client.Close()
+	pool.CloseAll()
+	before, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to read known_hosts: %v", err)
+	}
+	reusedAddr := server1.Addr()
+	server1.Close()
+
+	server2 := startTestSSHServerOnAddr(t, reusedAddr, user, password)
+	defer server2.Close()
+	srv = makePasswordServer("target", server2.Addr(), user, password, knownHostsPath)
+	cfg.Servers[srv.ID] = srv
+
+	pool = NewPool()
+	defer pool.CloseAll()
+	_, _, _, err = pool.GetClient(srv, cfg, func(string) bool { return false })
+	if err == nil {
+		t.Fatal("expected changed host key to be rejected")
+	}
+	if !strings.Contains(err.Error(), "user rejected changed key") {
+		t.Fatalf("expected user rejected changed key error, got %v", err)
+	}
+	after, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to read known_hosts: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("known_hosts changed after rejection:\nbefore=%s\nafter=%s", before, after)
 	}
 }
 

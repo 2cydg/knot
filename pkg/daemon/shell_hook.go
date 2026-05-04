@@ -6,5 +6,11 @@ func injectOSC7Hook(session *Session) error {
 	if session == nil {
 		return nil
 	}
-	return session.WriteInput([]byte(osc7ShellHook + "; stty echo 2>/dev/null || true\n"))
+	input := []byte(osc7ShellHook + "\n")
+	session.SuppressInputEcho(input)
+	if err := session.WriteInput(input); err != nil {
+		session.ClearSuppressedInputEcho()
+		return err
+	}
+	return nil
 }

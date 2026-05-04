@@ -95,3 +95,49 @@ func TestInjectOSC7HookWritesToSessionInput(t *testing.T) {
 		t.Fatalf("hook input = %q, want trailing newline", got)
 	}
 }
+
+func TestFilterSuppressedInputEchoHidesSplitHookEcho(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.Add("server", "alias", nil, nil)
+	hidden := []byte("secret hook\n")
+
+	session.SuppressInputEcho(hidden)
+
+	var got bytes.Buffer
+	got.Write(session.FilterSuppressedInputEcho([]byte("secret ")))
+	got.Write(session.FilterSuppressedInputEcho([]byte("hook\r\nprompt> ")))
+	got.Write(session.FilterSuppressedInputEcho([]byte("visible\n")))
+
+	if got.String() != "\r\nprompt> visible\n" {
+		t.Fatalf("filtered output = %q", got.String())
+	}
+}
+
+func TestFilterSuppressedInputEchoAbandonsOnFirstMismatch(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.Add("server", "alias", nil, nil)
+
+	session.SuppressInputEcho([]byte("secret hook\n"))
+
+	got := string(session.FilterSuppressedInputEcho([]byte("welcome\n")))
+	if got != "welcome\n" {
+		t.Fatalf("filtered output = %q", got)
+	}
+
+	got = string(session.FilterSuppressedInputEcho([]byte("secret hook\n")))
+	if got != "secret hook\n" {
+		t.Fatalf("filter should be disabled after mismatch, got %q", got)
+	}
+}
+
+func TestFilterSuppressedInputEchoKeepsPartialMismatch(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.Add("server", "alias", nil, nil)
+
+	session.SuppressInputEcho([]byte("secret hook\n"))
+
+	got := string(session.FilterSuppressedInputEcho([]byte("secops\n")))
+	if got != "secops\n" {
+		t.Fatalf("filtered output = %q", got)
+	}
+}
