@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"net/url"
 	"path"
 	"strings"
@@ -12,45 +13,46 @@ const (
 )
 
 type osc7Parser struct {
-	buf string
+	buf []byte
 }
 
 func (p *osc7Parser) Observe(data []byte) ([]byte, []string, int) {
 	if len(data) == 0 {
 		return nil, nil, -1
 	}
-	p.buf += string(data)
+	p.buf = append(p.buf, data...)
 	if len(p.buf) > osc7MaxBuffer {
-		p.buf = p.buf[len(p.buf)-osc7MaxBuffer:]
+		copy(p.buf, p.buf[len(p.buf)-osc7MaxBuffer:])
+		p.buf = p.buf[:osc7MaxBuffer]
 	}
 
-	var clean strings.Builder
+	clean := make([]byte, 0, len(p.buf))
 	var paths []string
 	firstPathCleanLen := -1
 	for {
-		start := strings.Index(p.buf, osc7Prefix)
+		start := bytes.Index(p.buf, []byte(osc7Prefix))
 		if start < 0 {
-			clean.WriteString(p.flushUntilPartialPrefix())
-			return []byte(clean.String()), paths, firstPathCleanLen
+			clean = append(clean, p.flushUntilPartialPrefix()...)
+			return clean, paths, firstPathCleanLen
 		}
 		if start > 0 {
-			clean.WriteString(p.buf[:start])
+			clean = append(clean, p.buf[:start]...)
 			p.buf = p.buf[start:]
 		}
 
 		payloadStart := len(osc7Prefix)
-		payloadEnd, terminatorLen, ok := findOSCTerminator(p.buf[payloadStart:])
+		payloadEnd, terminatorLen, ok := findOSCTerminatorBytes(p.buf[payloadStart:])
 		if !ok {
 			if len(p.buf) > osc7MaxBuffer {
 				p.buf = p.buf[:0]
 			}
-			return []byte(clean.String()), paths, firstPathCleanLen
+			return clean, paths, firstPathCleanLen
 		}
 
-		payload := p.buf[payloadStart : payloadStart+payloadEnd]
+		payload := string(p.buf[payloadStart : payloadStart+payloadEnd])
 		if dir := parseOSC7Payload(payload); dir != "" {
 			if firstPathCleanLen < 0 {
-				firstPathCleanLen = clean.Len()
+				firstPathCleanLen = len(clean)
 			}
 			paths = append(paths, dir)
 		}
@@ -58,32 +60,43 @@ func (p *osc7Parser) Observe(data []byte) ([]byte, []string, int) {
 	}
 }
 
-func (p *osc7Parser) flushUntilPartialPrefix() string {
-	if p.buf == "" {
-		return ""
+func (p *osc7Parser) flushUntilPartialPrefix() []byte {
+	if len(p.buf) == 0 {
+		return nil
 	}
-	keep := longestOSC7PrefixSuffix(p.buf)
-	out := p.buf[:len(p.buf)-keep]
+	keep := longestOSC7PrefixSuffixBytes(p.buf)
+	out := append([]byte(nil), p.buf[:len(p.buf)-keep]...)
 	p.buf = p.buf[len(p.buf)-keep:]
 	return out
 }
 
-func longestOSC7PrefixSuffix(s string) int {
+func longestOSC7PrefixSuffixBytes(s []byte) int {
 	max := len(osc7Prefix) - 1
 	if len(s) < max {
 		max = len(s)
 	}
 	for n := max; n > 0; n-- {
-		if strings.HasSuffix(s, osc7Prefix[:n]) {
+		if bytes.HasSuffix(s, []byte(osc7Prefix[:n])) {
 			return n
 		}
 	}
 	return 0
 }
 
-func findOSCTerminator(s string) (idx int, terminatorLen int, ok bool) {
-	bel := strings.IndexByte(s, '\a')
-	st := strings.Index(s, "\x1b\\")
+func findOSCTerminatorBytes(s []byte) (idx int, terminatorLen int, ok bool) {
+	bel := -1
+	st := -1
+	for i, b := range s {
+		if bel < 0 && b == '\a' {
+			bel = i
+		}
+		if st < 0 && b == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
+			st = i
+		}
+		if bel >= 0 || st >= 0 {
+			break
+		}
+	}
 
 	switch {
 	case bel < 0 && st < 0:
