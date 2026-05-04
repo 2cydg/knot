@@ -1,14 +1,15 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"knot/internal/fileutil"
 	"knot/internal/paths"
 	"knot/pkg/crypto"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -496,11 +497,16 @@ func (c *Config) Save(cryptoProvider crypto.Provider) error {
 }
 
 func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) error {
-	configDir := filepath.Dir(configPath)
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return err
-	}
+	return WithConfigLock(configPath, func() error {
+		return c.saveToPathLocked(configPath, cryptoProvider)
+	})
+}
 
+func WithConfigLock(configPath string, fn func() error) error {
+	return fileutil.WithLock(configPath+".lock", fn)
+}
+
+func (c *Config) saveToPathLocked(configPath string, cryptoProvider crypto.Provider) error {
 	if c.Settings.ForwardAgent == nil {
 		defaultTrue := true
 		c.Settings.ForwardAgent = &defaultTrue
@@ -544,13 +550,12 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		return err
 	}
 
-	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(cfgToSave); err != nil {
 		return err
 	}
-	defer f.Close()
 
-	return toml.NewEncoder(f).Encode(cfgToSave)
+	return fileutil.AtomicWriteFile(configPath, buf.Bytes(), 0600)
 }
 
 func IsValidAlias(alias string) bool {

@@ -2,9 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	"knot/internal/fileutil"
 	"knot/internal/paths"
 	"os"
-	"path/filepath"
 	"sort"
 	"time"
 )
@@ -51,10 +51,7 @@ func (s *State) Save() error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
-		return err
-	}
-	return os.WriteFile(statePath, data, 0600)
+	return fileutil.AtomicWriteFile(statePath, data, 0600)
 }
 
 func (s *State) UpdateRecent(serverID string, limit int) {
