@@ -181,6 +181,43 @@ func TestSyncProviderAliasLookupAndValidation(t *testing.T) {
 	}
 }
 
+func TestConfigValidationRejectsControlCharacters(t *testing.T) {
+	cfg := &Config{
+		Servers: make(map[string]ServerConfig),
+		Proxies: make(map[string]ProxyConfig),
+		Keys:    make(map[string]KeyConfig),
+	}
+
+	server := ServerConfig{
+		ID:         "srv_test",
+		Alias:      "test",
+		Host:       "example.com\r\nX-Test: y",
+		Port:       22,
+		User:       "alice",
+		AuthMethod: AuthMethodPassword,
+	}
+	if err := server.Validate(cfg); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("expected server control character error, got %v", err)
+	}
+
+	proxy := ProxyConfig{
+		ID:       "prx_test",
+		Alias:    "proxy",
+		Type:     ProxyTypeHTTP,
+		Host:     "proxy.example.com",
+		Port:     8080,
+		Username: "alice\r\nX-Test: y",
+	}
+	if err := proxy.Validate(); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("expected proxy control character error, got %v", err)
+	}
+
+	forward := ForwardConfig{Type: "L", LocalPort: 8080, RemoteAddr: "127.0.0.1:80\r\nX-Test: y"}
+	if err := forward.Validate(); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("expected forward control character error, got %v", err)
+	}
+}
+
 func TestHasCycle(t *testing.T) {
 	cfg := &Config{
 		Servers: map[string]ServerConfig{

@@ -21,11 +21,16 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 	// C6/N3: Input Validation
 	if !isValidAlias(req.Alias) {
 		err = fmt.Errorf("invalid alias format")
-	} else if req.Config.LocalPort <= 0 || req.Config.LocalPort > 65535 {
-		err = fmt.Errorf("invalid port number: %d", req.Config.LocalPort)
-	} else if req.Config.Type != "L" && req.Config.Type != "R" && req.Config.Type != "D" {
-		err = fmt.Errorf("invalid forward type: %s", req.Config.Type)
 	} else {
+		requestForward := config.ForwardConfig{
+			Type:       req.Config.Type,
+			LocalPort:  req.Config.LocalPort,
+			RemoteAddr: req.Config.RemoteAddr,
+		}
+		if err = requestForward.Validate(); err != nil {
+			protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte(err.Error()))
+			return
+		}
 		// Load config to get server info for exact pool key lookup
 		cfg, loadErr := config.Load(d.crypto)
 		var serverID string
@@ -79,12 +84,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 				err = fmt.Errorf("server alias '%s' not found", req.Alias)
 			} else {
 				// 1. Add rule to ForwardManager
-				fConfig := config.ForwardConfig{
-					Type:       req.Config.Type,
-					LocalPort:  req.Config.LocalPort,
-					RemoteAddr: req.Config.RemoteAddr,
-				}
-				err = d.fm.AddRule(serverID, fConfig, req.Config.Enabled, req.IsTemp, sshClient, poolKeys)
+				err = d.fm.AddRule(serverID, requestForward, req.Config.Enabled, req.IsTemp, sshClient, poolKeys)
 				if err == nil && !req.IsTemp {
 					d.syncConfig(serverID)
 				}

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"unicode"
 )
 
 type socks5ReplyError struct {
@@ -68,10 +70,16 @@ func readSocks5Request(conn net.Conn) (string, error) {
 			return "", err
 		}
 		addrLen := int(buf[0])
+		if addrLen == 0 {
+			return "", socks5ReplyError{code: 0x08}
+		}
 		if _, err := io.ReadFull(conn, buf[:addrLen]); err != nil {
 			return "", err
 		}
 		host = string(buf[:addrLen])
+		if invalidSocks5Domain(host) {
+			return "", socks5ReplyError{code: 0x08}
+		}
 	case 0x04:
 		if _, err := io.ReadFull(conn, buf[:16]); err != nil {
 			return "", err
@@ -85,7 +93,22 @@ func readSocks5Request(conn net.Conn) (string, error) {
 		return "", err
 	}
 	port := int(buf[0])<<8 | int(buf[1])
+	if port == 0 {
+		return "", socks5ReplyError{code: 0x08}
+	}
 	return net.JoinHostPort(host, fmt.Sprintf("%d", port)), nil
+}
+
+func invalidSocks5Domain(host string) bool {
+	if strings.TrimSpace(host) != host {
+		return true
+	}
+	for _, r := range host {
+		if r < 0x20 || r == 0x7f || unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeSocks5NoAuth(conn net.Conn) error {

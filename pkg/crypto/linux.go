@@ -41,7 +41,7 @@ func NewLinuxProvider() (Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get machine id: %w", err)
 	}
-	logger.Debug("Machine ID retrieved", "id", machineID[:8]+"...")
+	logger.Debug("Machine ID retrieved")
 
 	salt, err := GetSalt()
 	if err != nil {
@@ -188,7 +188,7 @@ func getSecretServiceKey() ([]byte, error) {
 		Value       []byte
 		ContentType string
 	}
-	
+
 	secretInput := SecretInput{
 		Session:     sessionPath,
 		Parameters:  []byte{},

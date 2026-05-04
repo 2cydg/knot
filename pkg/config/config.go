@@ -616,14 +616,22 @@ func (s *ServerConfig) Validate(cfg *Config) error {
 	if cfg.ServerAliasExists(s.Alias, s.ID) {
 		return fmt.Errorf("server alias '%s' already exists", s.Alias)
 	}
-	if s.Host == "" {
-		return fmt.Errorf("host cannot be empty")
+	if err := ValidateHostField("host", s.Host); err != nil {
+		return err
 	}
 	if s.Port <= 0 || s.Port > 65535 {
 		return fmt.Errorf("invalid port number: %d", s.Port)
 	}
-	if s.User == "" {
-		return fmt.Errorf("user cannot be empty")
+	if err := ValidateHostField("user", s.User); err != nil {
+		return err
+	}
+	if s.KnownHostsPath != "" && HasControlChar(s.KnownHostsPath) {
+		return fmt.Errorf("known_hosts path contains control characters")
+	}
+	for _, f := range s.Forwards {
+		if err := f.Validate(); err != nil {
+			return err
+		}
 	}
 	if s.AuthMethod != AuthMethodPassword && s.AuthMethod != AuthMethodKey && s.AuthMethod != AuthMethodAgent {
 		return fmt.Errorf("invalid auth method: %s", s.AuthMethod)
@@ -662,11 +670,33 @@ func (p *ProxyConfig) Validate() error {
 	if p.Type != ProxyTypeSOCKS5 && p.Type != ProxyTypeHTTP {
 		return fmt.Errorf("invalid proxy type: %s", p.Type)
 	}
-	if p.Host == "" {
-		return fmt.Errorf("proxy host cannot be empty")
+	if err := ValidateHostField("proxy host", p.Host); err != nil {
+		return err
+	}
+	if p.Username != "" && HasControlChar(p.Username) {
+		return fmt.Errorf("proxy username contains control characters")
 	}
 	if p.Port <= 0 || p.Port > 65535 {
 		return fmt.Errorf("invalid proxy port: %d", p.Port)
+	}
+	return nil
+}
+
+func (f *ForwardConfig) Validate() error {
+	if f.Type != "L" && f.Type != "R" && f.Type != "D" {
+		return fmt.Errorf("invalid forward type: %s", f.Type)
+	}
+	if f.LocalPort <= 0 || f.LocalPort > 65535 {
+		return fmt.Errorf("invalid port number: %d", f.LocalPort)
+	}
+	if f.Type == "D" {
+		if f.RemoteAddr != "" && HasControlChar(f.RemoteAddr) {
+			return fmt.Errorf("remote address contains control characters")
+		}
+		return nil
+	}
+	if err := ValidateHostPort("remote address", f.RemoteAddr); err != nil {
+		return err
 	}
 	return nil
 }
@@ -698,6 +728,9 @@ func (s *SyncProviderConfig) Validate(cfg *Config) error {
 	case SyncProviderWebDAV:
 		if strings.TrimSpace(s.URL) == "" {
 			return fmt.Errorf("webdav url cannot be empty")
+		}
+		if HasControlChar(s.URL) {
+			return fmt.Errorf("webdav url contains control characters")
 		}
 	default:
 		return fmt.Errorf("unsupported sync provider type: %s", s.Type)

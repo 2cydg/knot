@@ -57,6 +57,36 @@ func TestWebDAVUploadDownload(t *testing.T) {
 	}
 }
 
+func TestWebDAVDownloadRejectsOversizedArchive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(w, io.LimitReader(repeatingReader{}, int64(maxSyncArchiveSize+1)))
+	}))
+	defer server.Close()
+
+	provider, err := NewWebDAVProvider(config.SyncProviderConfig{
+		Alias: "home",
+		Type:  config.SyncProviderWebDAV,
+		URL:   server.URL + "/sync.enc",
+	})
+	if err != nil {
+		t.Fatalf("NewWebDAVProvider failed: %v", err)
+	}
+
+	_, err = provider.Download(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "webdav sync archive too large") {
+		t.Fatalf("expected archive too large error, got %v", err)
+	}
+}
+
+type repeatingReader struct{}
+
+func (repeatingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
 func TestNormalizeWebDAVURL(t *testing.T) {
 	tests := []struct {
 		name string

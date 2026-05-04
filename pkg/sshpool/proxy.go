@@ -50,6 +50,13 @@ func dialViaProxy(targetAddr, proxyID string, cfg *config.Config) (net.Conn, err
 }
 
 func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer) (net.Conn, error) {
+	if err := config.ValidateHostPort("proxy target address", targetAddr); err != nil {
+		return nil, err
+	}
+	if strings.ContainsAny(user, "\r\n") || strings.ContainsAny(pass, "\r\n") {
+		return nil, fmt.Errorf("invalid proxy credentials")
+	}
+
 	conn, err := dialer.Dial("tcp", proxyAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to HTTP proxy: %w", err)
@@ -59,8 +66,16 @@ func dialHTTPProxy(proxyAddr, targetAddr, user, pass string, dialer *net.Dialer)
 	if user != "" {
 		authHeader = "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass)) + "\r\n"
 	}
+	trimmedAuthHeader := strings.TrimSuffix(authHeader, "\r\n")
+	if strings.ContainsAny(trimmedAuthHeader, "\r\n") {
+		conn.Close()
+		return nil, fmt.Errorf("invalid proxy authorization header")
+	}
 
-	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", targetAddr, targetAddr, authHeader)
+	connectReq := "CONNECT " + targetAddr + " HTTP/1.1\r\n" +
+		"Host: " + targetAddr + "\r\n" +
+		authHeader +
+		"\r\n"
 	if _, err := conn.Write([]byte(connectReq)); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to send CONNECT request to HTTP proxy: %w", err)
