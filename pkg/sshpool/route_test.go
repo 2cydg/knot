@@ -281,6 +281,96 @@ func TestPoolPutEntryRejectsAfterCloseAll(t *testing.T) {
 	}
 }
 
+func TestPoolClearAllowsReconnect(t *testing.T) {
+	const (
+		user     = "tester"
+		password = "secret"
+	)
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	server := startTestSSHServer(t, user, password)
+	defer server.Close()
+
+	srv := makePasswordServer("direct", server.Addr(), user, password, knownHostsPath)
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+	}
+
+	pool := NewPool()
+	defer pool.CloseAll()
+	client, keys, _, err := pool.GetClient(srv, cfg, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("failed to establish client: %v", err)
+	}
+	key := keys[0]
+
+	if count := pool.Clear(); count != 1 {
+		t.Fatalf("Clear count = %d, want 1", count)
+	}
+	if _, ok := pool.GetClientForKey(key); ok {
+		t.Fatal("expected pool to be empty after Clear")
+	}
+	if !waitForClientClosed(client) {
+		t.Fatal("expected client to close after Clear")
+	}
+
+	client, _, isNew, err := pool.GetClient(srv, cfg, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("expected GetClient to reconnect after Clear: %v", err)
+	}
+	defer client.Close()
+	if !isNew {
+		t.Fatal("expected reconnect after Clear to create a new client")
+	}
+}
+
+func TestKeepAliveDoesNotDropActiveClientWhenServerRejectsRequest(t *testing.T) {
+	const (
+		user     = "tester"
+		password = "secret"
+	)
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	server := startTestSSHServer(t, user, password)
+	defer server.Close()
+
+	srv := makePasswordServer("direct", server.Addr(), user, password, knownHostsPath)
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{srv.ID: srv},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+		Settings: config.SettingsConfig{
+			KeepaliveInterval: "10ms",
+		},
+	}
+
+	pool := NewPool()
+	defer pool.CloseAll()
+
+	client, keys, _, err := pool.GetClient(srv, cfg, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("failed to establish client: %v", err)
+	}
+	key := keys[0]
+	pool.IncRef(key)
+	defer pool.DecRef(key)
+
+	time.Sleep(80 * time.Millisecond)
+	if !pool.IsAlive(key, client) {
+		t.Fatal("expected keepalive rejection not to drop an active client")
+	}
+
+	cached, _, isNew, err := pool.GetClient(srv, cfg, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("failed to fetch cached client: %v", err)
+	}
+	if isNew || cached != client {
+		t.Fatal("expected cached client to be reused after keepalive rejection")
+	}
+}
+
 func TestDisconnectCallbackPanicDoesNotPropagate(t *testing.T) {
 	pool := NewPool()
 	defer pool.CloseAll()

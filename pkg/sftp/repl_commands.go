@@ -22,6 +22,7 @@ type ArgSpec struct {
 type CommandSpec struct {
 	Name    string
 	Aliases []string
+	Options []string
 	Args    []ArgSpec
 }
 
@@ -31,11 +32,11 @@ var replCommandSpecs = []*CommandSpec{
 	{Name: "ls", Args: []ArgSpec{{Kind: PathRemoteAny, Optional: true}}},
 	{Name: "pwd"},
 	{Name: "cd", Args: []ArgSpec{{Kind: PathRemoteDir}}},
-	{Name: "get", Args: []ArgSpec{
+	{Name: "get", Options: []string{"-r", "--recursive"}, Args: []ArgSpec{
 		{Kind: PathRemoteAny},
 		{Kind: PathLocalAny, Optional: true},
 	}},
-	{Name: "put", Args: []ArgSpec{
+	{Name: "put", Options: []string{"-r", "--recursive"}, Args: []ArgSpec{
 		{Kind: PathLocalAny},
 		{Kind: PathRemoteAny, Optional: true},
 	}},

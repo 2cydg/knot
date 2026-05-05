@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -72,7 +73,7 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 		if errors.As(err, &keyErr) {
 			if len(keyErr.Want) > 0 {
 				if policy == HostKeyPolicyFail || policy == HostKeyPolicyStrict || policy == HostKeyPolicyAcceptNew {
-					return changedHostKeyError()
+					return changedHostKeyError(khPath, policy)
 				}
 				if confirmCallback != nil {
 					prompt := fmt.Sprintf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
@@ -91,7 +92,7 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 					}
 					return fmt.Errorf("host key verification failed (user rejected changed key): %w", ErrHostKeyReject)
 				}
-				return changedHostKeyError()
+				return changedHostKeyError(khPath, policy)
 			}
 
 			if policy == HostKeyPolicyAcceptNew {
@@ -115,15 +116,24 @@ func buildHostKeyCallback(srv config.ServerConfig, confirmCallback func(string) 
 			}
 		}
 
-		return fmt.Errorf("host key verification failed: %w", ErrHostKeyReject)
+		return fmt.Errorf("host key verification failed (known_hosts: %s, policy: %s): %w", khPath, displayHostKeyPolicy(policy), ErrHostKeyReject)
 	}, nil
 }
 
-func changedHostKeyError() error {
+func changedHostKeyError(khPath string, policy string) error {
 	return fmt.Errorf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
 		"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"+
 		"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
-		"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!: %w", ErrHostKeyReject)
+		"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\n"+
+		"Known hosts file: %s\n"+
+		"Host key policy: %s: %w", khPath, displayHostKeyPolicy(policy), ErrHostKeyReject)
+}
+
+func displayHostKeyPolicy(policy string) string {
+	if policy == "" {
+		return "ask"
+	}
+	return policy
 }
 
 func appendKnownHost(khPath string, hostname string, key ssh.PublicKey) error {
@@ -156,9 +166,6 @@ func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []
 				lineSet[known.Line] = struct{}{}
 			}
 		}
-		if len(lineSet) == 0 {
-			return appendKnownHostLocked(khPath, hostname, key)
-		}
 
 		f, err := os.Open(khPath)
 		if err != nil {
@@ -169,7 +176,7 @@ func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []
 		var lines []string
 		scanner := bufio.NewScanner(f)
 		for lineNo := 1; scanner.Scan(); lineNo++ {
-			if _, remove := lineSet[lineNo]; remove {
+			if shouldRemoveKnownHostLine(scanner.Text(), hostname, lineNo, lineSet) {
 				continue
 			}
 			lines = append(lines, scanner.Text())
@@ -187,6 +194,26 @@ func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []
 		}
 		return fileutil.AtomicWriteFile(khPath, buf.Bytes(), 0600)
 	})
+}
+
+func shouldRemoveKnownHostLine(line string, hostname string, lineNo int, lineSet map[int]struct{}) bool {
+	if _, remove := lineSet[lineNo]; remove {
+		return true
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 3 || strings.HasPrefix(fields[0], "#") || strings.HasPrefix(fields[0], "@") || strings.HasPrefix(fields[0], "|") {
+		return false
+	}
+	target := knownhosts.Normalize(hostname)
+	for _, host := range strings.Split(fields[0], ",") {
+		if strings.HasPrefix(host, "!") {
+			host = strings.TrimPrefix(host, "!")
+		}
+		if knownhosts.Normalize(host) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureKnownHostsFile(khPath string) error {

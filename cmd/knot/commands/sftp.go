@@ -130,6 +130,7 @@ paths support ~/... expansion.`,
 		}()
 
 		sftpConn := &knotsftp.SFTPConn{
+			Alias:       alias,
 			Conn:        conn,
 			Interactive: true,
 			AuthHandler: func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error) {
@@ -186,7 +187,7 @@ paths support ~/... expansion.`,
 			defer titleMgr.Restore()
 		}
 
-		replOpts := knotsftp.REPLOptions{InitialDir: initialDir}
+		replOpts := knotsftp.REPLOptions{InitialDir: initialDir, DisconnectCh: sftpConn.NotifyCh}
 		if sftpFollow {
 			replOpts.InitialDir = followInitialDir
 			replOpts.FollowCh = sftpConn.FollowCh

@@ -150,6 +150,20 @@ func TestLocalPathCompletion(t *testing.T) {
 			want:       []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)},
 		},
 		{
+			name:       "get recursive option still completes remote first arg",
+			line:       "get -r ",
+			pos:        len("get -r "),
+			wantOffset: 0,
+			want:       nil,
+		},
+		{
+			name:       "get recursive option still completes local second path",
+			line:       "get -r remote.txt al",
+			pos:        len("get -r remote.txt al"),
+			wantOffset: len("al"),
+			want:       []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)},
+		},
+		{
 			name:       "mget second arg only returns directories",
 			line:       "mget *.txt D",
 			pos:        len("mget *.txt D"),
@@ -203,7 +217,8 @@ func TestLocalPathCompletion(t *testing.T) {
 	if hasDirSymlink {
 		tests[0].want = []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", dirValue("alpha link"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)}
 		tests[1].want = []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", dirValue("alpha link"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)}
-		tests[7].want = []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", dirValue("alpha link"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)}
+		tests[3].want = []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", dirValue("alpha link"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)}
+		tests[9].want = []string{localCompletionSuffix(t, "al", dirValue("alpha dir"), quoteModeNone, false), localCompletionSuffix(t, "al", dirValue("alpha link"), quoteModeNone, false), localCompletionSuffix(t, "al", "alpha.txt", quoteModeNone, false)}
 	}
 
 	for _, tt := range tests {
@@ -296,6 +311,20 @@ func TestRemotePathCompletion(t *testing.T) {
 			name:       "get first arg completes remote names",
 			line:       "get lo",
 			pos:        len("get lo"),
+			wantOffset: len("lo"),
+			want:       []string{"gs/", "g\\ file.txt"},
+		},
+		{
+			name:       "get option completes recursive flag",
+			line:       "get -",
+			pos:        len("get -"),
+			wantOffset: len("-"),
+			want:       []string{"r ", "-recursive "},
+		},
+		{
+			name:       "get recursive option completes remote first path",
+			line:       "get -r lo",
+			pos:        len("get -r lo"),
 			wantOffset: len("lo"),
 			want:       []string{"gs/", "g\\ file.txt"},
 		},

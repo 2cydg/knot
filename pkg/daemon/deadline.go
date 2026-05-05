@@ -13,3 +13,7 @@ func readMessageWithDeadline(conn net.Conn, timeout time.Duration) (*protocol.Me
 	}
 	return protocol.ReadMessage(conn)
 }
+
+func readSessionMessage(conn net.Conn) (*protocol.Message, error) {
+	return protocol.ReadMessage(conn)
+}

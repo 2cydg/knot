@@ -7,6 +7,7 @@ import (
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -63,7 +64,8 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 			return false
 		}
 
-		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
+		response := strings.ToLower(strings.TrimSpace(string(msg.Payload)))
+		return response == "yes" || response == "y"
 	}
 
 	client, poolKeys, _, err := d.dialWithRetry(conn, serverID, alias, srv, cfg, sftpReq.IsInteractive, sftpReq.SSHAuthSock, sftpReq.HostKeyPolicy, confirmCallback)
@@ -199,7 +201,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		defer wg.Done()
 		defer cancel()
 		for {
-			msg, err := readMessageWithDeadline(conn, daemonReadTimeout)
+			msg, err := readSessionMessage(conn)
 			if err != nil {
 				return
 			}
@@ -253,6 +255,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		normalExit = true
 	case <-ctx.Done():
 	case <-d.stopCh:
+		_ = writeMessage(protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
 	}
 
 	// Trigger cancellation and close session to break blocking reads

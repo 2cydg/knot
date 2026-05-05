@@ -53,7 +53,8 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			return false
 		}
 
-		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
+		response := strings.ToLower(strings.TrimSpace(string(msg.Payload)))
+		return response == "yes" || response == "y"
 	}
 
 	client, poolKeys, isNew, err := d.dialWithRetry(conn, serverID, req.Alias, srv, cfg, req.IsInteractive, req.SSHAuthSock, req.HostKeyPolicy, confirmCallback)
@@ -245,7 +246,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		defer wg.Done()
 		defer cancel()
 		for {
-			msg, err := readMessageWithDeadline(conn, daemonReadTimeout)
+			msg, err := readSessionMessage(conn)
 			if err != nil {
 				return
 			}

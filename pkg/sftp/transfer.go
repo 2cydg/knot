@@ -143,6 +143,9 @@ func downloadFile(client *sftp.Client, remotePath, localPath string, overwrite b
 			return fmt.Errorf("local file already exists: %s", localPath)
 		}
 	}
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return fmt.Errorf("failed to create local parent directory: %w", err)
+	}
 
 	remoteFile, err := client.Open(remotePath)
 	if err != nil {
@@ -186,6 +189,9 @@ func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool
 		remoteDir = remoteDir[:len(remoteDir)-2]
 	} else {
 		localDir = filepath.Join(localDir, path.Base(remoteDir))
+	}
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create local directory %q: %w", localDir, err)
 	}
 
 	walker := client.Walk(remoteDir)

@@ -29,16 +29,11 @@ func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *confi
 			return nil, fmt.Errorf("ssh pool is closed")
 		}
 		if entry, ok := p.entries[key]; ok {
-			_, _, err := entry.client.SendRequest("keepalive@knot", true, nil)
-			if err == nil {
-				p.markAccessLocked(key, time.Now())
-				client := entry.client
-				keys := cloneKeys(entry.chainKeys)
-				p.mu.Unlock()
-				return &getClientResult{client: client, keys: keys, isNew: false}, nil
-			}
-			entry.client.Close()
-			delete(p.entries, key)
+			p.markAccessLocked(key, time.Now())
+			client := entry.client
+			keys := cloneKeys(entry.chainKeys)
+			p.mu.Unlock()
+			return &getClientResult{client: client, keys: keys, isNew: false}, nil
 		}
 		p.mu.Unlock()
 

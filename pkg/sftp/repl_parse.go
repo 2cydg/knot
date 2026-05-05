@@ -114,7 +114,6 @@ func ParseLine(raw string, cursor int) ParsedLine {
 				startToken(i)
 				rawBuf = append(rawBuf, r)
 				if i+1 >= len(runes) {
-					parsed.DanglingEscape = true
 					valueBuf = append(valueBuf, r)
 					continue
 				}
@@ -213,7 +212,7 @@ func locateCursor(parsed *ParsedLine, cursor int) {
 }
 
 func isEscapableInNormal(r rune) bool {
-	return unicode.IsSpace(r) || strings.ContainsRune(`"'\\`, r)
+	return unicode.IsSpace(r) || strings.ContainsRune(`"'`, r)
 }
 
 func isEscapableInDouble(r rune) bool {

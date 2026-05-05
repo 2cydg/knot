@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func TestSSHConnection(t *testing.T) {
@@ -381,6 +382,53 @@ func TestHostKeyMismatchCanReplaceKnownHost(t *testing.T) {
 	entries := strings.Count(strings.TrimSpace(string(knownHosts)), "\n") + 1
 	if entries != 1 {
 		t.Fatalf("expected replaced known_hosts to contain one entry, got %d:\n%s", entries, knownHosts)
+	}
+}
+
+func TestReplaceKnownHostRemovesDuplicateTargetForms(t *testing.T) {
+	_, oldPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate old key: %v", err)
+	}
+	oldSigner, err := ssh.NewSignerFromKey(oldPriv)
+	if err != nil {
+		t.Fatalf("failed to create old signer: %v", err)
+	}
+	_, newPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate new key: %v", err)
+	}
+	newSigner, err := ssh.NewSignerFromKey(newPriv)
+	if err != nil {
+		t.Fatalf("failed to create new signer: %v", err)
+	}
+
+	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
+	initial := strings.Join([]string{
+		knownhosts.Line([]string{"example.test"}, oldSigner.PublicKey()),
+		knownhosts.Line([]string{"[example.test]:22"}, oldSigner.PublicKey()),
+		knownhosts.Line([]string{"other.test"}, oldSigner.PublicKey()),
+		"",
+	}, "\n")
+	if err := os.WriteFile(knownHostsPath, []byte(initial), 0o600); err != nil {
+		t.Fatalf("failed to write known_hosts: %v", err)
+	}
+
+	want := []knownhosts.KnownKey{{Filename: knownHostsPath, Line: 1, Key: oldSigner.PublicKey()}}
+	if err := replaceKnownHost(knownHostsPath, "example.test:22", newSigner.PublicKey(), want); err != nil {
+		t.Fatalf("replaceKnownHost failed: %v", err)
+	}
+
+	data, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to read known_hosts: %v", err)
+	}
+	contents := string(data)
+	if strings.Count(contents, "example.test") != 1 {
+		t.Fatalf("expected one replacement entry for example.test:\n%s", contents)
+	}
+	if !strings.Contains(contents, "other.test") {
+		t.Fatalf("expected unrelated entry to remain:\n%s", contents)
 	}
 }
 

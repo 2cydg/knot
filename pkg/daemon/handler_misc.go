@@ -64,7 +64,7 @@ func (d *Daemon) handleClearRequest(conn net.Conn) {
 	// 1. Clear sessions first (consistency)
 	d.sm.Clear()
 	// 2. Close all physical connections
-	count := d.pool.CloseAll()
+	count := d.pool.Clear()
 	// 3. Respond with count in Reserved field and TypeClearResp
 	reserved := uint8(count)
 	if count > 255 {
