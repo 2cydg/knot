@@ -167,14 +167,13 @@ func replaceKnownHost(khPath string, hostname string, key ssh.PublicKey, want []
 			}
 		}
 
-		f, err := os.Open(khPath)
+		data, err := os.ReadFile(khPath)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
 
 		var lines []string
-		scanner := bufio.NewScanner(f)
+		scanner := bufio.NewScanner(bytes.NewReader(data))
 		for lineNo := 1; scanner.Scan(); lineNo++ {
 			if shouldRemoveKnownHostLine(scanner.Text(), hostname, lineNo, lineSet) {
 				continue
