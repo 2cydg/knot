@@ -3,6 +3,7 @@ package fileutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -28,7 +29,14 @@ func TestAtomicWriteFileCreatesParentAndReplacesContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat failed: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0600 {
+	got := info.Mode().Perm()
+	if runtime.GOOS == "windows" {
+		if got&0111 != 0 {
+			t.Fatalf("mode = %v, want no executable bits", got)
+		}
+		return
+	}
+	if got != 0600 {
 		t.Fatalf("mode = %v, want 0600", got)
 	}
 }
