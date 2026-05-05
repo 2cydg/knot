@@ -3,6 +3,7 @@ package sshpool
 import (
 	"context"
 	"fmt"
+	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"strings"
@@ -29,6 +30,7 @@ type Pool struct {
 	mu                 sync.Mutex
 	sf                 singleflight.Group
 	idleTimeout        time.Duration
+	closed             bool
 	ConnectCallback    func(string, *ssh.Client)
 	DisconnectCallback func(string)
 	ctx                context.Context
@@ -57,6 +59,9 @@ func NewPool() *Pool {
 func (p *Pool) SetIdleTimeout(d time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
 	p.idleTimeout = d
 }
 
@@ -130,24 +135,47 @@ func (p *Pool) GetStats() []protocol.PoolEntryStat {
 	return stats
 }
 
-// CloseAll closes all active SSH clients in the pool and returns the count.
-func (p *Pool) CloseAll() int {
-	p.cancel()
+// Clear closes all active SSH clients in the pool and returns the count.
+// The pool remains usable for future connections.
+func (p *Pool) Clear() int {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	count := len(p.entries)
-	for _, entry := range p.entries {
+	entries := p.entries
+	p.entries = make(map[string]*clientEntry)
+	p.mu.Unlock()
+
+	for _, entry := range entries {
 		entry.client.Close()
 	}
-	p.entries = make(map[string]*clientEntry)
 	return count
 }
 
-func (p *Pool) putEntry(key string, entry *clientEntry) {
+// CloseAll permanently closes the pool and all active SSH clients.
+func (p *Pool) CloseAll() int {
+	p.cancel()
 	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
+	return p.Clear()
+}
+
+func (p *Pool) putEntry(key string, entry *clientEntry) error {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		entry.client.Close()
+		return fmt.Errorf("ssh pool is closed")
+	}
+	old := p.entries[key]
 	p.entries[key] = entry
 	p.mu.Unlock()
+
+	if old != nil && old.client != entry.client {
+		old.client.Close()
+		p.notifyDisconnect(key)
+	}
+	return nil
 }
 
 func (p *Pool) markAccessLocked(key string, now time.Time) {
@@ -158,17 +186,33 @@ func (p *Pool) markAccessLocked(key string, now time.Time) {
 
 func (p *Pool) dropEntryIfMatch(key string, client *ssh.Client, notify bool) bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	entry, ok := p.entries[key]
 	if !ok || entry.client != client {
+		p.mu.Unlock()
 		return false
 	}
 
-	entry.client.Close()
 	delete(p.entries, key)
-	if notify && p.DisconnectCallback != nil {
-		go p.DisconnectCallback(key)
+	p.mu.Unlock()
+
+	entry.client.Close()
+	if notify {
+		p.notifyDisconnect(key)
 	}
 	return true
+}
+
+func (p *Pool) notifyDisconnect(key string) {
+	if p.DisconnectCallback == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("DisconnectCallback panic", "recover", r)
+			}
+		}()
+		p.DisconnectCallback(key)
+	}()
 }

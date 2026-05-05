@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"knot/pkg/sshpool"
 	"os"
 	"strings"
 )
@@ -106,6 +107,12 @@ func ErrorCodeForError(err error) string {
 		if exitErr.Code != 0 {
 			return "remote_exit_nonzero"
 		}
+	}
+	if sshpool.IsAuthError(err) {
+		return "auth_failed"
+	}
+	if errors.Is(err, sshpool.ErrHostKeyReject) {
+		return "host_key_required"
 	}
 
 	msg := strings.ToLower(err.Error())

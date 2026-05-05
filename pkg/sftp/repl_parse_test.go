@@ -33,9 +33,19 @@ func TestParseLineValues(t *testing.T) {
 			want: []string{"mkdir", "my remote dir"},
 		},
 		{
-			name: "windows path keeps backslashes",
+			name: "unquoted windows path with spaces still splits on spaces",
 			line: `put C:\Users\alice\My Docs\report.txt "/tmp/report.txt"`,
 			want: []string{"put", `C:\Users\alice\My`, `Docs\report.txt`, "/tmp/report.txt"},
+		},
+		{
+			name: "windows drive path keeps backslashes",
+			line: `get -r file-sync/ D:\Download\`,
+			want: []string{"get", "-r", "file-sync/", `D:\Download\`},
+		},
+		{
+			name: "windows escaped input keeps literal doubled backslashes",
+			line: `get -r file-sync/ D:\\Download\\`,
+			want: []string{"get", "-r", "file-sync/", `D:\\Download\\`},
 		},
 		{
 			name:      "trailing space",
@@ -101,9 +111,10 @@ func TestParseLineIncompleteInput(t *testing.T) {
 			wantQuoteRune: '\'',
 		},
 		{
-			name:         "dangling escape",
-			line:         `mkdir my\`,
-			wantDangling: true,
+			name:          "dangling escape in double quotes",
+			line:          `mkdir "my\`,
+			wantDangling:  true,
+			wantQuoteRune: '"',
 		},
 	}
 

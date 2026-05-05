@@ -24,17 +24,16 @@ func firstDialOptions(opts []DialOptions) DialOptions {
 func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *config.Config, jumpClient *ssh.Client, parentKeys []string, confirmCallback func(string) bool, opts DialOptions) (*ssh.Client, []string, bool, error) {
 	res, err, shared := p.sf.Do(key, func() (interface{}, error) {
 		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return nil, fmt.Errorf("ssh pool is closed")
+		}
 		if entry, ok := p.entries[key]; ok {
-			_, _, err := entry.client.SendRequest("keepalive@knot", true, nil)
-			if err == nil {
-				p.markAccessLocked(key, time.Now())
-				client := entry.client
-				keys := cloneKeys(entry.chainKeys)
-				p.mu.Unlock()
-				return &getClientResult{client: client, keys: keys, isNew: false}, nil
-			}
-			entry.client.Close()
-			delete(p.entries, key)
+			p.markAccessLocked(key, time.Now())
+			client := entry.client
+			keys := cloneKeys(entry.chainKeys)
+			p.mu.Unlock()
+			return &getClientResult{client: client, keys: keys, isNew: false}, nil
 		}
 		p.mu.Unlock()
 
@@ -44,7 +43,7 @@ func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *confi
 		}
 
 		allKeys := appendChainKey(parentKeys, key)
-		p.putEntry(key, &clientEntry{
+		if err := p.putEntry(key, &clientEntry{
 			client:     client,
 			lastAccess: time.Now(),
 			refCount:   0,
@@ -52,7 +51,9 @@ func (p *Pool) getClientForRoute(key string, srv config.ServerConfig, cfg *confi
 			serverID:   srv.ID,
 			alias:      srv.Alias,
 			chainKeys:  cloneKeys(allKeys),
-		})
+		}); err != nil {
+			return nil, err
+		}
 
 		go p.keepAliveLoop(key, client, cfg)
 		if p.ConnectCallback != nil {

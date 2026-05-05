@@ -15,9 +15,15 @@ import (
 )
 
 type REPLOptions struct {
-	InitialDir string
-	FollowCh   <-chan protocol.SessionCWDNotify
-	FollowID   string
+	InitialDir   string
+	FollowCh     <-chan protocol.SessionCWDNotify
+	FollowID     string
+	DisconnectCh <-chan error
+}
+
+type replReadResult struct {
+	input string
+	err   error
 }
 
 // RunREPL starts an interactive SFTP shell.
@@ -30,11 +36,13 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 	cwd := "/"
 	var cwdMu sync.RWMutex
 	remoteCache := newRemoteDirCache(client, remoteCompletionCacheTTL)
+	replStdin := newREPLStdin()
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          "",
 		HistoryFile:     historyPath,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
+		Stdin:           replStdin,
 		AutoComplete: newREPLAutoCompleter(remoteCache, func() string {
 			cwdMu.RLock()
 			defer cwdMu.RUnlock()
@@ -44,7 +52,11 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 	if err != nil {
 		return err
 	}
-	defer rl.Close()
+	var closeOnce sync.Once
+	defer closeOnce.Do(func() {
+		_ = replStdin.Close()
+		_ = rl.Close()
+	})
 
 	cwd, err = client.Getwd()
 	if err != nil {
@@ -58,13 +70,45 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 	if opts.FollowCh != nil {
 		go runFollowUpdates(client, rl, remoteCache, opts.FollowCh, opts.FollowID, &cwd, &cwdMu)
 	}
+	disconnectCh := make(chan error, 1)
+	if opts.DisconnectCh != nil {
+		go func() {
+			err, ok := <-opts.DisconnectCh
+			if !ok {
+				return
+			}
+			disconnectCh <- err
+		}()
+	}
 
 	for {
 		cwdMu.RLock()
 		rl.SetPrompt(fmt.Sprintf("sftp:%s> ", cwd))
 		cwdMu.RUnlock()
-		input, err := rl.Readline()
+
+		readCh := make(chan replReadResult, 1)
+		go func() {
+			input, err := rl.Readline()
+			readCh <- replReadResult{input: input, err: err}
+		}()
+
+		var input string
+		select {
+		case err := <-disconnectCh:
+			printDisconnectAndClose(rl, replStdin, &closeOnce, err)
+			return nil
+		case result := <-readCh:
+			input = result.input
+			err = result.err
+		}
+
 		if err != nil {
+			select {
+			case err := <-disconnectCh:
+				printDisconnectAndClose(rl, replStdin, &closeOnce, err)
+				return nil
+			default:
+			}
 			if err == readline.ErrInterrupt || err == io.EOF {
 				fmt.Println()
 				return nil
@@ -139,35 +183,47 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 			cwdMu.Unlock()
 			remoteCache.Invalidate(newPath)
 		case "get":
-			if len(args) < 2 {
-				fmt.Println("Usage: get <remote_path> [local_path]")
+			parsedArgs, err := parseTransferArgs(args[1:])
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				fmt.Println("Usage: get [-r] <remote_path> [local_path]")
+				continue
+			}
+			if len(parsedArgs.paths) < 1 {
+				fmt.Println("Usage: get [-r] <remote_path> [local_path]")
 				continue
 			}
 			cwdMu.RLock()
-			remotePath := resolvePath(cwd, args[1])
+			remotePath := resolvePath(cwd, parsedArgs.paths[0])
 			cwdMu.RUnlock()
 			localPath := path.Base(remotePath)
-			if len(args) > 2 {
-				localPath = args[2]
+			if len(parsedArgs.paths) > 1 {
+				localPath = parsedArgs.paths[1]
 			}
-			if err := Download(client, remotePath, localPath, false, true, false); err != nil {
+			if err := Download(client, remotePath, localPath, parsedArgs.recursive, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				fmt.Println("Download complete.")
 			}
 		case "put":
-			if len(args) < 2 {
-				fmt.Println("Usage: put <local_path> [remote_path]")
+			parsedArgs, err := parseTransferArgs(args[1:])
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				fmt.Println("Usage: put [-r] <local_path> [remote_path]")
 				continue
 			}
-			localPath := args[1]
+			if len(parsedArgs.paths) < 1 {
+				fmt.Println("Usage: put [-r] <local_path> [remote_path]")
+				continue
+			}
+			localPath := parsedArgs.paths[0]
 			cwdMu.RLock()
 			remotePath := path.Join(cwd, filepath.Base(localPath))
-			if len(args) > 2 {
-				remotePath = resolvePath(cwd, args[2])
+			if len(parsedArgs.paths) > 1 {
+				remotePath = resolvePath(cwd, parsedArgs.paths[1])
 			}
 			cwdMu.RUnlock()
-			if err := Upload(client, localPath, remotePath, false, true, false); err != nil {
+			if err := Upload(client, localPath, remotePath, parsedArgs.recursive, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				invalidateRemoteMutation(remoteCache, remotePath)
@@ -250,6 +306,17 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 	}
 }
 
+func printDisconnectAndClose(rl *readline.Instance, replStdin io.Closer, closeOnce *sync.Once, err error) {
+	if err != nil {
+		rl.Clean()
+		_, _ = fmt.Fprintf(os.Stdout, "\r\n%s\r\n", err)
+	}
+	closeOnce.Do(func() {
+		_ = replStdin.Close()
+		_ = rl.Close()
+	})
+}
+
 func runFollowUpdates(client *sftp.Client, rl *readline.Instance, cache *remoteDirCache, followCh <-chan protocol.SessionCWDNotify, followID string, cwd *string, cwdMu *sync.RWMutex) {
 	for notify := range followCh {
 		if followID != "" && notify.SessionID != "" && notify.SessionID != followID {
@@ -312,8 +379,8 @@ func printHelp() {
 	fmt.Println("  ls [path]          List directory contents")
 	fmt.Println("  cd <path>          Change remote directory")
 	fmt.Println("  pwd                Print remote working directory")
-	fmt.Println("  get <rem> [loc]    Download file")
-	fmt.Println("  put <loc> [rem]    Upload file")
+	fmt.Println("  get [-r] <rem> [loc] Download file or directory")
+	fmt.Println("  put [-r] <loc> [rem] Upload file or directory")
 	fmt.Println("  mget <pat> [dir]   Multi-download files (wildcards supported)")
 	fmt.Println("  mput <pat> [dir]   Multi-upload files (wildcards supported)")
 	fmt.Println("  rm <path>          Remove remote file")

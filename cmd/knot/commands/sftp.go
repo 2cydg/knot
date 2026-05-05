@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"knot/internal/logger"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -19,6 +20,7 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var sftpFollow bool
@@ -114,7 +116,9 @@ paths support ~/... expansion.`,
 		state, err := config.LoadState()
 		if err == nil {
 			state.UpdateRecent(serverID, cfg.Settings.RecentLimit)
-			_ = state.Save()
+			if err := state.Save(); err != nil {
+				logger.Warn("failed to save recent state", "error", err)
+			}
 		}
 
 		var authUpdated bool
@@ -126,6 +130,7 @@ paths support ~/... expansion.`,
 		}()
 
 		sftpConn := &knotsftp.SFTPConn{
+			Alias:       alias,
 			Conn:        conn,
 			Interactive: true,
 			AuthHandler: func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error) {
@@ -174,7 +179,15 @@ paths support ~/... expansion.`,
 		}
 		defer sftpClient.Close()
 
-		replOpts := knotsftp.REPLOptions{InitialDir: initialDir}
+		outFd := int(os.Stdout.Fd())
+		var titleMgr *terminalTitleManager
+		if term.IsTerminal(outFd) {
+			titleMgr = newTerminalTitleManager(os.Stdout)
+			titleMgr.PushAndSet(sftpTerminalTitle(alias))
+			defer titleMgr.Restore()
+		}
+
+		replOpts := knotsftp.REPLOptions{InitialDir: initialDir, DisconnectCh: sftpConn.NotifyCh}
 		if sftpFollow {
 			replOpts.InitialDir = followInitialDir
 			replOpts.FollowCh = sftpConn.FollowCh
@@ -186,6 +199,10 @@ paths support ~/... expansion.`,
 		}
 		return err
 	},
+}
+
+func sftpTerminalTitle(alias string) string {
+	return fmt.Sprintf("SFTP: %s", alias)
 }
 
 func init() {

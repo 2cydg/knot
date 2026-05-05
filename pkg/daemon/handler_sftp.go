@@ -7,6 +7,7 @@ import (
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -57,13 +58,14 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		}
 
 		// Wait for response from CLI
-		msg, err := protocol.ReadMessage(conn)
+		msg, err := readMessageWithDeadline(conn, daemonHostKeyConfirmTimeout)
 		if err != nil {
 			logger.Error("Failed to read confirmation response", "alias", alias, "error", err)
 			return false
 		}
 
-		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
+		response := strings.ToLower(strings.TrimSpace(string(msg.Payload)))
+		return response == "yes" || response == "y"
 	}
 
 	client, poolKeys, _, err := d.dialWithRetry(conn, serverID, alias, srv, cfg, sftpReq.IsInteractive, sftpReq.SSHAuthSock, sftpReq.HostKeyPolicy, confirmCallback)
@@ -137,7 +139,11 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 			logger.Warn("Failed to inject OSC 7 hook into followed session", "alias", alias, "session", followSession.ID, "error", err)
 		}
 		if info.CurrentDir != "" {
-			payload, _ := json.Marshal(protocol.SessionCWDNotify{SessionID: info.ID, Path: info.CurrentDir})
+			payload, err := json.Marshal(protocol.SessionCWDNotify{SessionID: info.ID, Path: info.CurrentDir})
+			if err != nil {
+				logger.Error("Failed to marshal session cwd notification", "session", info.ID, "error", err)
+				return
+			}
 			if err := writeMessage(protocol.TypeSessionCWDNotify, 0, payload); err != nil {
 				return
 			}
@@ -195,7 +201,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		defer wg.Done()
 		defer cancel()
 		for {
-			msg, err := protocol.ReadMessage(conn)
+			msg, err := readSessionMessage(conn)
 			if err != nil {
 				return
 			}
@@ -249,6 +255,7 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 		normalExit = true
 	case <-ctx.Done():
 	case <-d.stopCh:
+		_ = writeMessage(protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+alias))
 	}
 
 	// Trigger cancellation and close session to break blocking reads

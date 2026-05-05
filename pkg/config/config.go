@@ -1,14 +1,15 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"knot/internal/fileutil"
 	"knot/internal/paths"
 	"knot/pkg/crypto"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -496,11 +497,16 @@ func (c *Config) Save(cryptoProvider crypto.Provider) error {
 }
 
 func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) error {
-	configDir := filepath.Dir(configPath)
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return err
-	}
+	return WithConfigLock(configPath, func() error {
+		return c.saveToPathLocked(configPath, cryptoProvider)
+	})
+}
 
+func WithConfigLock(configPath string, fn func() error) error {
+	return fileutil.WithLock(configPath+".lock", fn)
+}
+
+func (c *Config) saveToPathLocked(configPath string, cryptoProvider crypto.Provider) error {
 	if c.Settings.ForwardAgent == nil {
 		defaultTrue := true
 		c.Settings.ForwardAgent = &defaultTrue
@@ -544,13 +550,12 @@ func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) e
 		return err
 	}
 
-	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(cfgToSave); err != nil {
 		return err
 	}
-	defer f.Close()
 
-	return toml.NewEncoder(f).Encode(cfgToSave)
+	return fileutil.AtomicWriteFile(configPath, buf.Bytes(), 0600)
 }
 
 func IsValidAlias(alias string) bool {
@@ -611,14 +616,22 @@ func (s *ServerConfig) Validate(cfg *Config) error {
 	if cfg.ServerAliasExists(s.Alias, s.ID) {
 		return fmt.Errorf("server alias '%s' already exists", s.Alias)
 	}
-	if s.Host == "" {
-		return fmt.Errorf("host cannot be empty")
+	if err := ValidateHostField("host", s.Host); err != nil {
+		return err
 	}
 	if s.Port <= 0 || s.Port > 65535 {
 		return fmt.Errorf("invalid port number: %d", s.Port)
 	}
-	if s.User == "" {
-		return fmt.Errorf("user cannot be empty")
+	if err := ValidateHostField("user", s.User); err != nil {
+		return err
+	}
+	if s.KnownHostsPath != "" && HasControlChar(s.KnownHostsPath) {
+		return fmt.Errorf("known_hosts path contains control characters")
+	}
+	for _, f := range s.Forwards {
+		if err := f.Validate(); err != nil {
+			return err
+		}
 	}
 	if s.AuthMethod != AuthMethodPassword && s.AuthMethod != AuthMethodKey && s.AuthMethod != AuthMethodAgent {
 		return fmt.Errorf("invalid auth method: %s", s.AuthMethod)
@@ -657,11 +670,33 @@ func (p *ProxyConfig) Validate() error {
 	if p.Type != ProxyTypeSOCKS5 && p.Type != ProxyTypeHTTP {
 		return fmt.Errorf("invalid proxy type: %s", p.Type)
 	}
-	if p.Host == "" {
-		return fmt.Errorf("proxy host cannot be empty")
+	if err := ValidateHostField("proxy host", p.Host); err != nil {
+		return err
+	}
+	if p.Username != "" && HasControlChar(p.Username) {
+		return fmt.Errorf("proxy username contains control characters")
 	}
 	if p.Port <= 0 || p.Port > 65535 {
 		return fmt.Errorf("invalid proxy port: %d", p.Port)
+	}
+	return nil
+}
+
+func (f *ForwardConfig) Validate() error {
+	if f.Type != "L" && f.Type != "R" && f.Type != "D" {
+		return fmt.Errorf("invalid forward type: %s", f.Type)
+	}
+	if f.LocalPort <= 0 || f.LocalPort > 65535 {
+		return fmt.Errorf("invalid port number: %d", f.LocalPort)
+	}
+	if f.Type == "D" {
+		if f.RemoteAddr != "" && HasControlChar(f.RemoteAddr) {
+			return fmt.Errorf("remote address contains control characters")
+		}
+		return nil
+	}
+	if err := ValidateHostPort("remote address", f.RemoteAddr); err != nil {
+		return err
 	}
 	return nil
 }
@@ -693,6 +728,9 @@ func (s *SyncProviderConfig) Validate(cfg *Config) error {
 	case SyncProviderWebDAV:
 		if strings.TrimSpace(s.URL) == "" {
 			return fmt.Errorf("webdav url cannot be empty")
+		}
+		if HasControlChar(s.URL) {
+			return fmt.Errorf("webdav url contains control characters")
 		}
 	default:
 		return fmt.Errorf("unsupported sync provider type: %s", s.Type)

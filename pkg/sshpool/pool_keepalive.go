@@ -16,43 +16,28 @@ func (p *Pool) keepAliveLoop(key string, client *ssh.Client, cfg *config.Config)
 		}
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	done := make(chan struct{})
 	go func() {
 		client.Wait()
 		close(done)
 	}()
+	if interval <= 0 {
+		select {
+		case <-done:
+			p.triggerDisconnect(key, client)
+		case <-p.ctx.Done():
+		}
+		return
+	}
 
-	failCount := 0
-	const maxFailures = 3
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			errCh := make(chan error, 1)
-			go func() {
-				_, _, err := client.SendRequest("keepalive@knot", true, nil)
-				errCh <- err
-			}()
-
-			select {
-			case err := <-errCh:
-				if err != nil {
-					failCount++
-					logger.Warn("Keep-alive request failed", "key", key, "error", err, "failCount", failCount)
-				} else {
-					failCount = 0
-				}
-			case <-time.After(interval / 2):
-				failCount++
-				logger.Warn("Keep-alive request timed out", "key", key, "failCount", failCount)
-			}
-
-			if failCount >= maxFailures {
-				p.triggerDisconnect(key, client)
-				return
+			if err := sendKeepAlive(client); err != nil {
+				logger.Debug("Keep-alive request failed", "key", key, "error", err)
 			}
 		case <-done:
 			p.triggerDisconnect(key, client)
@@ -61,6 +46,11 @@ func (p *Pool) keepAliveLoop(key string, client *ssh.Client, cfg *config.Config)
 			return
 		}
 	}
+}
+
+func sendKeepAlive(client *ssh.Client) error {
+	_, _, err := client.SendRequest("keepalive@openssh.com", false, nil)
+	return err
 }
 
 func (p *Pool) triggerDisconnect(key string, client *ssh.Client) {
@@ -91,12 +81,24 @@ func (p *Pool) autoCleanup() {
 
 func (p *Pool) cleanupIdleEntries(now time.Time) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
+	var stale []struct {
+		key   string
+		entry *clientEntry
+	}
 	for key, entry := range p.entries {
 		if entry.refCount == 0 && now.Sub(entry.lastAccess) > p.idleTimeout {
-			entry.client.Close()
 			delete(p.entries, key)
+			stale = append(stale, struct {
+				key   string
+				entry *clientEntry
+			}{key: key, entry: entry})
 		}
+	}
+	p.mu.Unlock()
+
+	for _, item := range stale {
+		item.entry.client.Close()
+		p.notifyDisconnect(item.key)
 	}
 }

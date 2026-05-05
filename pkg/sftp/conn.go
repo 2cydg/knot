@@ -2,7 +2,9 @@ package sftp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"knot/internal/protocol"
 	"net"
 	"strings"
@@ -12,13 +14,16 @@ import (
 // SFTPConn is a wrapper around net.Conn that implements io.ReadWriteCloser
 // for the sftp.NewClientPipe. It handles Knot protocol messages.
 type SFTPConn struct {
+	Alias       string
 	Conn        net.Conn
 	DataCh      chan []byte
 	ErrCh       chan error
+	NotifyCh    chan error
 	Ready       chan struct{} // Closed when "ok" is received
 	Closed      chan struct{}
 	StartOnce   sync.Once
 	CloseOnce   sync.Once
+	WriteMu     sync.Mutex
 	Buf         []byte
 	Interactive bool // If true, handles HostKeyConfirm interactively
 	AuthHandler func(challenge protocol.AuthChallengePayload) (*protocol.AuthResponsePayload, error)
@@ -29,6 +34,7 @@ func (s *SFTPConn) Start() {
 	s.StartOnce.Do(func() {
 		s.DataCh = make(chan []byte, 100)
 		s.ErrCh = make(chan error, 1)
+		s.NotifyCh = make(chan error, 1)
 		s.Ready = make(chan struct{})
 		s.Closed = make(chan struct{})
 		if s.FollowCh == nil {
@@ -44,10 +50,7 @@ func (s *SFTPConn) Start() {
 						// Ensure Ready is not blocked if we fail during handshake
 						close(s.Ready)
 					}
-					select {
-					case s.ErrCh <- err:
-					case <-s.Closed:
-					}
+					s.reportError(s.disconnectError(err))
 					return
 				}
 
@@ -63,7 +66,7 @@ func (s *SFTPConn) Start() {
 							err = fmt.Errorf("daemon error: %s", resp[7:])
 						}
 						if !handshakeDone {
-							s.ErrCh <- err
+							s.reportError(err)
 							close(s.Ready)
 							return
 						}
@@ -79,13 +82,10 @@ func (s *SFTPConn) Start() {
 				case protocol.TypeDisconnect:
 					err := fmt.Errorf("disconnected: %s", string(msg.Payload))
 					if !handshakeDone {
-						s.ErrCh <- err
+						s.reportError(err)
 						close(s.Ready)
 					} else {
-						select {
-						case s.ErrCh <- err:
-						case <-s.Closed:
-						}
+						s.reportError(err)
 					}
 					return
 				case protocol.TypeSessionCWDNotify:
@@ -103,18 +103,22 @@ func (s *SFTPConn) Start() {
 					if s.AuthHandler != nil {
 						var challenge protocol.AuthChallengePayload
 						if err := json.Unmarshal(msg.Payload, &challenge); err != nil {
-							_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 							continue
 						}
 						resp, err := s.AuthHandler(challenge)
 						if err != nil {
-							_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 							continue
 						}
-						payload, _ := json.Marshal(resp)
-						_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthResponse, 0, payload)
+						payload, err := json.Marshal(resp)
+						if err != nil {
+							_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
+							continue
+						}
+						_ = s.writeProtocolMessage(protocol.TypeAuthResponse, 0, payload)
 					} else {
-						_ = protocol.WriteMessage(s.Conn, protocol.TypeAuthRetryAbort, 0, nil)
+						_ = s.writeProtocolMessage(protocol.TypeAuthRetryAbort, 0, nil)
 					}
 				case protocol.TypeHostKeyConfirm:
 					if s.Interactive {
@@ -123,17 +127,14 @@ func (s *SFTPConn) Start() {
 						if _, err := fmt.Scanln(&response); err != nil {
 							response = "no"
 						}
-						_ = protocol.WriteMessage(s.Conn, protocol.TypeHostKeyConfirm, 0, []byte(response))
+						_ = s.writeProtocolMessage(protocol.TypeHostKeyConfirm, 0, []byte(response))
 					} else {
 						err := fmt.Errorf("host key verification failed. Run 'knot ssh' first to accept the key")
 						if !handshakeDone {
-							s.ErrCh <- err
+							s.reportError(err)
 							close(s.Ready)
 						} else {
-							select {
-							case s.ErrCh <- err:
-							case <-s.Closed:
-							}
+							s.reportError(err)
 						}
 						return
 					}
@@ -141,6 +142,28 @@ func (s *SFTPConn) Start() {
 			}
 		}()
 	})
+}
+
+func (s *SFTPConn) disconnectError(err error) error {
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		if s.Alias != "" {
+			return fmt.Errorf("disconnected: SSH connection lost: %s", s.Alias)
+		}
+		return fmt.Errorf("disconnected: SSH connection lost")
+	}
+	return err
+}
+
+func (s *SFTPConn) reportError(err error) {
+	select {
+	case s.ErrCh <- err:
+	case <-s.Closed:
+		return
+	}
+	select {
+	case s.NotifyCh <- err:
+	default:
+	}
 }
 
 func (s *SFTPConn) Read(p []byte) (int, error) {
@@ -177,15 +200,25 @@ func (s *SFTPConn) Write(p []byte) (int, error) {
 	<-s.Ready
 
 	// Subtype 0 is used for SFTP data (standard)
-	if err := protocol.WriteMessage(s.Conn, protocol.TypeData, 0, p); err != nil {
+	if err := s.writeProtocolMessage(protocol.TypeData, 0, p); err != nil {
 		return 0, err
 	}
 	return len(p), nil
 }
 
+func (s *SFTPConn) writeProtocolMessage(msgType uint8, reserved uint8, payload []byte) error {
+	s.WriteMu.Lock()
+	defer s.WriteMu.Unlock()
+	return protocol.WriteMessage(s.Conn, msgType, reserved, payload)
+}
+
 func (s *SFTPConn) Close() error {
+	var err error
 	s.CloseOnce.Do(func() {
 		close(s.Closed)
+		if s.Conn != nil {
+			err = s.Conn.Close()
+		}
 	})
-	return nil
+	return err
 }

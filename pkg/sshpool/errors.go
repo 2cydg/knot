@@ -2,13 +2,12 @@ package sshpool
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 )
 
 var (
-	ErrAuthFailed    = fmt.Errorf("authentication failed")
-	ErrHostKeyReject = fmt.Errorf("host key verification failed")
+	ErrAuthFailed    = errors.New("authentication failed")
+	ErrHostKeyReject = errors.New("host key verification failed")
 )
 
 // IsAuthError checks if the error is a definitive authentication failure.
@@ -23,11 +22,14 @@ func IsAuthError(err error) bool {
 		return false
 	}
 
+	if errors.Is(err, ErrAuthFailed) {
+		return true
+	}
+
 	if strings.Contains(msg, "ssh: unable to authenticate") ||
 		strings.Contains(msg, "no authentication methods provided") ||
 		strings.Contains(msg, "handshake failed: ssh: unable to authenticate") {
 		return true
 	}
-
-	return errors.Is(err, ErrAuthFailed)
+	return false
 }

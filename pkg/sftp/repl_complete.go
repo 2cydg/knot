@@ -31,6 +31,9 @@ func (c *replAutoCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	if completions, replaceLen := completeCommandNames(parsed, pos); len(completions) > 0 || replaceLen > 0 {
 		return completions, replaceLen
 	}
+	if completions, replaceLen := completeOptions(parsed, pos); len(completions) > 0 || replaceLen > 0 {
+		return completions, replaceLen
+	}
 	if completions, replaceLen := completeLocalPaths(parsed, pos); len(completions) > 0 || replaceLen > 0 {
 		return completions, replaceLen
 	}
@@ -80,6 +83,28 @@ func commandCompletionPrefix(parsed ParsedLine, cursor int) (string, int, bool) 
 		return "", 0, false
 	}
 	return prefix, replaceLen, true
+}
+
+func completeOptions(parsed ParsedLine, cursor int) ([][]rune, int) {
+	if len(parsed.Tokens) == 0 || parsed.CursorToken <= 0 || parsed.CursorToken >= len(parsed.Tokens) {
+		return nil, 0
+	}
+	command := lookupCommandSpec(parsed.Tokens[0].Value)
+	if command == nil || len(command.Options) == 0 {
+		return nil, 0
+	}
+	token := parsed.Tokens[parsed.CursorToken]
+	if cursor != token.End || !strings.HasPrefix(token.Value, "-") {
+		return nil, 0
+	}
+	prefix := token.Value
+	candidates := make([][]rune, 0, len(command.Options))
+	for _, option := range command.Options {
+		if strings.HasPrefix(option, prefix) {
+			candidates = append(candidates, []rune(option[len(prefix):]+" "))
+		}
+	}
+	return candidates, cursor - token.Start
 }
 
 var replCommandNames = listCommandNames(replCommandSpecs)
@@ -184,8 +209,13 @@ func buildCompletionContext(parsed ParsedLine, cursor int) (completionContext, b
 	}
 	ctx.command = command
 
+	pathIndex, ok := commandPathArgIndex(command, parsed, cursor)
+	if !ok {
+		return ctx, false
+	}
+
 	if parsed.EndsWithSpace && cursor == len([]rune(parsed.Raw)) {
-		ctx.argIndex = len(parsed.Tokens) - 1
+		ctx.argIndex = pathIndex
 		return ctx, true
 	}
 
@@ -198,13 +228,45 @@ func buildCompletionContext(parsed ParsedLine, cursor int) (completionContext, b
 		return ctx, false
 	}
 
-	ctx.argIndex = parsed.CursorToken - 1
+	ctx.argIndex = pathIndex
 	ctx.replaceLen = cursor - token.Start
 	ctx.rawPrefix = token.Raw
 	ctx.valuePrefix = token.Value
 	ctx.tokenPresent = true
 	ctx.quoteMode = detectQuoteMode(token)
 	return ctx, true
+}
+
+func commandPathArgIndex(command *CommandSpec, parsed ParsedLine, cursor int) (int, bool) {
+	if parsed.CursorToken <= 0 {
+		return -1, false
+	}
+	pathIndex := 0
+	limit := parsed.CursorToken
+	if parsed.EndsWithSpace && cursor == len([]rune(parsed.Raw)) {
+		limit = len(parsed.Tokens)
+	}
+	for i := 1; i < limit; i++ {
+		if isCommandOption(command, parsed.Tokens[i].Value) {
+			continue
+		}
+		pathIndex++
+	}
+	if !parsed.EndsWithSpace || cursor != len([]rune(parsed.Raw)) {
+		if isCommandOption(command, parsed.Tokens[parsed.CursorToken].Value) {
+			return -1, false
+		}
+	}
+	return pathIndex, true
+}
+
+func isCommandOption(command *CommandSpec, value string) bool {
+	for _, option := range command.Options {
+		if value == option {
+			return true
+		}
+	}
+	return false
 }
 
 func detectQuoteMode(token Token) quoteMode {
@@ -580,7 +642,7 @@ func escapeDoubleQuotedValue(value string) string {
 }
 
 func needsUnquotedEscape(r rune) bool {
-	if r == ' ' || r == '"' || r == '\'' || r == '\\' {
+	if r == ' ' || r == '"' || r == '\'' {
 		return true
 	}
 	return false
@@ -616,14 +678,11 @@ func literalGlobPrefix(value string) string {
 }
 
 func localPathSeparators() string {
-	if os.PathSeparator == '\\' {
-		return `\/`
-	}
-	return string(os.PathSeparator)
+	return `\/`
 }
 
 func isAltWindowsTrailingSeparator(value string) bool {
-	return os.PathSeparator == '\\' && strings.HasSuffix(value, "/")
+	return strings.HasSuffix(value, "/") || strings.HasSuffix(value, `\`)
 }
 
 func getRemoteCWD(getCWD func() string) string {

@@ -47,13 +47,14 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		}
 
 		// Wait for response from CLI
-		msg, err := protocol.ReadMessage(conn)
+		msg, err := readMessageWithDeadline(conn, daemonHostKeyConfirmTimeout)
 		if err != nil {
 			logger.Error("Failed to read confirmation response", "alias", req.Alias, "error", err)
 			return false
 		}
 
-		return string(msg.Payload) == "yes" || string(msg.Payload) == "y"
+		response := strings.ToLower(strings.TrimSpace(string(msg.Payload)))
+		return response == "yes" || response == "y"
 	}
 
 	client, poolKeys, isNew, err := d.dialWithRetry(conn, serverID, req.Alias, srv, cfg, req.IsInteractive, req.SSHAuthSock, req.HostKeyPolicy, confirmCallback)
@@ -198,7 +199,8 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				clean, paths, _ := osc7.Observe(buf[:n])
+				filtered := s.FilterSuppressedInputEcho(buf[:n])
+				clean, paths, _ := osc7.Observe(filtered)
 				for _, dir := range paths {
 					s.UpdateCurrentDir(dir)
 				}
@@ -244,7 +246,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		defer wg.Done()
 		defer cancel()
 		for {
-			msg, err := protocol.ReadMessage(conn)
+			msg, err := readSessionMessage(conn)
 			if err != nil {
 				return
 			}

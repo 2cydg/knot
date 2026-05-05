@@ -15,20 +15,24 @@ var errSessionInputClosed = errors.New("session input is closed")
 
 // Session represents an active SSH session.
 type Session struct {
-	ID           string `json:"id"`
-	ServerID     string `json:"-"`
-	Alias        string `json:"alias"`
-	PoolKeys     []string
-	primaryConn  net.Conn
-	connMu       sync.Mutex
-	stdin        io.Writer
-	inputMu      sync.Mutex
-	StartedAt    time.Time
-	CurrentDir   string
-	CWDUpdatedAt time.Time
-	followers    map[chan protocol.SessionCWDNotify]struct{}
-	closed       bool
-	mu           sync.Mutex
+	ID            string `json:"id"`
+	ServerID      string `json:"-"`
+	Alias         string `json:"alias"`
+	PoolKeys      []string
+	primaryConn   net.Conn
+	connMu        sync.Mutex
+	stdin         io.Writer
+	inputMu       sync.Mutex
+	echoMu        sync.Mutex
+	hiddenEcho    []byte
+	echoCandidate []byte
+	echoMatched   int
+	StartedAt     time.Time
+	CurrentDir    string
+	CWDUpdatedAt  time.Time
+	followers     map[chan protocol.SessionCWDNotify]struct{}
+	closed        bool
+	mu            sync.Mutex
 }
 
 func (s *Session) WriteMessage(msgType uint8, reserved uint8, payload []byte) error {
@@ -57,6 +61,80 @@ func (s *Session) WriteInput(p []byte) error {
 	}
 	_, err := s.stdin.Write(p)
 	return err
+}
+
+func (s *Session) SuppressInputEcho(p []byte) {
+	s.echoMu.Lock()
+	defer s.echoMu.Unlock()
+	s.hiddenEcho = append(s.hiddenEcho[:0], p...)
+	s.echoCandidate = s.echoCandidate[:0]
+	s.echoMatched = 0
+}
+
+func (s *Session) ClearSuppressedInputEcho() {
+	s.echoMu.Lock()
+	defer s.echoMu.Unlock()
+	s.hiddenEcho = nil
+	s.echoCandidate = nil
+	s.echoMatched = 0
+}
+
+func (s *Session) FilterSuppressedInputEcho(p []byte) []byte {
+	s.echoMu.Lock()
+	defer s.echoMu.Unlock()
+	if len(s.hiddenEcho) == 0 {
+		return p
+	}
+
+	out := make([]byte, 0, len(p))
+	for _, b := range p {
+		if len(s.hiddenEcho) == 0 {
+			out = append(out, b)
+			continue
+		}
+		if s.echoMatched == 0 && b != s.hiddenEcho[0] {
+			s.clearSuppressedInputEchoLocked()
+			out = append(out, b)
+			continue
+		}
+
+		if s.echoMatched > 0 && s.hiddenEcho[s.echoMatched] == '\n' && b == '\r' {
+			continue
+		}
+		if b == s.hiddenEcho[s.echoMatched] {
+			s.echoCandidate = append(s.echoCandidate, b)
+			s.echoMatched++
+			if s.echoMatched == len(s.hiddenEcho) {
+				out = append(out, '\r', '\n')
+				s.clearSuppressedInputEchoLocked()
+			}
+			continue
+		}
+
+		if s.echoMatched > 0 {
+			out = append(out, s.echoCandidate...)
+			s.echoCandidate = s.echoCandidate[:0]
+			s.echoMatched = 0
+		}
+		if len(s.hiddenEcho) > 0 && b == s.hiddenEcho[0] {
+			s.echoCandidate = append(s.echoCandidate, b)
+			s.echoMatched = 1
+			if s.echoMatched == len(s.hiddenEcho) {
+				out = append(out, '\r', '\n')
+				s.clearSuppressedInputEchoLocked()
+			}
+			continue
+		}
+		out = append(out, b)
+	}
+
+	return out
+}
+
+func (s *Session) clearSuppressedInputEchoLocked() {
+	s.hiddenEcho = nil
+	s.echoCandidate = nil
+	s.echoMatched = 0
 }
 
 // SessionManager tracks active sessions in the daemon.
@@ -169,14 +247,19 @@ func (sm *SessionManager) CountByPoolKey() map[string]int {
 
 func (sm *SessionManager) Clear() {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	var conns []net.Conn
 	for _, s := range sm.sessions {
 		if s.primaryConn != nil {
-			s.primaryConn.Close()
+			conns = append(conns, s.primaryConn)
 		}
 	}
 	sm.sessions = make(map[string]*Session)
 	sm.nextID = 1
+	sm.mu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 func cloneSessionPoolKeys(keys []string) []string {

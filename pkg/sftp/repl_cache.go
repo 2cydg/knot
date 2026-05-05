@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	"knot/internal/logger"
 )
 
@@ -21,6 +22,7 @@ type remoteDirCache struct {
 	ttl     time.Duration
 	now     func() time.Time
 	mu      sync.Mutex
+	sf      singleflight.Group
 	entries map[string]remoteDirCacheEntry
 }
 
@@ -55,19 +57,35 @@ func (c *remoteDirCache) ReadDir(name string) ([]os.FileInfo, error) {
 	c.mu.Unlock()
 
 	logger.Debug("sftp completion cache miss", "path", name)
-	files, err := c.reader.ReadDir(name)
+	res, err, _ := c.sf.Do(name, func() (interface{}, error) {
+		now := c.now()
+		c.mu.Lock()
+		entry, ok := c.entries[name]
+		if ok && now.Sub(entry.loadedAt) < c.ttl {
+			files := cloneFileInfos(entry.files)
+			c.mu.Unlock()
+			return files, nil
+		}
+		c.mu.Unlock()
+
+		files, err := c.reader.ReadDir(name)
+		if err != nil {
+			return nil, err
+		}
+
+		cloned := cloneFileInfos(files)
+		c.mu.Lock()
+		c.entries[name] = remoteDirCacheEntry{
+			files:    cloned,
+			loadedAt: now,
+		}
+		c.mu.Unlock()
+		return cloneFileInfos(cloned), nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	cloned := cloneFileInfos(files)
-	c.mu.Lock()
-	c.entries[name] = remoteDirCacheEntry{
-		files:    cloned,
-		loadedAt: now,
-	}
-	c.mu.Unlock()
-	return cloneFileInfos(cloned), nil
+	return cloneFileInfos(res.([]os.FileInfo)), nil
 }
 
 func (c *remoteDirCache) Invalidate(paths ...string) {

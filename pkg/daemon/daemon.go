@@ -25,6 +25,13 @@ import (
 
 const MaxConcurrentConnections = 100
 
+var (
+	daemonHandshakeTimeout       = 30 * time.Second
+	daemonReadTimeout            = 5 * time.Minute
+	daemonHostKeyConfirmTimeout  = 60 * time.Second
+	daemonInteractiveAuthTimeout = 10 * time.Minute
+)
+
 // Daemon handles the background process and UDS communication.
 type Daemon struct {
 	socketPath string
@@ -287,8 +294,14 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		conn.Close()
 	}()
 
+	firstRead := true
 	for {
-		msg, err := protocol.ReadMessage(conn)
+		timeout := daemonReadTimeout
+		if firstRead {
+			timeout = daemonHandshakeTimeout
+			firstRead = false
+		}
+		msg, err := readMessageWithDeadline(conn, timeout)
 		if err != nil {
 			return
 		}
@@ -372,7 +385,7 @@ func (d *Daemon) dialWithRetry(conn net.Conn, serverID string, alias string, srv
 			}
 
 			// Wait for response
-			msg, err := protocol.ReadMessage(conn)
+			msg, err := readMessageWithDeadline(conn, daemonInteractiveAuthTimeout)
 			if err != nil {
 				logger.Warn("Connection lost during auth retry", "alias", alias, "error", err)
 				return nil, nil, false, err

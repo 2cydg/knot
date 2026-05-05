@@ -1,15 +1,18 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
 	"io"
+	"knot/internal/protocol"
 	"knot/pkg/config"
 	"knot/pkg/sshpool"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -233,6 +236,66 @@ func TestForwardManagerBasicRuleLifecycle(t *testing.T) {
 	fm.RemoveRule("srv", "L", 23001)
 	if _, ok := fm.GetRule("srv", "L", 23001); ok {
 		t.Fatal("expected removed rule to be absent")
+	}
+}
+
+func TestHandleForwardRequestRejectsInvalidRemoteAddr(t *testing.T) {
+	d := &Daemon{
+		pool: sshpool.NewPool(),
+		fm:   NewForwardManager(sshpool.NewPool()),
+	}
+	defer d.pool.CloseAll()
+	defer d.fm.pool.CloseAll()
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	req := &protocol.ForwardRequest{
+		Action: "add",
+		Alias:  "target",
+		Config: protocol.ForwardProtocolConfig{
+			Type:       "L",
+			LocalPort:  8080,
+			RemoteAddr: "127.0.0.1:80\r\nX-Test: y",
+			Enabled:    true,
+		},
+	}
+
+	go d.handleForwardRequest(server, req)
+	msg, err := protocol.ReadMessage(client)
+	if err != nil {
+		t.Fatalf("ReadMessage failed: %v", err)
+	}
+	if msg.Header.Type != protocol.TypeResp || msg.Header.Reserved != 1 {
+		t.Fatalf("unexpected response: type=%d reserved=%d payload=%s", msg.Header.Type, msg.Header.Reserved, msg.Payload)
+	}
+	if !strings.Contains(string(msg.Payload), "control characters") {
+		t.Fatalf("expected control character error, got %s", msg.Payload)
+	}
+}
+
+func TestReadSocks5RequestRejectsInvalidDomainAndPort(t *testing.T) {
+	tests := []struct {
+		name string
+		req  []byte
+	}{
+		{name: "empty domain", req: []byte{0x05, 0x01, 0x00, 0x03, 0x00, 0x00, 0x50}},
+		{name: "control char domain", req: []byte{0x05, 0x01, 0x00, 0x03, 0x04, 'a', '\n', 'b', 'c', 0x00, 0x50}},
+		{name: "zero port", req: []byte{0x05, 0x01, 0x00, 0x03, 0x0b, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm', 0x00, 0x00}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := readOnlyConn{Reader: bytes.NewReader(tt.req)}
+			_, err := readSocks5Request(conn)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if code, ok := socks5FailureCode(err); !ok || code != 0x08 {
+				t.Fatalf("error = %v, want socks5 code 0x08", err)
+			}
+		})
 	}
 }
 

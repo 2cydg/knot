@@ -1,8 +1,10 @@
 package sftp
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +49,60 @@ func TestExpandLocalHome(t *testing.T) {
 				t.Fatalf("expandLocalHome(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSplitLocalPathPrefixUnderstandsWindowsSeparators(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantDir  string
+		wantBase string
+	}{
+		{input: `D:\Download\fi`, wantDir: `D:\Download\`, wantBase: "fi"},
+		{input: `D:\Download\`, wantDir: `D:\Download\`, wantBase: ""},
+		{input: `D:/Download/fi`, wantDir: `D:/Download/`, wantBase: "fi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			gotDir, gotBase := splitLocalPathPrefix(tt.input)
+			if gotDir != tt.wantDir || gotBase != tt.wantBase {
+				t.Fatalf("splitLocalPathPrefix(%q) = %q, %q; want %q, %q", tt.input, gotDir, gotBase, tt.wantDir, tt.wantBase)
+			}
+		})
+	}
+}
+
+func TestEscapeUnquotedValueKeepsBackslashes(t *testing.T) {
+	input := `D:\Download\file sync`
+	got := escapeUnquotedValue(input)
+	want := `D:\Download\file\ sync`
+	if got != want {
+		t.Fatalf("escapeUnquotedValue(%q) = %q, want %q", input, got, want)
+	}
+}
+
+func TestBuildLocalPathQueryWindowsStyleOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows drive path lookup is OS-specific")
+	}
+	tmp := t.TempDir()
+	drive := filepath.VolumeName(tmp)
+	if drive == "" {
+		t.Skip("temp dir has no drive")
+	}
+	dir := filepath.Join(tmp, "Download")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+	input := filepath.Join(dir, "fi")
+	query, err := buildLocalPathQuery(input)
+	if err != nil {
+		t.Fatalf("buildLocalPathQuery failed: %v", err)
+	}
+	if !strings.EqualFold(filepath.Clean(query.lookupDir), filepath.Clean(dir)) {
+		t.Fatalf("lookupDir = %q, want %q", query.lookupDir, dir)
+	}
+	if query.basePrefix != "fi" {
+		t.Fatalf("basePrefix = %q, want fi", query.basePrefix)
 	}
 }

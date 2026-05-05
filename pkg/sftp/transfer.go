@@ -143,6 +143,9 @@ func downloadFile(client *sftp.Client, remotePath, localPath string, overwrite b
 			return fmt.Errorf("local file already exists: %s", localPath)
 		}
 	}
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return fmt.Errorf("failed to create local parent directory: %w", err)
+	}
 
 	remoteFile, err := client.Open(remotePath)
 	if err != nil {
@@ -150,9 +153,17 @@ func downloadFile(client *sftp.Client, remotePath, localPath string, overwrite b
 	}
 	defer remoteFile.Close()
 
-	// Use remote file permissions for local file (masked by 0777 for safety)
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if !overwrite {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+
 	mode := stat.Mode().Perm()
-	localFile, err := os.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if mode == 0 {
+		mode = 0644
+	}
+	mode &= 0666
+	localFile, err := os.OpenFile(localPath, flags, mode)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
 	}
@@ -179,6 +190,9 @@ func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool
 	} else {
 		localDir = filepath.Join(localDir, path.Base(remoteDir))
 	}
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create local directory %q: %w", localDir, err)
+	}
 
 	walker := client.Walk(remoteDir)
 	for walker.Step() {
@@ -196,6 +210,10 @@ func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool
 
 		if walker.Stat().IsDir() {
 			mode := walker.Stat().Mode().Perm()
+			if mode == 0 {
+				mode = 0755
+			}
+			mode &= 0777
 			if err := os.MkdirAll(lp, mode); err != nil {
 				return err
 			}
@@ -214,6 +232,9 @@ func MGet(client *sftp.Client, remotePattern, localDir string, overwrite bool) e
 	localDir, err := expandLocalHome(localDir)
 	if err != nil {
 		return fmt.Errorf("failed to resolve local path: %w", err)
+	}
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create local directory: %w", err)
 	}
 
 	remoteDir := path.Dir(remotePattern)

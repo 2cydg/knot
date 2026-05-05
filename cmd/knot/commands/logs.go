@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"knot/internal/paths"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -120,10 +119,13 @@ func watchFile(path string) error {
 		if fi, err := file.Stat(); err == nil {
 			if fi.Size() < lastSize {
 				// File was truncated/rotated, reopen
-				file.Close()
 				newFile, err := os.Open(path)
 				if err != nil {
 					return fmt.Errorf("failed to reopen log file: %w", err)
+				}
+				if err := file.Close(); err != nil {
+					newFile.Close()
+					return fmt.Errorf("failed to close rotated log file: %w", err)
 				}
 				file = newFile
 				reader = bufio.NewReader(file)
@@ -164,9 +166,4 @@ func init() {
 	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output")
 	logsCmd.GroupID = managementGroup.ID
 	rootCmd.AddCommand(logsCmd)
-}
-
-// Convert int to string helper
-func intToString(n int) string {
-	return strconv.Itoa(n)
 }
