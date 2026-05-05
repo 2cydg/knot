@@ -55,29 +55,9 @@ func GetSalt() ([]byte, error) {
 		return nil, err
 	}
 
-	f, err := os.OpenFile(saltPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err == nil {
-		cleanup := true
-		defer func() {
-			if cleanup {
-				_ = os.Remove(saltPath)
-			}
-		}()
-		if _, err := f.Write(salt); err != nil {
-			_ = f.Close()
-			return nil, err
-		}
-		if err := f.Sync(); err != nil {
-			_ = f.Close()
-			return nil, err
-		}
-		if err := f.Close(); err != nil {
-			return nil, err
-		}
-		cleanup = false
+	if err := createSaltFile(saltPath, salt); err == nil {
 		return salt, nil
-	}
-	if !os.IsExist(err) {
+	} else if !os.IsExist(err) {
 		return nil, err
 	}
 
@@ -89,6 +69,31 @@ func GetSalt() ([]byte, error) {
 		return nil, fmt.Errorf("invalid salt length: %d", len(existing))
 	}
 	return existing, nil
+}
+
+func createSaltFile(saltPath string, salt []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(saltPath), saltFile+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+
+	if _, err := f.Write(salt); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	return os.Link(tmpPath, saltPath)
 }
 
 // EncryptWithKey encrypts data using AES-GCM with the provided key.
