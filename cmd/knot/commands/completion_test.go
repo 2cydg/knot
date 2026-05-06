@@ -79,6 +79,10 @@ func TestConfigValueCandidates(t *testing.T) {
 			key:  "idle_timeout",
 			want: nil,
 		},
+		{
+			key:  "default_sftp_local_path",
+			want: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -188,6 +192,11 @@ func TestSyncProviderAliasCompleter(t *testing.T) {
 	if want := []string{"backup", "home"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("configKeyValueCompleter() = %#v, want %#v", got, want)
 	}
+
+	got, directive = configKeyValueCompleter(nil, []string{"default_sftp_local_path"}, "")
+	if directive != cobra.ShellCompDirectiveDefault {
+		t.Fatalf("default_sftp_local_path directive = %v, want %v", directive, cobra.ShellCompDirectiveDefault)
+	}
 }
 
 func TestEnsureZshCompinit(t *testing.T) {
@@ -209,5 +218,18 @@ func TestEnsureZshCompinit(t *testing.T) {
 
 	if strings.Count(got, "compdef _knot knot\n") != 1 {
 		t.Fatalf("ensureZshCompinit() should keep a single compdef line, got %q", got)
+	}
+}
+
+func TestConfigKeysIncludesDefaultSFTPLocalPath(t *testing.T) {
+	found := false
+	for _, key := range configKeys {
+		if key == "default_sftp_local_path" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("default_sftp_local_path missing from config keys")
 	}
 }

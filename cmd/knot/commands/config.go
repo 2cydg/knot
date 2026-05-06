@@ -6,6 +6,7 @@ import (
 	"knot/internal/paths"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
+	knotsftp "knot/pkg/sftp"
 	"os"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage global settings",
-	Long:  `View and modify global settings like forward_agent, clear_screen_on_connect, idle_timeout, keepalive_interval, log_level, and broadcast escape controls.`,
+	Long:  `View and modify global settings like forward_agent, clear_screen_on_connect, idle_timeout, keepalive_interval, log_level, default_sftp_local_path, and broadcast escape controls.`,
 }
 
 var configInitCmd = &cobra.Command{
@@ -116,6 +117,7 @@ var configListCmd = &cobra.Command{
 			fmt.Printf("idle_timeout:            %s\n", cfg.Settings.IdleTimeout)
 			fmt.Printf("keepalive_interval:      %s\n", cfg.Settings.KeepaliveInterval)
 			fmt.Printf("log_level:               %s\n", cfg.Settings.LogLevel)
+			fmt.Printf("default_sftp_local_path: %s\n", cfg.Settings.DefaultSFTPLocalPath)
 			return nil
 		})
 	},
@@ -228,6 +230,21 @@ var configSetCmd = &cobra.Command{
 				}
 			}
 			cfg.Settings.DefaultSyncProvider = value
+		case "default_sftp_local_path":
+			if value != "" {
+				resolved, err := knotsftp.ResolveConfiguredLocalPath(value)
+				if err != nil {
+					return fmt.Errorf("failed to resolve default_sftp_local_path: %w", err)
+				}
+				info, err := os.Stat(resolved)
+				if err != nil {
+					return fmt.Errorf("default_sftp_local_path %q is not accessible: %w", value, err)
+				}
+				if !info.IsDir() {
+					return fmt.Errorf("default_sftp_local_path %q must be a directory", value)
+				}
+			}
+			cfg.Settings.DefaultSFTPLocalPath = value
 		default:
 			return fmt.Errorf("unknown setting: %s", key)
 		}
@@ -258,6 +275,7 @@ func sanitizedSettings(cfg *config.Config) map[string]interface{} {
 		"idle_timeout":            cfg.Settings.IdleTimeout,
 		"keepalive_interval":      cfg.Settings.KeepaliveInterval,
 		"log_level":               cfg.Settings.LogLevel,
+		"default_sftp_local_path": cfg.Settings.DefaultSFTPLocalPath,
 		"recent_limit":            cfg.Settings.RecentLimit,
 		"default_sync_provider":   cfg.Settings.DefaultSyncProvider,
 		"has_sync_password":       cfg.Settings.SyncPassword != "",

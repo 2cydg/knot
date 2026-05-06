@@ -4,13 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestCommandNameCompletion(t *testing.T) {
-	completer := newREPLAutoCompleter(nil, nil)
+	completer := newREPLAutoCompleter(nil, nil, nil, "")
 
 	tests := []struct {
 		name       string
@@ -25,7 +26,7 @@ func TestCommandNameCompletion(t *testing.T) {
 			pos:        0,
 			wantOffset: 0,
 			want: []string{
-				"? ", "bye ", "cd ", "exit ", "get ", "help ", "ls ",
+				"? ", "bye ", "cd ", "clear ", "exit ", "get ", "help ", "ls ",
 				"mget ", "mkdir ", "mput ", "put ", "pwd ", "quit ", "rm ", "rmdir ",
 			},
 		},
@@ -48,7 +49,7 @@ func TestCommandNameCompletion(t *testing.T) {
 			line:       "  c",
 			pos:        3,
 			wantOffset: 1,
-			want:       []string{"d "},
+			want:       []string{"d ", "lear "},
 		},
 		{
 			name:       "no completion after command space",
@@ -100,7 +101,7 @@ func runesToStrings(items [][]rune) []string {
 }
 
 func TestLocalPathCompletion(t *testing.T) {
-	completer := newREPLAutoCompleter(nil, nil)
+	completer := newREPLAutoCompleter(nil, nil, nil, "")
 	workspace := t.TempDir()
 	t.Chdir(workspace)
 
@@ -291,7 +292,7 @@ func TestRemotePathCompletion(t *testing.T) {
 		},
 	}
 
-	completer := newREPLAutoCompleter(remote, func() string { return "/srv/app" })
+	completer := newREPLAutoCompleter(remote, func() string { return "/srv/app" }, func() string { return "/home/demo" }, "")
 
 	tests := []struct {
 		name       string
@@ -391,6 +392,25 @@ func TestRemotePathCompletion(t *testing.T) {
 				t.Fatalf("unexpected candidates: got %#v want %#v", gotStrings, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveRemotePathSupportsHome(t *testing.T) {
+	if got := resolveRemotePath("/srv/app", "/home/demo", "~"); got != "/home/demo" {
+		t.Fatalf("resolveRemotePath(~) = %q", got)
+	}
+	if got := resolveRemotePath("/srv/app", "/home/demo", "~/logs"); got != "/home/demo/logs" {
+		t.Fatalf("resolveRemotePath(~/logs) = %q", got)
+	}
+}
+
+func TestNormalizeWindowsCompletionReplacement(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows specific")
+	}
+	got, ok := normalizeWindowsCompletionReplacement(`D:\`, `D:/Download/`)
+	if !ok || got != "Download/" {
+		t.Fatalf("normalizeWindowsCompletionReplacement = %q, %v", got, ok)
 	}
 }
 

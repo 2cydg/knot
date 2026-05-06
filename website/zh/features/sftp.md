@@ -26,7 +26,7 @@ knot sftp web-prod /var/www
 knot sftp web-prod --follow
 ```
 
-交互式 shell 支持命令补全和路径补全。
+交互式 shell 支持命令补全和路径补全。远程 `~` 会解析到当前连接用户的 home 目录。如果配置了 `settings.default_sftp_local_path`，REPL 中的相对本地路径会基于该目录解析，本地路径 Tab 补全也会从该目录开始。
 
 ## 跟随 SSH 目录
 
@@ -43,10 +43,11 @@ knot sftp web-prod --follow
 | 命令 | 用法 | 说明 |
 | --- | --- | --- |
 | `help` | `help` 或 `?` | 显示帮助。 |
+| `clear` | `clear` | 清空当前终端输出。 |
 | `exit` | `exit`、`quit` 或 `bye` | 退出 SFTP shell。 |
 | `ls` | `ls [path]` | 列出远程目录内容。 |
 | `pwd` | `pwd` | 输出当前远程目录。 |
-| `cd` | `cd <path>` | 切换远程目录。 |
+| `cd` | `cd <path>` | 切换远程目录。`cd ~` 会跳到远端 home 目录。 |
 | `get` | `get <remote_path> [local_path]` | 下载文件或目录。 |
 | `put` | `put <local_path> [remote_path]` | 上传文件或目录。 |
 | `mget` | `mget <remote_pattern> [local_dir]` | 按通配符批量下载。 |
@@ -59,9 +60,78 @@ knot sftp web-prod --follow
 
 ```text
 sftp:/var/www> ls
+sftp:/var/www> clear
+sftp:/var/www> cd ~
 sftp:/var/www> put ./dist/app.tar.gz /tmp/app.tar.gz
 sftp:/var/www> get release.tar.gz ~/Downloads/
 ```
+
+## 默认本地目录
+
+可以为交互式 SFTP shell 配置默认本地目录：
+
+```sh
+knot config set default_sftp_local_path ~/Downloads
+```
+
+配置 `default_sftp_local_path` 后：
+
+- `get release.tar.gz` 会下载到 `<default_sftp_local_path>/release.tar.gz`。
+- `get -r logs` 会下载到 `<default_sftp_local_path>/logs`。
+- `put app.tar.gz /tmp/` 会从 `<default_sftp_local_path>/app.tar.gz` 读取本地文件。
+- `mget` 和 `mput` 在省略相对本地路径时会使用同一个本地基准目录。
+- 绝对本地路径、`~/...` 和 Windows 盘符路径仍按显式路径处理，不会再拼到默认目录下。
+
+## 远程路径规则
+
+- 远程绝对路径，例如 `/var/www`，按原样使用。
+- 远程相对路径会基于当前 SFTP 目录解析。
+- `~` 表示远端用户的 home 目录。
+- `~/logs` 表示远端 home 目录下的 `logs`。
+
+## 上传规则
+
+这些规则同时适用于交互式 `put` 和批量上传 `knot cp`。
+
+### 上传文件
+
+假设当前远端目录是 `/cwd`，本地源文件是 `file.txt`。
+
+| 命令 | 结果 |
+| --- | --- |
+| `put file.txt` | 上传到 `/cwd/file.txt`。 |
+| `put file.txt remote.txt` | 如果 `remote.txt` 不是目录，则上传为 `/cwd/remote.txt`。 |
+| `put file.txt remote/` | 把 `remote/` 当作目录，上传到 `/cwd/remote/file.txt`。缺失目录会自动创建。 |
+| `put file.txt existing_dir` | 如果 `existing_dir` 是远端目录，则上传到 `/cwd/existing_dir/file.txt`。 |
+| `put file.txt/` | 返回清晰错误，因为本地源是文件而不是目录。 |
+
+### 上传目录
+
+假设当前远端目录是 `/cwd`，本地源目录是 `dist`。
+
+| 命令 | 结果 |
+| --- | --- |
+| `put -r dist` | 把目录本身上传到 `/cwd/dist`。 |
+| `put -r dist/` | 与 `put -r dist` 等价，尾部 `/` 不改变语义。 |
+| `put -r dist/.` | 把 `dist` 的内容上传到 `/cwd`，不会额外创建 `/cwd/dist`。 |
+| `put -r dist release` | 如果 `release` 不存在，则把目录上传为 `/cwd/release`；如果 `release` 是目录，则上传到 `/cwd/release/dist`。 |
+| `put -r dist release/` | 把 `release/` 当作容器目录，上传到 `/cwd/release/dist`。缺失目录会自动创建。 |
+| `put -r dist/. release` | 把 `dist` 的内容上传到 `/cwd/release`。缺失目录会自动创建。 |
+| `put -r dist existing_file` | 返回清晰错误，因为目标已经存在且是文件。 |
+
+## 下载规则
+
+假设当前远端目录是 `/cwd`，远端源是 `release.tar.gz` 或 `logs`。
+
+| 命令 | 结果 |
+| --- | --- |
+| `get release.tar.gz` | 下载到 `./release.tar.gz`，如果配置了默认本地目录则下载到 `<default_sftp_local_path>/release.tar.gz`。 |
+| `get release.tar.gz out.tar.gz` | 下载为 `out.tar.gz`。 |
+| `get release.tar.gz target/` | 把 `target/` 当作目录，下载到 `target/release.tar.gz`。缺失目录会自动创建。 |
+| `get -r logs` | 把目录本身下载到 `./logs`，如果配置了默认本地目录则下载到 `<default_sftp_local_path>/logs`。 |
+| `get -r logs/` | 与 `get -r logs` 等价，尾部 `/` 不改变语义。 |
+| `get -r logs/.` | 把 `logs` 的内容下载到本地目标目录，不额外创建一层 `logs`。 |
+| `get -r logs archive` | 如果 `archive` 不存在，则把目录下载为 `archive`；如果 `archive` 已存在且是目录，则下载到 `archive/logs`。 |
 
 ## 批处理 SFTP 命令
 
@@ -107,4 +177,4 @@ knot cp ./dist/. web-prod:/var/www/html/
 knot cp web-prod:/var/log/nginx/access.log ./
 ```
 
-源目录以 `/.` 结尾时复制目录内容，而不是目录本身。
+对于 `knot cp`，`dist` 和 `dist/` 等价，都会复制目录本身。只有 `dist/.` 才表示复制目录内容而不包含最外层目录。

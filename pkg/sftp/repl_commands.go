@@ -28,6 +28,7 @@ type CommandSpec struct {
 
 var replCommandSpecs = []*CommandSpec{
 	{Name: "help", Aliases: []string{"?"}},
+	{Name: "clear"},
 	{Name: "exit", Aliases: []string{"quit", "bye"}},
 	{Name: "ls", Args: []ArgSpec{{Kind: PathRemoteAny, Optional: true}}},
 	{Name: "pwd"},

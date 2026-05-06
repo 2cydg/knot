@@ -95,7 +95,7 @@ func TestBuildLocalPathQueryWindowsStyleOnWindows(t *testing.T) {
 		t.Fatalf("failed to create test dir: %v", err)
 	}
 	input := filepath.Join(dir, "fi")
-	query, err := buildLocalPathQuery(input)
+	query, err := buildLocalPathQuery(input, "")
 	if err != nil {
 		t.Fatalf("buildLocalPathQuery failed: %v", err)
 	}
@@ -104,5 +104,38 @@ func TestBuildLocalPathQueryWindowsStyleOnWindows(t *testing.T) {
 	}
 	if query.basePrefix != "fi" {
 		t.Fatalf("basePrefix = %q, want fi", query.basePrefix)
+	}
+}
+
+func TestResolveLocalPathUsesDefaultDirForRelativePaths(t *testing.T) {
+	base := t.TempDir()
+	got, err := resolveLocalPath("logs/out.txt", base)
+	if err != nil {
+		t.Fatalf("resolveLocalPath returned error: %v", err)
+	}
+	want := filepath.Join(base, "logs", "out.txt")
+	if got != want {
+		t.Fatalf("resolveLocalPath = %q, want %q", got, want)
+	}
+}
+
+func TestLocalPathHelpers(t *testing.T) {
+	if !localPathHasTrailingSeparator("dist/") {
+		t.Fatal("expected trailing separator")
+	}
+	if !localPathHasDotSuffix("dist/.") {
+		t.Fatal("expected dot suffix")
+	}
+	if got := trimLocalDotSuffix("dist/."); got != "dist" {
+		t.Fatalf("trimLocalDotSuffix = %q", got)
+	}
+	if got := localCompletionDisplayPath(`D:\Download\file.txt`); runtime.GOOS == "windows" && got != "D:/Download/file.txt" {
+		t.Fatalf("localCompletionDisplayPath = %q", got)
+	}
+	if got := normalizeWindowsLocalDisplayPath(`D:\\`); runtime.GOOS == "windows" && got != "D:/" {
+		t.Fatalf("normalizeWindowsLocalDisplayPath(D\\\\\\\\) = %q", got)
+	}
+	if got := normalizeWindowsLocalDisplayPath(`D:\`); runtime.GOOS == "windows" && got != "D:/" {
+		t.Fatalf("normalizeWindowsLocalDisplayPath(D:\\) = %q", got)
 	}
 }
