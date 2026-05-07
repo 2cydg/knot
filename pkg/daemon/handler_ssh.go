@@ -339,8 +339,8 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 func sshTerminalModes() ssh.TerminalModes {
 	return ssh.TerminalModes{
 		ssh.ECHO:          1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
+		ssh.TTY_OP_ISPEED: 38400,
+		ssh.TTY_OP_OSPEED: 38400,
 	}
 }
 
