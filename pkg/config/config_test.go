@@ -91,6 +91,17 @@ func TestSettingsBroadcastEscapeDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFromPathDefaultsIncludeDefaultSFTPLocalPath(t *testing.T) {
+	tmp := t.TempDir()
+	cfg, err := LoadFromPath(filepath.Join(tmp, "missing.toml"), testProvider{})
+	if err != nil {
+		t.Fatalf("LoadFromPath returned error: %v", err)
+	}
+	if cfg.Settings.DefaultSFTPLocalPath != "" {
+		t.Fatalf("DefaultSFTPLocalPath = %q, want empty", cfg.Settings.DefaultSFTPLocalPath)
+	}
+}
+
 type testProvider struct{}
 
 func (testProvider) Encrypt(plaintext []byte) ([]byte, error) {

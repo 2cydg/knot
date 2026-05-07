@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"knot/internal/protocol"
@@ -15,10 +16,11 @@ import (
 )
 
 type REPLOptions struct {
-	InitialDir   string
-	FollowCh     <-chan protocol.SessionCWDNotify
-	FollowID     string
-	DisconnectCh <-chan error
+	InitialDir      string
+	DefaultLocalDir string
+	FollowCh        <-chan protocol.SessionCWDNotify
+	FollowID        string
+	DisconnectCh    <-chan error
 }
 
 type replReadResult struct {
@@ -34,6 +36,7 @@ func RunREPL(client *sftp.Client, alias string, initialDir string) error {
 func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) error {
 	historyPath := filepath.Join(os.TempDir(), ".knot_sftp_history")
 	cwd := "/"
+	remoteHome := "/"
 	var cwdMu sync.RWMutex
 	remoteCache := newRemoteDirCache(client, remoteCompletionCacheTTL)
 	replStdin := newREPLStdin()
@@ -47,7 +50,11 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 			cwdMu.RLock()
 			defer cwdMu.RUnlock()
 			return cwd
-		}),
+		}, func() string {
+			cwdMu.RLock()
+			defer cwdMu.RUnlock()
+			return remoteHome
+		}, opts.DefaultLocalDir),
 	})
 	if err != nil {
 		return err
@@ -62,8 +69,9 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 	if err != nil {
 		cwd = "/"
 	}
+	remoteHome = cwd
 	if opts.InitialDir != "" {
-		cwd = opts.InitialDir
+		cwd = resolvePath(cwd, remoteHome, opts.InitialDir)
 	}
 
 	fmt.Printf("Connected to %s via SFTP. Type 'help' for commands, press Tab for completion.\n", alias)
@@ -136,13 +144,15 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 		switch cmd {
 		case "help", "?":
 			printHelp()
+		case "clear":
+			clearScreen(rl)
 		case "exit", "quit", "bye":
 			return nil
 		case "ls":
 			cwdMu.RLock()
 			p := cwd
 			if len(args) > 1 {
-				p = resolvePath(cwd, args[1])
+				p = resolvePath(cwd, remoteHome, args[1])
 			}
 			cwdMu.RUnlock()
 			files, err := client.ReadDir(p)
@@ -167,7 +177,7 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			cwdMu.RLock()
-			newPath := resolvePath(cwd, args[1])
+			newPath := resolvePath(cwd, remoteHome, args[1])
 			cwdMu.RUnlock()
 			stat, err := client.Stat(newPath)
 			if err != nil {
@@ -194,16 +204,26 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			cwdMu.RLock()
-			remotePath := resolvePath(cwd, parsedArgs.paths[0])
+			remotePath := resolvePath(cwd, remoteHome, parsedArgs.paths[0])
 			cwdMu.RUnlock()
 			localPath := path.Base(remotePath)
 			if len(parsedArgs.paths) > 1 {
 				localPath = parsedArgs.paths[1]
 			}
+			localPath, err = resolveLocalPath(localPath, opts.DefaultLocalDir)
+			if err != nil {
+				fmt.Printf("Error: failed to resolve local path: %v\n", err)
+				continue
+			}
 			if err := Download(client, remotePath, localPath, parsedArgs.recursive, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
-				fmt.Println("Download complete.")
+				finalPath, resolveErr := resolveFinalDownloadPath(remotePath, localPath, parsedArgs.recursive)
+				if resolveErr != nil {
+					fmt.Println("Download complete.")
+				} else {
+					fmt.Printf("Download complete: %s\n", finalPath)
+				}
 			}
 		case "put":
 			parsedArgs, err := parseTransferArgs(args[1:])
@@ -217,16 +237,21 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			localPath := parsedArgs.paths[0]
+			localPath, err = resolveLocalPath(localPath, opts.DefaultLocalDir)
+			if err != nil {
+				fmt.Printf("Error: failed to resolve local path: %v\n", err)
+				continue
+			}
 			cwdMu.RLock()
-			remotePath := path.Join(cwd, filepath.Base(localPath))
+			remotePath := cwd
 			if len(parsedArgs.paths) > 1 {
-				remotePath = resolvePath(cwd, parsedArgs.paths[1])
+				remotePath = resolvePath(cwd, remoteHome, parsedArgs.paths[1])
 			}
 			cwdMu.RUnlock()
 			if err := Upload(client, localPath, remotePath, parsedArgs.recursive, true, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
-				invalidateRemoteMutation(remoteCache, remotePath)
+				invalidateRemoteMutation(remoteCache, path.Clean(remotePath))
 				fmt.Println("Upload complete.")
 			}
 		case "mget":
@@ -235,11 +260,16 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			cwdMu.RLock()
-			remotePattern := resolvePath(cwd, args[1])
+			remotePattern := resolvePath(cwd, remoteHome, args[1])
 			cwdMu.RUnlock()
 			localDir := "."
 			if len(args) > 2 {
 				localDir = args[2]
+			}
+			localDir, err := resolveLocalPath(localDir, opts.DefaultLocalDir)
+			if err != nil {
+				fmt.Printf("Error: failed to resolve local path: %v\n", err)
+				continue
 			}
 			if err := MGet(client, remotePattern, localDir, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -249,11 +279,15 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				fmt.Println("Usage: mput <local_pattern> [remote_dir]")
 				continue
 			}
-			localPattern := args[1]
+			localPattern, err := resolveLocalPath(args[1], opts.DefaultLocalDir)
+			if err != nil {
+				fmt.Printf("Error: failed to resolve local path: %v\n", err)
+				continue
+			}
 			cwdMu.RLock()
 			remoteDir := cwd
 			if len(args) > 2 {
-				remoteDir = resolvePath(cwd, args[2])
+				remoteDir = resolvePath(cwd, remoteHome, args[2])
 			}
 			cwdMu.RUnlock()
 			if err := MPut(client, localPattern, remoteDir, false); err != nil {
@@ -267,7 +301,7 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			cwdMu.RLock()
-			p := resolvePath(cwd, args[1])
+			p := resolvePath(cwd, remoteHome, args[1])
 			cwdMu.RUnlock()
 			if err := client.Remove(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -280,7 +314,7 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			cwdMu.RLock()
-			p := resolvePath(cwd, args[1])
+			p := resolvePath(cwd, remoteHome, args[1])
 			cwdMu.RUnlock()
 			if err := client.MkdirAll(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -293,7 +327,7 @@ func RunREPLWithOptions(client *sftp.Client, alias string, opts REPLOptions) err
 				continue
 			}
 			cwdMu.RLock()
-			p := resolvePath(cwd, args[1])
+			p := resolvePath(cwd, remoteHome, args[1])
 			cwdMu.RUnlock()
 			if err := client.RemoveDirectory(p); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -315,6 +349,16 @@ func printDisconnectAndClose(rl *readline.Instance, replStdin io.Closer, closeOn
 		_ = replStdin.Close()
 		_ = rl.Close()
 	})
+}
+
+func clearScreen(rl *readline.Instance) {
+	if rl != nil {
+		rl.Clean()
+	}
+	_, _ = io.WriteString(os.Stdout, "\r\033[H\033[2J\033[3J")
+	if rl != nil {
+		rl.Refresh()
+	}
 }
 
 func runFollowUpdates(client *sftp.Client, rl *readline.Instance, cache *remoteDirCache, followCh <-chan protocol.SessionCWDNotify, followID string, cwd *string, cwdMu *sync.RWMutex) {
@@ -367,7 +411,26 @@ func invalidateRemoteMutation(cache *remoteDirCache, remotePath string) {
 	cache.Invalidate(path.Dir(remotePath), remotePath)
 }
 
-func resolvePath(cwd, p string) string {
+func resolveFinalDownloadPath(remotePath, localPath string, recursive bool) (string, error) {
+	if recursive {
+		return resolveDownloadDirTarget(remotePath, localPath)
+	}
+	return resolveDownloadFileTarget(remotePath, localPath)
+}
+
+func resolvePath(cwd, remoteHome, p string) string {
+	if p == "~" {
+		if remoteHome == "" {
+			return "/"
+		}
+		return path.Clean(remoteHome)
+	}
+	if strings.HasPrefix(p, "~/") {
+		if remoteHome == "" {
+			remoteHome = "/"
+		}
+		return path.Clean(path.Join(remoteHome, p[2:]))
+	}
 	if path.IsAbs(p) {
 		return path.Clean(p)
 	}
@@ -376,6 +439,7 @@ func resolvePath(cwd, p string) string {
 
 func printHelp() {
 	fmt.Println("Available commands:")
+	fmt.Println("  clear              Clear the current terminal output")
 	fmt.Println("  ls [path]          List directory contents")
 	fmt.Println("  cd <path>          Change remote directory")
 	fmt.Println("  pwd                Print remote working directory")

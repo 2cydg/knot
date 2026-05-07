@@ -79,6 +79,7 @@ type SettingsConfig struct {
 	KeepaliveInterval     string `toml:"keepalive_interval"`
 	LogLevel              string `toml:"log_level"`
 	RecentLimit           int    `toml:"recent_limit"`
+	DefaultSFTPLocalPath  string `toml:"default_sftp_local_path,omitempty"`
 	DefaultSyncProvider   string `toml:"default_sync_provider,omitempty"`
 	SyncPassword          string `toml:"sync_password,omitempty"`
 }

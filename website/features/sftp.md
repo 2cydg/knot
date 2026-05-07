@@ -26,7 +26,7 @@ knot sftp web-prod /var/www
 knot sftp web-prod --follow
 ```
 
-The interactive shell supports command and path completion.
+The interactive shell supports command and path completion. Remote `~` resolves to the connected user's home directory. If `settings.default_sftp_local_path` is configured, relative local paths in the REPL are resolved from that directory, and local Tab completion starts there.
 
 ## Follow SSH Directory
 
@@ -43,10 +43,11 @@ The injected hook is sent as keyboard input to the followed SSH session and ends
 | Command | Usage | Description |
 | --- | --- | --- |
 | `help` | `help` or `?` | Show help. |
+| `clear` | `clear` | Clear the current terminal output. |
 | `exit` | `exit`, `quit`, or `bye` | Exit the SFTP shell. |
 | `ls` | `ls [path]` | List remote directory contents. |
 | `pwd` | `pwd` | Print the current remote directory. |
-| `cd` | `cd <path>` | Change remote directory. |
+| `cd` | `cd <path>` | Change remote directory. `cd ~` jumps to the remote home directory. |
 | `get` | `get <remote_path> [local_path]` | Download a file or directory. |
 | `put` | `put <local_path> [remote_path]` | Upload a file or directory. |
 | `mget` | `mget <remote_pattern> [local_dir]` | Download files matching a wildcard. |
@@ -59,9 +60,78 @@ Example:
 
 ```text
 sftp:/var/www> ls
+sftp:/var/www> clear
+sftp:/var/www> cd ~
 sftp:/var/www> put ./dist/app.tar.gz /tmp/app.tar.gz
 sftp:/var/www> get release.tar.gz ~/Downloads/
 ```
+
+## Local Base Directory
+
+Set a default local directory for the interactive SFTP shell:
+
+```sh
+knot config set default_sftp_local_path ~/Downloads
+```
+
+With `default_sftp_local_path` configured:
+
+- `get release.tar.gz` downloads to `<default_sftp_local_path>/release.tar.gz`.
+- `get -r logs` downloads to `<default_sftp_local_path>/logs`.
+- `put app.tar.gz /tmp/` reads `<default_sftp_local_path>/app.tar.gz`.
+- `mget` and `mput` use the same local base directory for omitted relative paths.
+- Absolute local paths, `~/...`, and Windows drive paths still behave as explicit paths and are not rebased.
+
+## Remote Path Rules
+
+- Remote absolute paths such as `/var/www` are used as-is.
+- Remote relative paths are resolved from the current SFTP directory.
+- `~` means the remote user's home directory.
+- `~/logs` means `logs` under the remote home directory.
+
+## Upload Rules
+
+These rules apply to both interactive `put` and batch `knot cp` uploads.
+
+### Uploading Files
+
+Assume the current remote directory is `/cwd` and the local source is `file.txt`.
+
+| Command | Result |
+| --- | --- |
+| `put file.txt` | Uploads to `/cwd/file.txt`. |
+| `put file.txt remote.txt` | Uploads as `/cwd/remote.txt` if it does not exist as a directory. |
+| `put file.txt remote/` | Treats `remote/` as a directory and uploads to `/cwd/remote/file.txt`. Missing directories are created automatically. |
+| `put file.txt existing_dir` | If `existing_dir` is a remote directory, uploads to `/cwd/existing_dir/file.txt`. |
+| `put file.txt/` | Returns a clear error because the local source is a file, not a directory. |
+
+### Uploading Directories
+
+Assume the current remote directory is `/cwd` and the local source is `dist`.
+
+| Command | Result |
+| --- | --- |
+| `put -r dist` | Uploads the directory itself to `/cwd/dist`. |
+| `put -r dist/` | Same as `put -r dist`. A trailing slash does not change the meaning. |
+| `put -r dist/.` | Uploads the contents of `dist` into `/cwd` without creating an extra `/cwd/dist`. |
+| `put -r dist release` | If `release` does not exist, uploads the directory as `/cwd/release`. If `release` is a directory, uploads to `/cwd/release/dist`. |
+| `put -r dist release/` | Treats `release/` as a container directory and uploads to `/cwd/release/dist`. Missing directories are created automatically. |
+| `put -r dist/. release` | Uploads the contents of `dist` into `/cwd/release`. Missing directories are created automatically. |
+| `put -r dist existing_file` | Returns a clear error because the target already exists as a file. |
+
+## Download Rules
+
+Assume the current remote directory is `/cwd` and the remote source is `release.tar.gz` or `logs`.
+
+| Command | Result |
+| --- | --- |
+| `get release.tar.gz` | Downloads to `./release.tar.gz`, or to `<default_sftp_local_path>/release.tar.gz` if configured. |
+| `get release.tar.gz out.tar.gz` | Downloads as `out.tar.gz`. |
+| `get release.tar.gz target/` | Treats `target/` as a directory and downloads to `target/release.tar.gz`. Missing directories are created automatically. |
+| `get -r logs` | Downloads the directory itself to `./logs`, or to `<default_sftp_local_path>/logs` if configured. |
+| `get -r logs/` | Same as `get -r logs`. A trailing slash does not change the meaning. |
+| `get -r logs/.` | Downloads the contents of `logs` into the local target directory without creating an extra `logs` directory. |
+| `get -r logs archive` | If `archive` does not exist, downloads the directory as `archive`. If it exists and is a directory, downloads to `archive/logs`. |
 
 ## Batch SFTP Commands
 
@@ -107,4 +177,4 @@ knot cp ./dist/. web-prod:/var/www/html/
 knot cp web-prod:/var/log/nginx/access.log ./
 ```
 
-When the source directory ends with `/.`, Knot copies the directory contents instead of the directory itself.
+For `knot cp`, `dist` and `dist/` are equivalent and copy the directory itself. Only `dist/.` copies the directory contents without the extra top-level directory.

@@ -119,8 +119,11 @@ func configKeyValueCompleter(cmd *cobra.Command, args []string, toComplete strin
 	case 0:
 		return filterAndSortCompletions(configKeys, toComplete), cobra.ShellCompDirectiveNoFileComp
 	case 1:
-		if strings.ToLower(args[0]) == "default_sync_provider" {
+		switch strings.ToLower(args[0]) {
+		case "default_sync_provider":
 			return syncProviderAliasCompletions(toComplete)
+		case "default_sftp_local_path":
+			return nil, cobra.ShellCompDirectiveDefault
 		}
 		values := configValueCandidates(args[0])
 		if len(values) == 0 {
@@ -140,6 +143,7 @@ var configKeys = []string{
 	"idle_timeout",
 	"keepalive_interval",
 	"log_level",
+	"default_sftp_local_path",
 	"default_sync_provider",
 }
 

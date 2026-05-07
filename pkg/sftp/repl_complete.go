@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -15,14 +16,18 @@ type remoteDirReader interface {
 }
 
 type replAutoCompleter struct {
-	remote remoteDirReader
-	getCWD func() string
+	remote          remoteDirReader
+	getCWD          func() string
+	getRemoteHome   func() string
+	defaultLocalDir string
 }
 
-func newREPLAutoCompleter(remote remoteDirReader, getCWD func() string) readline.AutoCompleter {
+func newREPLAutoCompleter(remote remoteDirReader, getCWD func() string, getRemoteHome func() string, defaultLocalDir string) readline.AutoCompleter {
 	return &replAutoCompleter{
-		remote: remote,
-		getCWD: getCWD,
+		remote:          remote,
+		getCWD:          getCWD,
+		getRemoteHome:   getRemoteHome,
+		defaultLocalDir: defaultLocalDir,
 	}
 }
 
@@ -34,10 +39,10 @@ func (c *replAutoCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	if completions, replaceLen := completeOptions(parsed, pos); len(completions) > 0 || replaceLen > 0 {
 		return completions, replaceLen
 	}
-	if completions, replaceLen := completeLocalPaths(parsed, pos); len(completions) > 0 || replaceLen > 0 {
+	if completions, replaceLen := completeLocalPaths(parsed, pos, c.defaultLocalDir); len(completions) > 0 || replaceLen > 0 {
 		return completions, replaceLen
 	}
-	return completeRemotePaths(parsed, pos, c.remote, c.getCWD)
+	return completeRemotePaths(parsed, pos, c.remote, c.getCWD, c.getRemoteHome)
 }
 
 func completeCommandNames(parsed ParsedLine, cursor int) ([][]rune, int) {
@@ -147,7 +152,7 @@ const (
 	quoteModeDouble
 )
 
-func completeLocalPaths(parsed ParsedLine, cursor int) ([][]rune, int) {
+func completeLocalPaths(parsed ParsedLine, cursor int, defaultLocalDir string) ([][]rune, int) {
 	ctx, ok := buildCompletionContext(parsed, cursor)
 	if !ok || ctx.command == nil || ctx.argIndex < 0 || ctx.argIndex >= len(ctx.command.Args) {
 		return nil, 0
@@ -156,14 +161,14 @@ func completeLocalPaths(parsed ParsedLine, cursor int) ([][]rune, int) {
 		return nil, 0
 	}
 
-	candidates, err := completeLocalPathCandidates(ctx, ctx.command.Args[ctx.argIndex].Kind)
+	candidates, err := completeLocalPathCandidates(ctx, ctx.command.Args[ctx.argIndex].Kind, defaultLocalDir)
 	if err != nil || len(candidates) == 0 {
 		return nil, 0
 	}
 	return buildPathCompletions(ctx, candidates)
 }
 
-func completeRemotePaths(parsed ParsedLine, cursor int, remote remoteDirReader, getCWD func() string) ([][]rune, int) {
+func completeRemotePaths(parsed ParsedLine, cursor int, remote remoteDirReader, getCWD func() string, getRemoteHome func() string) ([][]rune, int) {
 	if remote == nil {
 		return nil, 0
 	}
@@ -178,13 +183,13 @@ func completeRemotePaths(parsed ParsedLine, cursor int, remote remoteDirReader, 
 		return nil, 0
 	}
 
-	candidates, err := completeRemotePathCandidates(ctx, kind, remote, getRemoteCWD(getCWD))
+	candidates, err := completeRemotePathCandidates(ctx, kind, remote, getRemoteCWD(getCWD), getRemoteHomePath(getRemoteHome))
 	if err == nil && len(candidates) > 0 {
 		return buildPathCompletions(ctx, candidates)
 	}
 
 	if ctx.command.Name == "mkdir" {
-		candidates, err = completeMkdirPathCandidates(ctx, remote, getRemoteCWD(getCWD))
+		candidates, err = completeMkdirPathCandidates(ctx, remote, getRemoteCWD(getCWD), getRemoteHomePath(getRemoteHome))
 		if err == nil && len(candidates) > 0 {
 			return buildPathCompletions(ctx, candidates)
 		}
@@ -313,8 +318,8 @@ type pathCompletionCandidate struct {
 	isDir bool
 }
 
-func completeLocalPathCandidates(ctx completionContext, kind PathKind) ([]pathCompletionCandidate, error) {
-	query, err := buildLocalPathQuery(ctx.valuePrefix)
+func completeLocalPathCandidates(ctx completionContext, kind PathKind, defaultLocalDir string) ([]pathCompletionCandidate, error) {
+	query, err := buildLocalPathQuery(ctx.valuePrefix, defaultLocalDir)
 	if err != nil {
 		return nil, err
 	}
@@ -346,6 +351,7 @@ func completeLocalPathCandidates(ctx completionContext, kind PathKind) ([]pathCo
 		if isDir {
 			value += string(os.PathSeparator)
 		}
+		value = localCompletionDisplayPath(value)
 
 		raw, ok := encodeCompletionValue(value, ctx.quoteMode)
 		if !ok {
@@ -367,8 +373,8 @@ func completeLocalPathCandidates(ctx completionContext, kind PathKind) ([]pathCo
 	return candidates, nil
 }
 
-func completeRemotePathCandidates(ctx completionContext, kind PathKind, remote remoteDirReader, cwd string) ([]pathCompletionCandidate, error) {
-	query := buildRemotePathQuery(cwd, ctx.valuePrefix)
+func completeRemotePathCandidates(ctx completionContext, kind PathKind, remote remoteDirReader, cwd string, home string) ([]pathCompletionCandidate, error) {
+	query := buildRemotePathQuery(cwd, home, ctx.valuePrefix)
 	entries, err := remote.ReadDir(query.lookupDir)
 	if err != nil {
 		return nil, err
@@ -416,7 +422,7 @@ func completeRemotePathCandidates(ctx completionContext, kind PathKind, remote r
 	return candidates, nil
 }
 
-func completeMkdirPathCandidates(ctx completionContext, remote remoteDirReader, cwd string) ([]pathCompletionCandidate, error) {
+func completeMkdirPathCandidates(ctx completionContext, remote remoteDirReader, cwd string, home string) ([]pathCompletionCandidate, error) {
 	dirPart, leafPrefix := splitRemotePathPrefix(ctx.valuePrefix)
 	if dirPart == "" {
 		return nil, nil
@@ -430,7 +436,7 @@ func completeMkdirPathCandidates(ctx completionContext, remote remoteDirReader, 
 	parentCtx := ctx
 	parentCtx.valuePrefix = parentPrefix
 	parentCtx.rawPrefix = parentPrefix
-	parentCandidates, err := completeRemotePathCandidates(parentCtx, PathRemoteDir, remote, cwd)
+	parentCandidates, err := completeRemotePathCandidates(parentCtx, PathRemoteDir, remote, cwd, home)
 	if err != nil || len(parentCandidates) == 0 {
 		return nil, err
 	}
@@ -463,29 +469,33 @@ type remotePathQuery struct {
 	basePrefix string
 }
 
-func buildLocalPathQuery(prefix string) (localPathQuery, error) {
+func buildLocalPathQuery(prefix string, defaultLocalDir string) (localPathQuery, error) {
 	dirPart, basePrefix := splitLocalPathPrefix(prefix)
 	lookupDir := dirPart
 	if lookupDir == "" {
-		lookupDir = "."
+		lookupDir = defaultLocalDir
+		if lookupDir == "" {
+			lookupDir = "."
+		}
 	}
-	lookupDir, err := expandLocalHome(lookupDir)
+	lookupDir, err := resolveLocalPath(lookupDir, defaultLocalDir)
 	if err != nil {
 		return localPathQuery{}, err
 	}
 	if lookupDir == "" {
 		lookupDir = "."
 	}
+	displayDir := dirPart
 	return localPathQuery{
 		lookupDir:  filepath.Clean(lookupDir),
-		displayDir: dirPart,
+		displayDir: displayDir,
 		basePrefix: basePrefix,
 	}, nil
 }
 
-func buildRemotePathQuery(cwd, prefix string) remotePathQuery {
+func buildRemotePathQuery(cwd, home, prefix string) remotePathQuery {
 	dirPart, basePrefix := splitRemotePathPrefix(prefix)
-	lookupDir := resolveRemotePath(cwd, dirPart)
+	lookupDir := resolveRemotePath(cwd, home, dirPart)
 	return remotePathQuery{
 		lookupDir:  lookupDir,
 		displayDir: dirPart,
@@ -522,12 +532,24 @@ func splitRemotePathPrefix(prefix string) (string, string) {
 	return prefix[:idx+1], prefix[idx+1:]
 }
 
-func resolveRemotePath(cwd, input string) string {
+func resolveRemotePath(cwd, home, input string) string {
 	if input == "" {
 		if cwd == "" {
 			return "/"
 		}
 		return path.Clean(cwd)
+	}
+	if input == "~" {
+		if home == "" {
+			return "/"
+		}
+		return path.Clean(home)
+	}
+	if strings.HasPrefix(input, "~/") {
+		if home == "" {
+			home = "/"
+		}
+		return path.Clean(path.Join(home, input[2:]))
 	}
 	if path.IsAbs(input) {
 		return path.Clean(input)
@@ -606,6 +628,10 @@ func buildPathCompletions(ctx completionContext, candidates []pathCompletionCand
 		raw := candidate.raw
 		if len(candidates) == 1 && !candidate.isDir {
 			raw = finalizeCompletion(raw, ctx.quoteMode)
+		}
+		if adjusted, ok := normalizeWindowsCompletionReplacement(ctx.rawPrefix, raw); ok {
+			completions = append(completions, []rune(adjusted))
+			continue
 		}
 		if strings.HasPrefix(raw, ctx.rawPrefix) {
 			completions = append(completions, []rune(raw[len(ctx.rawPrefix):]))
@@ -694,4 +720,29 @@ func getRemoteCWD(getCWD func() string) string {
 		return "/"
 	}
 	return cwd
+}
+
+func getRemoteHomePath(getRemoteHome func() string) string {
+	if getRemoteHome == nil {
+		return "/"
+	}
+	home := getRemoteHome()
+	if home == "" {
+		return "/"
+	}
+	return home
+}
+
+func normalizeWindowsCompletionReplacement(rawPrefix, raw string) (string, bool) {
+	if runtime.GOOS != "windows" {
+		return "", false
+	}
+	prefixDisplay := normalizeWindowsLocalDisplayPath(rawPrefix)
+	if prefixDisplay == rawPrefix {
+		return "", false
+	}
+	if strings.HasPrefix(raw, prefixDisplay) {
+		return raw[len(rawPrefix):], true
+	}
+	return prefixDisplay, true
 }

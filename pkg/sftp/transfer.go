@@ -12,26 +12,53 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+type remoteEntryType int
+
+const (
+	remoteEntryMissing remoteEntryType = iota
+	remoteEntryFile
+	remoteEntryDir
+)
+
+type uploadSource struct {
+	path         string
+	displayPath  string
+	stat         os.FileInfo
+	copyContents bool
+	hadTrailing  bool
+}
+
+type remotePathResolver interface {
+	Stat(string) (os.FileInfo, error)
+	MkdirAll(string) error
+}
+
 // Upload uploads a local file or directory to the remote server.
 func Upload(client *sftp.Client, localPath, remotePath string, recursive, overwrite bool, quiet bool) error {
-	localPath, err := expandLocalHome(localPath)
+	src, err := prepareUploadSource(localPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve local path: %w", err)
+		return err
 	}
 
-	stat, err := os.Stat(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to stat local path: %w", err)
-	}
-
-	if stat.IsDir() {
+	if src.stat.IsDir() {
 		if !recursive {
-			return fmt.Errorf("'%s' is a directory, use -r for recursive upload", localPath)
+			return fmt.Errorf("'%s' is a directory, use -r for recursive upload", src.displayPath)
 		}
-		return uploadDir(client, localPath, remotePath, overwrite, quiet)
+		target, err := resolveUploadDirTarget(client, src, remotePath)
+		if err != nil {
+			return err
+		}
+		return uploadDir(client, src.path, target, overwrite, quiet)
 	}
 
-	return uploadFile(client, localPath, remotePath, overwrite, quiet)
+	if src.hadTrailing {
+		return fmt.Errorf("local source %q is a file; remove the trailing path separator", src.displayPath)
+	}
+	target, err := resolveUploadFileTarget(client, src.path, remotePath)
+	if err != nil {
+		return err
+	}
+	return uploadFile(client, src.path, target, overwrite, quiet)
 }
 
 func uploadFile(client *sftp.Client, localPath, remotePath string, overwrite bool, quiet bool) error {
@@ -40,15 +67,13 @@ func uploadFile(client *sftp.Client, localPath, remotePath string, overwrite boo
 		return err
 	}
 
-	// If remotePath is a directory, append local filename
-	if rStat, err := client.Stat(remotePath); err == nil && rStat.IsDir() {
-		remotePath = path.Join(remotePath, filepath.Base(localPath))
-	}
-
 	if !overwrite {
 		if _, err := client.Stat(remotePath); err == nil {
 			return fmt.Errorf("remote file already exists: %s", remotePath)
 		}
+	}
+	if err := client.MkdirAll(path.Dir(remotePath)); err != nil {
+		return fmt.Errorf("failed to create remote parent directory: %w", err)
 	}
 
 	localFile, err := os.Open(localPath)
@@ -77,14 +102,6 @@ func uploadFile(client *sftp.Client, localPath, remotePath string, overwrite boo
 }
 
 func uploadDir(client *sftp.Client, localDir, remoteDir string, overwrite bool, quiet bool) error {
-	// Handle /. suffix (copy contents instead of directory itself)
-	copyContents := strings.HasSuffix(localDir, string(os.PathSeparator)+".")
-	if copyContents {
-		localDir = localDir[:len(localDir)-2]
-	} else {
-		remoteDir = path.Join(remoteDir, filepath.Base(localDir))
-	}
-
 	return filepath.Walk(localDir, func(lp string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -103,6 +120,132 @@ func uploadDir(client *sftp.Client, localDir, remoteDir string, overwrite bool, 
 
 		return uploadFile(client, lp, rp, overwrite, quiet)
 	})
+}
+
+func prepareUploadSource(localPath string) (uploadSource, error) {
+	displayPath := localPath
+	localPath, err := expandLocalHome(localPath)
+	if err != nil {
+		return uploadSource{}, fmt.Errorf("failed to resolve local path: %w", err)
+	}
+
+	copyContents := localPathHasDotSuffix(localPath)
+	statPath := localPath
+	if copyContents {
+		statPath = trimLocalDotSuffix(localPath)
+	} else {
+		statPath = trimTrailingLocalSeparators(localPath)
+	}
+
+	stat, err := os.Stat(statPath)
+	if err != nil {
+		return uploadSource{}, fmt.Errorf("failed to stat local path %q: %w", displayPath, err)
+	}
+
+	return uploadSource{
+		path:         statPath,
+		displayPath:  displayPath,
+		stat:         stat,
+		copyContents: copyContents,
+		hadTrailing:  localPathHasTrailingSeparator(localPath),
+	}, nil
+}
+
+func resolveUploadFileTarget(client remotePathResolver, localPath, remotePath string) (string, error) {
+	originalTarget := cleanRemoteTarget(remotePath)
+	targetIsDir := remoteTargetHasTrailingSlash(originalTarget)
+	remotePath = cleanRemotePathForStat(originalTarget)
+	targetType, err := remoteEntryKind(client, remotePath)
+	if err != nil {
+		return "", err
+	}
+
+	if targetIsDir {
+		switch targetType {
+		case remoteEntryFile:
+			return "", fmt.Errorf("remote target %q ends with '/' but exists as a file", originalTarget)
+		case remoteEntryMissing:
+			if err := client.MkdirAll(remotePath); err != nil {
+				return "", fmt.Errorf("failed to create remote directory %q: %w", remotePath, err)
+			}
+		}
+		return path.Join(remotePath, localBase(localPath)), nil
+	}
+
+	if targetType == remoteEntryDir {
+		return path.Join(remotePath, localBase(localPath)), nil
+	}
+	return remotePath, nil
+}
+
+func resolveUploadDirTarget(client remotePathResolver, src uploadSource, remotePath string) (string, error) {
+	originalTarget := cleanRemoteTarget(remotePath)
+	targetIsDir := remoteTargetHasTrailingSlash(originalTarget)
+	remotePath = cleanRemotePathForStat(originalTarget)
+	targetType, err := remoteEntryKind(client, remotePath)
+	if err != nil {
+		return "", err
+	}
+	if targetType == remoteEntryFile {
+		if targetIsDir {
+			return "", fmt.Errorf("remote target %q ends with '/' but exists as a file", originalTarget)
+		}
+		return "", fmt.Errorf("remote target %q exists as a file", remotePath)
+	}
+
+	target := remotePath
+	switch {
+	case src.copyContents:
+		target = remotePath
+	case targetIsDir:
+		target = path.Join(remotePath, localBase(src.path))
+	case targetType == remoteEntryDir:
+		target = path.Join(remotePath, localBase(src.path))
+	default:
+		target = remotePath
+	}
+
+	if err := client.MkdirAll(target); err != nil {
+		return "", fmt.Errorf("failed to create remote directory %q: %w", target, err)
+	}
+	return target, nil
+}
+
+func remoteEntryKind(client interface {
+	Stat(string) (os.FileInfo, error)
+}, remotePath string) (remoteEntryType, error) {
+	stat, err := client.Stat(remotePath)
+	if err == nil {
+		if stat.IsDir() {
+			return remoteEntryDir, nil
+		}
+		return remoteEntryFile, nil
+	}
+	if os.IsNotExist(err) || strings.Contains(strings.ToLower(err.Error()), "not exist") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
+		return remoteEntryMissing, nil
+	}
+	return remoteEntryMissing, fmt.Errorf("failed to stat remote path %q: %w", remotePath, err)
+}
+
+func cleanRemoteTarget(remotePath string) string {
+	if remotePath == "" {
+		return "."
+	}
+	return remotePath
+}
+
+func remoteTargetHasTrailingSlash(remotePath string) bool {
+	return strings.HasSuffix(remotePath, "/") && remotePath != "/"
+}
+
+func cleanRemotePathForStat(remotePath string) string {
+	if remotePath == "" {
+		return "."
+	}
+	if remotePath == "/" {
+		return "/"
+	}
+	return strings.TrimRight(remotePath, "/")
 }
 
 // Download downloads a remote file or directory to the local machine.
@@ -124,18 +267,17 @@ func Download(client *sftp.Client, remotePath, localPath string, recursive, over
 		return downloadDir(client, remotePath, localPath, overwrite, quiet)
 	}
 
-	return downloadFile(client, remotePath, localPath, overwrite, quiet)
+	target, err := resolveDownloadFileTarget(remotePath, localPath)
+	if err != nil {
+		return err
+	}
+	return downloadFile(client, remotePath, target, overwrite, quiet)
 }
 
 func downloadFile(client *sftp.Client, remotePath, localPath string, overwrite bool, quiet bool) error {
 	stat, err := client.Stat(remotePath)
 	if err != nil {
 		return err
-	}
-
-	// If localPath is a directory, append remote filename
-	if lStat, err := os.Stat(localPath); err == nil && lStat.IsDir() {
-		localPath = filepath.Join(localPath, path.Base(remotePath))
 	}
 
 	if !overwrite {
@@ -188,7 +330,11 @@ func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool
 	if copyContents {
 		remoteDir = remoteDir[:len(remoteDir)-2]
 	} else {
-		localDir = filepath.Join(localDir, path.Base(remoteDir))
+		target, err := resolveDownloadDirTarget(remoteDir, localDir)
+		if err != nil {
+			return err
+		}
+		localDir = target
 	}
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		return fmt.Errorf("failed to create local directory %q: %w", localDir, err)
@@ -225,6 +371,43 @@ func downloadDir(client *sftp.Client, remoteDir, localDir string, overwrite bool
 		}
 	}
 	return nil
+}
+
+func resolveDownloadFileTarget(remotePath, localPath string) (string, error) {
+	if localPath == "" {
+		localPath = path.Base(remotePath)
+	}
+	if localPathHasTrailingSeparator(localPath) {
+		localPath = trimTrailingLocalSeparators(localPath)
+		if localPath == "" {
+			localPath = "."
+		}
+		if err := os.MkdirAll(localPath, 0755); err != nil {
+			return "", fmt.Errorf("failed to create local directory %q: %w", localPath, err)
+		}
+		return filepath.Join(localPath, path.Base(remotePath)), nil
+	}
+	if lStat, err := os.Stat(localPath); err == nil && lStat.IsDir() {
+		return filepath.Join(localPath, path.Base(remotePath)), nil
+	}
+	return localPath, nil
+}
+
+func resolveDownloadDirTarget(remoteDir, localDir string) (string, error) {
+	if localDir == "" {
+		localDir = "."
+	}
+	if localPathHasTrailingSeparator(localDir) {
+		localDir = trimTrailingLocalSeparators(localDir)
+		if localDir == "" {
+			localDir = "."
+		}
+		return filepath.Join(localDir, path.Base(remoteDir)), nil
+	}
+	if lStat, err := os.Stat(localDir); err == nil && lStat.IsDir() {
+		return filepath.Join(localDir, path.Base(remoteDir)), nil
+	}
+	return localDir, nil
 }
 
 // MGet downloads multiple remote files matching a pattern. (Keeping for compatibility)

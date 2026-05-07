@@ -187,7 +187,11 @@ paths support ~/... expansion.`,
 			defer titleMgr.Restore()
 		}
 
-		replOpts := knotsftp.REPLOptions{InitialDir: initialDir, DisconnectCh: sftpConn.NotifyCh}
+		replOpts := knotsftp.REPLOptions{
+			InitialDir:      initialDir,
+			DefaultLocalDir: cfg.Settings.DefaultSFTPLocalPath,
+			DisconnectCh:    sftpConn.NotifyCh,
+		}
 		if sftpFollow {
 			replOpts.InitialDir = followInitialDir
 			replOpts.FollowCh = sftpConn.FollowCh
