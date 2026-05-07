@@ -47,6 +47,20 @@ func TestRenderBroadcastListJSON(t *testing.T) {
 	}
 }
 
+func TestBroadcastJoinArgsDefaultGroup(t *testing.T) {
+	group, selector := broadcastJoinArgs([]string{"web"})
+	if group != protocol.DefaultBroadcastGroup || selector != "web" {
+		t.Fatalf("group = %q selector = %q", group, selector)
+	}
+}
+
+func TestBroadcastJoinArgsExplicitGroup(t *testing.T) {
+	group, selector := broadcastJoinArgs([]string{"deploy", "web"})
+	if group != "deploy" || selector != "web" {
+		t.Fatalf("group = %q selector = %q", group, selector)
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 

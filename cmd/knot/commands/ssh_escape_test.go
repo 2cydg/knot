@@ -1,6 +1,9 @@
 package commands
 
-import "testing"
+import (
+	"knot/internal/protocol"
+	"testing"
+)
 
 func TestSSHEscapeParserRecognizesLineStartPause(t *testing.T) {
 	parser := newSSHEscapeParser("~")
@@ -171,7 +174,7 @@ func TestSSHEscapeParserJoinWithoutGroupPromptsAndConsumesNextLine(t *testing.T)
 	if len(results) != 1 {
 		t.Fatalf("results len = %d", len(results))
 	}
-	if results[0].Action != sshEscapeLocalOutput || string(results[0].Payload) != "\r\n[knot] broadcast group: " {
+	if results[0].Action != sshEscapeLocalOutput || string(results[0].Payload) != "\r\n[knot] broadcast group [default]: " {
 		t.Fatalf("result = %+v", results[0])
 	}
 
@@ -195,21 +198,41 @@ func TestSSHEscapeParserJoinWithoutGroupPromptsAndConsumesNextLine(t *testing.T)
 	}
 }
 
-func TestSSHEscapeParserJoinPromptEmptyGroupShowsHelp(t *testing.T) {
+func TestSSHEscapeParserJoinPromptEmptyGroupUsesDefault(t *testing.T) {
 	parser := newSSHEscapeParser("~")
-	results := parser.Process([]byte("~j\r\r"))
+	results := parser.Process([]byte("~j"))
 
-	if len(results) != 3 {
+	if len(results) != 1 {
 		t.Fatalf("results len = %d: %+v", len(results), results)
 	}
-	if results[0].Action != sshEscapeLocalOutput || string(results[0].Payload) != "\r\n[knot] broadcast group: " {
+	if results[0].Action != sshEscapeLocalOutput || string(results[0].Payload) != "\r\n[knot] broadcast group [default]: " {
 		t.Fatalf("prompt result = %+v", results[0])
 	}
-	if results[1].Action != sshEscapeLocalOutput || string(results[1].Payload) != "\r\n" {
+
+	results = parser.Process([]byte("\r"))
+	if len(results) != 2 {
+		t.Fatalf("results len = %d: %+v", len(results), results)
+	}
+	if results[0].Action != sshEscapeLocalOutput || string(results[0].Payload) != "\r\n" {
 		t.Fatalf("newline result = %+v", results[1])
 	}
-	if results[2].Action != sshEscapeHelp {
-		t.Fatalf("help result = %+v", results[2])
+	if results[1].Action != sshEscapeBroadcast || results[1].Request.Group != protocol.DefaultBroadcastGroup {
+		t.Fatalf("join result = %+v", results[1])
+	}
+}
+
+func TestSSHEscapeParserJoinWithImmediateEnterUsesDefault(t *testing.T) {
+	parser := newSSHEscapeParser("~")
+	results := parser.Process([]byte("~j\rpwd\n"))
+
+	if len(results) != 2 {
+		t.Fatalf("results len = %d: %+v", len(results), results)
+	}
+	if results[0].Action != sshEscapeBroadcast || results[0].Request.Action != "join" || results[0].Request.Group != protocol.DefaultBroadcastGroup {
+		t.Fatalf("join result = %+v", results[0])
+	}
+	if results[1].Action != sshEscapeSend || string(results[1].Payload) != "pwd\n" {
+		t.Fatalf("send result = %+v", results[1])
 	}
 }
 
@@ -250,7 +273,7 @@ func TestSSHEscapeParserFlushPendingPrefix(t *testing.T) {
 
 func TestSSHEscapeHelpTextUsesCustomPrefix(t *testing.T) {
 	got := sshEscapeHelpTextFor(",")
-	want := "[broadcast escapes: ,j <group> join, ,B leave, ,p pause, ,r resume, ,? help, ,, send ,]"
+	want := "[broadcast escapes: ,j [group] join, ,B leave, ,p pause, ,r resume, ,? help, ,, send ,]"
 	if got != want {
 		t.Fatalf("sshEscapeHelpTextFor() = %q, want %q", got, want)
 	}

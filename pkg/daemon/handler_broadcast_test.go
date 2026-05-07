@@ -174,6 +174,27 @@ func TestHandleBroadcastActionForSessionCanJoinCurrentSession(t *testing.T) {
 	}
 }
 
+func TestHandleBroadcastJoinEmptyGroupUsesDefault(t *testing.T) {
+	d := testDaemonWithBroadcast()
+	session := d.sm.Add("server", "web", nil, nil)
+
+	resp := d.handleBroadcastActionForSession(&protocol.BroadcastRequest{Action: "join"}, session)
+
+	if resp.Error != "" {
+		t.Fatalf("error = %s", resp.Error)
+	}
+	group, members, err := d.bm.Show(protocol.DefaultBroadcastGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Group != protocol.DefaultBroadcastGroup || len(members) != 1 || members[0].SessionID != session.ID {
+		t.Fatalf("group = %+v members = %+v", group, members)
+	}
+	if !strings.Contains(resp.Message, "joined broadcast group "+protocol.DefaultBroadcastGroup) {
+		t.Fatalf("message = %q", resp.Message)
+	}
+}
+
 func TestHandleBroadcastActionWithoutCurrentSessionRequiresSelector(t *testing.T) {
 	d := testDaemonWithBroadcast()
 

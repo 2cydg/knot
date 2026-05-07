@@ -48,6 +48,16 @@ func TestSSHEscapeFlagDefaultDisabledAndNoOptEnablesTilde(t *testing.T) {
 	}
 }
 
+func TestSSHBroadcastFlagNoOptUsesDefaultGroup(t *testing.T) {
+	flag := sshCmd.Flags().Lookup("broadcast")
+	if flag == nil {
+		t.Fatal("broadcast flag not registered")
+	}
+	if flag.NoOptDefVal != protocol.DefaultBroadcastGroup {
+		t.Fatalf("broadcast NoOptDefVal = %q, want %q", flag.NoOptDefVal, protocol.DefaultBroadcastGroup)
+	}
+}
+
 func TestResolveSSHEscape(t *testing.T) {
 	enabled := true
 	disabled := false

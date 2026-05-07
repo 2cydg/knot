@@ -571,6 +571,7 @@ func isCSIResponseFinal(b byte) bool {
 
 func init() {
 	sshCmd.Flags().StringVar(&sshBroadcastGroup, "broadcast", "", "Join or create a broadcast group for this SSH session")
+	sshCmd.Flags().Lookup("broadcast").NoOptDefVal = protocol.DefaultBroadcastGroup
 	sshCmd.Flags().StringVarP(&sshEscape, "escape", "e", "none", "Enable local SSH session controls with an optional escape character")
 	sshCmd.Flags().Lookup("escape").NoOptDefVal = "~"
 	_ = sshCmd.RegisterFlagCompletionFunc("broadcast", sshBroadcastGroupCompleter)

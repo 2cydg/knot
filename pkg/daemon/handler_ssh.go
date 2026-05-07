@@ -131,12 +131,13 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		}
 	}()
 
-	if req.BroadcastGroup != "" {
+	broadcastGroup := req.BroadcastGroup
+	if broadcastGroup != "" {
 		if !req.IsInteractive {
 			sendError("--broadcast requires an interactive SSH session")
 			return
 		}
-		if err := d.bm.Join(req.BroadcastGroup, s); err != nil {
+		if err := d.bm.Join(broadcastGroup, s); err != nil {
 			sendError("failed to join broadcast group: " + err.Error())
 			return
 		}
@@ -147,13 +148,13 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		return
 	}
 
-	if req.BroadcastGroup != "" {
+	if broadcastGroup != "" {
 		d.notifySession(s, protocol.BroadcastNotify{
-			Group:     req.BroadcastGroup,
+			Group:     broadcastGroup,
 			SessionID: s.ID,
 			Action:    "join",
 			State:     "active",
-			Message:   fmt.Sprintf("[broadcast: joined %s]", req.BroadcastGroup),
+			Message:   fmt.Sprintf("[broadcast: joined %s]", broadcastGroup),
 			Level:     "info",
 		})
 	}

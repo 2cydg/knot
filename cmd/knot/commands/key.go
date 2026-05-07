@@ -103,7 +103,7 @@ func PromptForKey(rl *readline.Instance) ([]byte, string, error) {
 			}
 		}
 		input += lineStr + "\n"
-		if strings.Contains(input, "PRIVATE KEY") && strings.Contains(input, "END") {
+		if isPrivateKeyEndLine(lineStr) {
 			keyBytes = []byte(input)
 			break
 		}
@@ -129,6 +129,20 @@ func PromptForKey(rl *readline.Instance) ([]byte, string, error) {
 	}
 
 	return keyBytes, passphrase, nil
+}
+
+func isPrivateKeyEndLine(line string) bool {
+	switch strings.TrimSpace(line) {
+	case "-----END PRIVATE KEY-----",
+		"-----END RSA PRIVATE KEY-----",
+		"-----END DSA PRIVATE KEY-----",
+		"-----END EC PRIVATE KEY-----",
+		"-----END OPENSSH PRIVATE KEY-----",
+		"-----END ENCRYPTED PRIVATE KEY-----":
+		return true
+	default:
+		return false
+	}
 }
 
 var keyAddCmd = &cobra.Command{

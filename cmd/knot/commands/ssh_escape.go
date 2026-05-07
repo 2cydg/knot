@@ -101,10 +101,19 @@ func (p *sshEscapeParser) Process(payload []byte) []sshEscapeResult {
 				flushSend()
 				group, consumed, hasLineTerminator := readEscapeArgument(payload[i+1:])
 				if group == "" {
+					if hasLineTerminator {
+						results = append(results, sshEscapeResult{
+							Action:  sshEscapeBroadcast,
+							Request: protocol.BroadcastRequest{Action: "join", Group: protocol.DefaultBroadcastGroup},
+						})
+						p.pending = false
+						p.afterLocalCommand()
+						return append(results, p.Process(payload[i+2+consumed:])...)
+					}
 					p.pending = false
 					p.atLineStart = true
 					p.startJoinPrompt()
-					results = append(results, sshEscapeResult{Action: sshEscapeLocalOutput, Payload: []byte("\r\n[knot] broadcast group: ")})
+					results = append(results, sshEscapeResult{Action: sshEscapeLocalOutput, Payload: []byte("\r\n[knot] broadcast group [default]: ")})
 					next := i + 1 + consumed
 					if hasLineTerminator {
 						next++
@@ -184,7 +193,7 @@ func (p *sshEscapeParser) processJoinInput(b byte) []sshEscapeResult {
 		p.afterLocalCommand()
 		results := []sshEscapeResult{{Action: sshEscapeLocalOutput, Payload: []byte("\r\n")}}
 		if group == "" {
-			return append(results, sshEscapeResult{Action: sshEscapeHelp, Message: fmt.Sprintf("[broadcast escapes: usage %sj <group>]", string([]byte{p.escape}))})
+			group = protocol.DefaultBroadcastGroup
 		}
 		return append(results, sshEscapeResult{
 			Action:  sshEscapeBroadcast,
@@ -227,7 +236,7 @@ func sshEscapeHelpTextFor(value string) string {
 		return "[broadcast escapes disabled]"
 	}
 	escape := string([]byte{parser.escape})
-	return fmt.Sprintf("[broadcast escapes: %sj <group> join, %sB leave, %sp pause, %sr resume, %s? help, %s%s send %s]",
+	return fmt.Sprintf("[broadcast escapes: %sj [group] join, %sB leave, %sp pause, %sr resume, %s? help, %s%s send %s]",
 		escape, escape, escape, escape, escape, escape, escape, escape)
 }
 
