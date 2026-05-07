@@ -486,12 +486,6 @@ func buildLocalPathQuery(prefix string, defaultLocalDir string) (localPathQuery,
 		lookupDir = "."
 	}
 	displayDir := dirPart
-	if displayDir == "" && defaultLocalDir != "" {
-		displayDir = localCompletionDisplayPath(trimTrailingLocalSeparators(defaultLocalDir))
-		if displayDir != "" {
-			displayDir += string(os.PathSeparator)
-		}
-	}
 	return localPathQuery{
 		lookupDir:  filepath.Clean(lookupDir),
 		displayDir: displayDir,

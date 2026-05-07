@@ -237,6 +237,28 @@ func TestLocalPathCompletion(t *testing.T) {
 	}
 }
 
+func TestLocalPathCompletionWithDefaultLocalDirKeepsRelativeInput(t *testing.T) {
+	workspace := t.TempDir()
+	downloadDir := filepath.Join(workspace, "Download")
+	if err := os.Mkdir(downloadDir, 0o755); err != nil {
+		t.Fatalf("failed to create download dir: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(downloadDir, "a.zip"))
+
+	completer := newREPLAutoCompleter(nil, nil, nil, downloadDir)
+	line := "put a."
+	got, offset := completer.Do([]rune(line), len(line))
+	if offset != len("a.") {
+		t.Fatalf("unexpected offset: got %d want %d", offset, len("a."))
+	}
+
+	gotStrings := runesToStrings(got)
+	want := []string{"zip "}
+	if !reflect.DeepEqual(gotStrings, want) {
+		t.Fatalf("unexpected candidates: got %#v want %#v", gotStrings, want)
+	}
+}
+
 func mustWriteFile(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte("test"), 0o644); err != nil {
