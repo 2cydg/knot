@@ -381,9 +381,15 @@ var sshCmd = &cobra.Command{
 						defer outMu.Unlock()
 						switch msg.Header.Reserved {
 						case protocol.DataStdout:
-							os.Stdout.Write(msg.Payload)
+							if err := writeAll(os.Stdout, msg.Payload); err != nil {
+								errCh <- err
+								return
+							}
 						case protocol.DataStderr:
-							os.Stderr.Write(msg.Payload)
+							if err := writeAll(os.Stderr, msg.Payload); err != nil {
+								errCh <- err
+								return
+							}
 						}
 					}()
 				}
@@ -423,6 +429,20 @@ func updateSSHTerminalTitleFromBroadcastNotify(titleMgr *terminalTitleManager, a
 	case "leave", "disband":
 		titleMgr.Set(sshTerminalTitle(alias, "", false))
 	}
+}
+
+func writeAll(w io.Writer, payload []byte) error {
+	for len(payload) > 0 {
+		n, err := w.Write(payload)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		payload = payload[n:]
+	}
+	return nil
 }
 
 func formatBroadcastResponse(payload []byte) string {
