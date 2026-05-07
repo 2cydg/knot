@@ -183,7 +183,7 @@ func TestLocalPathCompletion(t *testing.T) {
 			line:       "put ~/De",
 			pos:        len("put ~/De"),
 			wantOffset: len("~/De"),
-			want:       []string{localCompletionSuffix(t, "~/De", "~/Desktop"+string(os.PathSeparator), quoteModeNone, false)},
+			want:       []string{localCompletionSuffix(t, "~/De", localDisplayDirValue("~/Desktop"), quoteModeNone, false)},
 		},
 		{
 			name:       "put second arg is remote and skipped",
@@ -267,7 +267,11 @@ func mustWriteFile(t *testing.T, path string) {
 }
 
 func dirValue(name string) string {
-	return name + string(os.PathSeparator)
+	return localDisplayDirValue(name)
+}
+
+func localDisplayDirValue(name string) string {
+	return localCompletionDisplayPath(name + string(os.PathSeparator))
 }
 
 func localCompletionSuffix(t *testing.T, rawPrefix, value string, mode quoteMode, finalize bool) string {
