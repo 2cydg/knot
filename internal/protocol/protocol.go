@@ -14,6 +14,8 @@ const (
 	Version1 uint8 = 0x01
 )
 
+const DefaultBroadcastGroup = "default"
+
 var (
 	// Default buffer size for messages (32KB + HeaderSize)
 	defaultBufferSize = 32*1024 + HeaderSize

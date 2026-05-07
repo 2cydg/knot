@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"bytes"
+	"io"
 	"knot/internal/protocol"
 	"knot/pkg/config"
 	"strings"
@@ -8,6 +10,18 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+type shortWriter struct {
+	bytes.Buffer
+	max int
+}
+
+func (w *shortWriter) Write(p []byte) (int, error) {
+	if len(p) > w.max {
+		p = p[:w.max]
+	}
+	return w.Buffer.Write(p)
+}
 
 func TestFormatBroadcastNotify(t *testing.T) {
 	got := formatBroadcastNotify([]byte(`{"message":"[broadcast: paused]"}`))
@@ -46,6 +60,47 @@ func TestSSHEscapeFlagDefaultDisabledAndNoOptEnablesTilde(t *testing.T) {
 	if flag.NoOptDefVal != "~" {
 		t.Fatalf("escape NoOptDefVal = %q, want ~", flag.NoOptDefVal)
 	}
+}
+
+func TestSSHBroadcastFlagNoOptUsesDefaultGroup(t *testing.T) {
+	flag := sshCmd.Flags().Lookup("broadcast")
+	if flag == nil {
+		t.Fatal("broadcast flag not registered")
+	}
+	if flag.NoOptDefVal != protocol.DefaultBroadcastGroup {
+		t.Fatalf("broadcast NoOptDefVal = %q, want %q", flag.NoOptDefVal, protocol.DefaultBroadcastGroup)
+	}
+}
+
+func TestWriteAllHandlesShortWrites(t *testing.T) {
+	var w shortWriter
+	w.max = 3
+
+	if err := writeAll(&w, []byte("\x1b[2J\x1b[Hmenuconfig")); err != nil {
+		t.Fatalf("writeAll returned error: %v", err)
+	}
+
+	if got, want := w.String(), "\x1b[2J\x1b[Hmenuconfig"; got != want {
+		t.Fatalf("writeAll output = %q, want %q", got, want)
+	}
+}
+
+func TestWriteAllReportsShortWrite(t *testing.T) {
+	err := writeAll(io.Discard, []byte("x"))
+	if err != nil {
+		t.Fatalf("writeAll with discard returned error: %v", err)
+	}
+
+	err = writeAll(zeroWriter{}, []byte("x"))
+	if err != io.ErrShortWrite {
+		t.Fatalf("writeAll zero writer error = %v, want %v", err, io.ErrShortWrite)
+	}
+}
+
+type zeroWriter struct{}
+
+func (zeroWriter) Write([]byte) (int, error) {
+	return 0, nil
 }
 
 func TestResolveSSHEscape(t *testing.T) {

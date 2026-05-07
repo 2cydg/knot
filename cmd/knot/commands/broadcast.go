@@ -45,12 +45,13 @@ var broadcastShowCmd = &cobra.Command{
 }
 
 var broadcastJoinCmd = &cobra.Command{
-	Use:               "join <group> <selector>",
+	Use:               "join [group] <selector>",
 	Short:             "Join an existing SSH session to a broadcast group",
-	Args:              cobra.ExactArgs(2),
+	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: broadcastJoinCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		resp, err := sendBroadcast(protocol.BroadcastRequest{Action: "join", Group: args[0], Selector: args[1]})
+		group, selector := broadcastJoinArgs(args)
+		resp, err := sendBroadcast(protocol.BroadcastRequest{Action: "join", Group: group, Selector: selector})
 		if err != nil {
 			return err
 		}
@@ -120,6 +121,13 @@ func sendBroadcast(req protocol.BroadcastRequest) (*protocol.BroadcastResponse, 
 		return nil, err
 	}
 	return client.SendBroadcastRequest(req)
+}
+
+func broadcastJoinArgs(args []string) (string, string) {
+	if len(args) == 1 {
+		return protocol.DefaultBroadcastGroup, args[0]
+	}
+	return args[0], args[1]
 }
 
 func renderBroadcastList(resp *protocol.BroadcastResponse) error {

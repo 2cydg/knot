@@ -381,9 +381,15 @@ var sshCmd = &cobra.Command{
 						defer outMu.Unlock()
 						switch msg.Header.Reserved {
 						case protocol.DataStdout:
-							os.Stdout.Write(msg.Payload)
+							if err := writeAll(os.Stdout, msg.Payload); err != nil {
+								errCh <- err
+								return
+							}
 						case protocol.DataStderr:
-							os.Stderr.Write(msg.Payload)
+							if err := writeAll(os.Stderr, msg.Payload); err != nil {
+								errCh <- err
+								return
+							}
 						}
 					}()
 				}
@@ -423,6 +429,20 @@ func updateSSHTerminalTitleFromBroadcastNotify(titleMgr *terminalTitleManager, a
 	case "leave", "disband":
 		titleMgr.Set(sshTerminalTitle(alias, "", false))
 	}
+}
+
+func writeAll(w io.Writer, payload []byte) error {
+	for len(payload) > 0 {
+		n, err := w.Write(payload)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		payload = payload[n:]
+	}
+	return nil
 }
 
 func formatBroadcastResponse(payload []byte) string {
@@ -571,6 +591,7 @@ func isCSIResponseFinal(b byte) bool {
 
 func init() {
 	sshCmd.Flags().StringVar(&sshBroadcastGroup, "broadcast", "", "Join or create a broadcast group for this SSH session")
+	sshCmd.Flags().Lookup("broadcast").NoOptDefVal = protocol.DefaultBroadcastGroup
 	sshCmd.Flags().StringVarP(&sshEscape, "escape", "e", "none", "Enable local SSH session controls with an optional escape character")
 	sshCmd.Flags().Lookup("escape").NoOptDefVal = "~"
 	_ = sshCmd.RegisterFlagCompletionFunc("broadcast", sshBroadcastGroupCompleter)

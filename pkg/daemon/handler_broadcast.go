@@ -44,25 +44,26 @@ func (d *Daemon) handleBroadcastActionForSession(req *protocol.BroadcastRequest,
 		}
 		return protocol.BroadcastResponse{Group: group, Members: members}
 	case "join":
-		if req.Group == "" {
-			return protocol.BroadcastResponse{Error: "broadcast group is required"}
+		group := req.Group
+		if group == "" {
+			group = protocol.DefaultBroadcastGroup
 		}
 		session, candidates, err := d.resolveBroadcastSelectorForSession(req.Selector, current)
 		if err != nil {
 			return protocol.BroadcastResponse{Members: selectorCandidates(candidates), Error: err.Error()}
 		}
-		if err := d.bm.Join(req.Group, session); err != nil {
+		if err := d.bm.Join(group, session); err != nil {
 			return protocol.BroadcastResponse{Error: err.Error()}
 		}
 		d.notifySession(session, protocol.BroadcastNotify{
-			Group:     req.Group,
+			Group:     group,
 			SessionID: session.ID,
 			Action:    "join",
 			State:     "active",
-			Message:   fmt.Sprintf("[broadcast: joined %s by %s]", req.Group, origin),
+			Message:   fmt.Sprintf("[broadcast: joined %s by %s]", group, origin),
 			Level:     "info",
 		})
-		return protocol.BroadcastResponse{Message: fmt.Sprintf("session %s joined broadcast group %s", session.ID, req.Group)}
+		return protocol.BroadcastResponse{Message: fmt.Sprintf("session %s joined broadcast group %s", session.ID, group)}
 	case "leave":
 		session, candidates, err := d.resolveBroadcastSelectorForSession(req.Selector, current)
 		if err != nil {
