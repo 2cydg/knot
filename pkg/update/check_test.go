@@ -1,9 +1,6 @@
 package update
 
-import (
-	"errors"
-	"testing"
-)
+import "testing"
 
 func TestIsUpgradable(t *testing.T) {
 	tests := []struct {
@@ -13,7 +10,7 @@ func TestIsUpgradable(t *testing.T) {
 		want    bool
 		wantErr bool
 	}{
-		{name: "dev build", current: "dev", latest: "v1.2.3", wantErr: true},
+		{name: "dev build", current: "dev", latest: "v1.2.3", want: true},
 		{name: "patch update", current: "v1.2.2", latest: "v1.2.3", want: true},
 		{name: "same version", current: "v1.2.3", latest: "v1.2.3"},
 		{name: "older latest", current: "v1.2.4", latest: "v1.2.3"},
@@ -26,9 +23,6 @@ func TestIsUpgradable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := IsUpgradable(tt.current, tt.latest)
-			if tt.current == "dev" && !errors.Is(err, ErrDevBuild) {
-				t.Fatalf("IsUpgradable() error = %v, want ErrDevBuild", err)
-			}
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("IsUpgradable() expected error")

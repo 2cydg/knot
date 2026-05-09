@@ -24,13 +24,6 @@ type CheckResult struct {
 }
 
 func CheckLatest(ctx context.Context, client *Client, currentVersion, goos, goarch string) (*CheckResult, error) {
-	if currentVersion == "dev" {
-		return &CheckResult{
-			CurrentVersion: currentVersion,
-			Upgradable:     false,
-			Reason:         ErrDevBuild.Error(),
-		}, nil
-	}
 	if client == nil {
 		client = NewClient()
 	}
@@ -60,7 +53,7 @@ func CheckLatest(ctx context.Context, client *Client, currentVersion, goos, goar
 
 func IsUpgradable(current, latest string) (bool, error) {
 	if current == "dev" {
-		return false, ErrDevBuild
+		return true, nil
 	}
 	c, err := parseSemver(current)
 	if err != nil {

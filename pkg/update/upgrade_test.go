@@ -135,6 +135,35 @@ func TestRunUpgradeInstallFailure(t *testing.T) {
 	}
 }
 
+func TestRunUpgradeReportsDownloadProgress(t *testing.T) {
+	archive := makeTarGz(t, "knot", []byte("new binary"))
+	sum := sha256.Sum256(archive)
+	client := assetClient(string(archive), hex.EncodeToString(sum[:]))
+
+	var got []DownloadProgress
+	_, err := RunUpgrade(context.Background(), UpgradeOptions{
+		CurrentVersion: "v1.2.3",
+		TargetPath:     filepath.Join(t.TempDir(), "knot"),
+		GOOS:           "linux",
+		GOARCH:         "amd64",
+		Client:         &Client{ManifestURL: manifestTestURL, HTTPClient: client},
+		Installer:      &recordingInstaller{},
+		Progress: func(progress DownloadProgress) {
+			got = append(got, progress)
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunUpgrade() unexpected error: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("progress callback count = %d, want at least 2", len(got))
+	}
+	last := got[len(got)-1]
+	if last.Downloaded != int64(len(archive)) {
+		t.Fatalf("downloaded = %d, want %d", last.Downloaded, len(archive))
+	}
+}
+
 func TestExtractZipBinary(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "knot.zip")
 	file, err := os.Create(archivePath)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -61,7 +62,9 @@ var versionCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check for a newer knot version",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		result, err := update.CheckLatest(context.Background(), update.NewClient(), version, runtime.GOOS, runtime.GOARCH)
+		ctx := context.Background()
+		client := update.NewClient()
+		result, err := update.CheckLatest(ctx, client, version, runtime.GOOS, runtime.GOARCH)
 		if err != nil {
 			return err
 		}
@@ -72,11 +75,8 @@ var versionCheckCmd = &cobra.Command{
 				return nil
 			}
 			if result.UpdateAvailable {
-				fmt.Printf("Update available: %s -> %s\n", result.CurrentVersion, result.LatestVersion)
-				if result.NotesURL != "" {
-					fmt.Printf("Release notes: %s\n", result.NotesURL)
-				}
-				return nil
+				printUpdateAvailable(result)
+				return maybeUpgradeAfterCheck(cmd, ctx, client, result)
 			}
 			fmt.Printf("knot is up to date (%s).\n", result.CurrentVersion)
 			return nil
@@ -110,16 +110,23 @@ func init() {
 }
 
 func runVersionUpgrade(cmd *cobra.Command, args []string) error {
-	yes, _ := cmd.Flags().GetBool("yes")
 	ctx := context.Background()
 	client := update.NewClient()
 	check, err := update.CheckLatest(ctx, client, version, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return err
 	}
+	return runUpgradeWithCheck(cmd, ctx, client, check, true)
+}
 
+func runUpgradeWithCheck(cmd *cobra.Command, ctx context.Context, client *update.Client, check *update.CheckResult, announceAvailable bool) error {
+	yes, _ := cmd.Flags().GetBool("yes")
+	var err error
 	targetPath := ""
 	if check.UpdateAvailable {
+		if announceAvailable && !jsonOutput {
+			printUpdateAvailable(check)
+		}
 		targetPath, err = os.Executable()
 		if err != nil {
 			return fmt.Errorf("failed to locate current executable: %w", err)
@@ -138,6 +145,7 @@ func runVersionUpgrade(cmd *cobra.Command, args []string) error {
 		GOOS:           runtime.GOOS,
 		GOARCH:         runtime.GOARCH,
 		Client:         client,
+		Progress:       newUpgradeProgress(),
 	}, check)
 	if err != nil {
 		return err
@@ -154,13 +162,37 @@ func runVersionUpgrade(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		if runtime.GOOS == "windows" {
-			fmt.Printf("Knot update prepared: %s -> %s. The helper will replace %s after this process exits.\n", result.FromVersion, result.ToVersion, result.InstallPath)
+			fmt.Printf("Knot update prepared: %s -> %s. The helper window will replace %s after this process exits.\n", result.FromVersion, result.ToVersion, result.InstallPath)
 			return nil
 		}
 		fmt.Printf("Knot updated: %s -> %s\n", result.FromVersion, result.ToVersion)
 		fmt.Printf("Installed: %s\n", result.InstallPath)
 		return nil
 	})
+}
+
+func maybeUpgradeAfterCheck(cmd *cobra.Command, ctx context.Context, client *update.Client, check *update.CheckResult) error {
+	if jsonOutput {
+		return nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil
+	}
+	ok, err := confirmYesNo("Upgrade now? (y/N): ")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return runUpgradeWithCheck(cmd, ctx, client, check, false)
+}
+
+func printUpdateAvailable(result *update.CheckResult) {
+	fmt.Printf("Update available: %s -> %s\n", result.CurrentVersion, result.LatestVersion)
+	if result.NotesURL != "" {
+		fmt.Printf("Release notes: %s\n", result.NotesURL)
+	}
 }
 
 func versionCheckPayload(result *update.CheckResult) map[string]interface{} {
@@ -218,16 +250,46 @@ func confirmActiveSessions(yes bool) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return &ExitCodeError{Code: 1, Err: fmt.Errorf("active SSH sessions will be disconnected; rerun with --yes to confirm")}
 	}
-	fmt.Print("Continue and disconnect active SSH sessions? (y/N): ")
-	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	ok, err := confirmYesNo("Continue and disconnect active SSH sessions? (y/N): ")
+	if err != nil {
 		return err
 	}
-	answer = strings.TrimSpace(strings.ToLower(answer))
-	if answer != "y" && answer != "yes" {
+	if !ok {
 		return &ExitCodeError{Code: 1, Err: fmt.Errorf("upgrade aborted")}
 	}
 	return nil
+}
+
+func confirmYesNo(prompt string) (bool, error) {
+	fmt.Print(prompt)
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "y" || answer == "yes", nil
+}
+
+func newUpgradeProgress() func(update.DownloadProgress) {
+	if jsonOutput || !term.IsTerminal(int(os.Stderr.Fd())) {
+		return nil
+	}
+	var bar *progressbar.ProgressBar
+	var current int64
+	return func(progress update.DownloadProgress) {
+		if bar == nil {
+			total := progress.Total
+			if total <= 0 {
+				total = -1
+			}
+			bar = progressbar.DefaultBytes(total, "downloading update")
+		}
+		if progress.Downloaded <= current {
+			return
+		}
+		_ = bar.Add64(progress.Downloaded - current)
+		current = progress.Downloaded
+	}
 }
 
 func stopDaemonForUpgrade() error {

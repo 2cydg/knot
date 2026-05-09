@@ -20,6 +20,11 @@ type Installer interface {
 	Install(extractedBinary, targetPath string) error
 }
 
+type DownloadProgress struct {
+	Downloaded int64
+	Total      int64
+}
+
 type UpgradeOptions struct {
 	CurrentVersion string
 	TargetPath     string
@@ -27,6 +32,7 @@ type UpgradeOptions struct {
 	GOARCH         string
 	Client         *Client
 	Installer      Installer
+	Progress       func(DownloadProgress)
 }
 
 type UpgradeResult struct {
@@ -102,7 +108,7 @@ func ApplyUpgrade(ctx context.Context, opts UpgradeOptions, check *CheckResult) 
 	}
 	defer os.RemoveAll(tmpDir)
 
-	archivePath, err := downloadAsset(ctx, opts.Client, asset, tmpDir)
+	archivePath, err := downloadAsset(ctx, opts.Client, asset, tmpDir, opts.Progress)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +133,7 @@ func ApplyUpgrade(ctx context.Context, opts UpgradeOptions, check *CheckResult) 
 	}, nil
 }
 
-func downloadAsset(ctx context.Context, client *Client, asset Asset, tmpDir string) (string, error) {
+func downloadAsset(ctx context.Context, client *Client, asset Asset, tmpDir string, progress func(DownloadProgress)) (string, error) {
 	if err := ensureHTTPS(asset.URL); err != nil {
 		return "", err
 	}
@@ -150,6 +156,9 @@ func downloadAsset(ctx context.Context, client *Client, asset Asset, tmpDir stri
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to download update: HTTP %d", resp.StatusCode)
 	}
+	if progress != nil {
+		progress(DownloadProgress{Total: resp.ContentLength})
+	}
 
 	name := filepath.Base(req.URL.Path)
 	if name == "." || name == "/" || name == "" {
@@ -161,7 +170,15 @@ func downloadAsset(ctx context.Context, client *Client, asset Asset, tmpDir stri
 		return "", fmt.Errorf("failed to create download file: %w", err)
 	}
 	hash := sha256.New()
-	_, copyErr := io.Copy(out, io.TeeReader(resp.Body, hash))
+	src := io.Reader(resp.Body)
+	if progress != nil {
+		src = &progressReader{
+			reader:   src,
+			total:    resp.ContentLength,
+			progress: progress,
+		}
+	}
+	_, copyErr := io.Copy(out, io.TeeReader(src, hash))
 	closeErr := out.Close()
 	if copyErr != nil {
 		return "", fmt.Errorf("failed to save update: %w", copyErr)
@@ -175,6 +192,25 @@ func downloadAsset(ctx context.Context, client *Client, asset Asset, tmpDir stri
 		return "", fmt.Errorf("sha256 mismatch for update asset: got %s, want %s", got, want)
 	}
 	return outPath, nil
+}
+
+type progressReader struct {
+	reader     io.Reader
+	downloaded int64
+	total      int64
+	progress   func(DownloadProgress)
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.downloaded += int64(n)
+		r.progress(DownloadProgress{
+			Downloaded: r.downloaded,
+			Total:      r.total,
+		})
+	}
+	return n, err
 }
 
 func extractBinary(archivePath, goos, tmpDir string) (string, error) {
