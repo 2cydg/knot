@@ -73,7 +73,7 @@ func TestWebDAVDownloadRejectsOversizedArchive(t *testing.T) {
 	}
 
 	_, err = provider.Download(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "webdav sync archive too large") {
+	if err == nil || !strings.Contains(err.Error(), "sync archive too large") {
 		t.Fatalf("expected archive too large error, got %v", err)
 	}
 }
@@ -94,8 +94,8 @@ func TestNormalizeWebDAVURL(t *testing.T) {
 		want string
 	}{
 		{name: "explicit file", in: "https://example.invalid/dav/sync.enc", want: "https://example.invalid/dav/sync.enc"},
-		{name: "directory without slash", in: "https://example.invalid/dav/knot", want: "https://example.invalid/dav/knot/config-sync.toml.enc"},
-		{name: "directory with slash", in: "https://example.invalid/dav/knot/", want: "https://example.invalid/dav/knot/config-sync.toml.enc"},
+		{name: "directory without slash", in: "https://example.invalid/dav/knot", want: "https://example.invalid/dav/knot/config.toml.enc"},
+		{name: "directory with slash", in: "https://example.invalid/dav/knot/", want: "https://example.invalid/dav/knot/config.toml.enc"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -154,7 +154,7 @@ func TestWebDAVUploadCreatesMissingDirectoryForDirectoryURL(t *testing.T) {
 	if err := provider.Upload(context.Background(), []byte("payload")); err != nil {
 		t.Fatalf("Upload failed: %v", err)
 	}
-	if putPath != "/dav/knot/config-sync.toml.enc" {
+	if putPath != "/dav/knot/config.toml.enc" {
 		t.Fatalf("unexpected PUT path: %s", putPath)
 	}
 }

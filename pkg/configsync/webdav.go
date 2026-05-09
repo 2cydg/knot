@@ -14,9 +14,8 @@ import (
 )
 
 const maxErrorBody = 512
-const maxSyncArchiveSize = 8 * 1024 * 1024
 const webDAVTimeout = 60 * time.Second
-const DefaultWebDAVSyncFilename = "config-sync.toml.enc"
+const DefaultWebDAVSyncFilename = DefaultSyncArchiveFilename
 
 type WebDAVProvider struct {
 	alias    string
@@ -88,18 +87,6 @@ func (p *WebDAVProvider) Download(ctx context.Context) ([]byte, error) {
 	data, err := readLimitedArchive(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read webdav response: %w", err)
-	}
-	return data, nil
-}
-
-func readLimitedArchive(r io.Reader) ([]byte, error) {
-	lr := io.LimitReader(r, maxSyncArchiveSize+1)
-	data, err := io.ReadAll(lr)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxSyncArchiveSize {
-		return nil, fmt.Errorf("webdav sync archive too large")
 	}
 	return data, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"knot/pkg/config"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chzyer/readline"
@@ -55,9 +57,12 @@ var syncPushCmd = &cobra.Command{
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
+		stopProgress := startSyncProgress("Pushing sync archive")
+		defer stopProgress()
 		if err := provider.Upload(ctx, data); err != nil {
 			return err
 		}
+		stopProgress()
 
 		payload := map[string]interface{}{
 			"status":    "success",
@@ -106,10 +111,13 @@ var syncPullCmd = &cobra.Command{
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
+		stopProgress := startSyncProgress("Pulling sync archive")
+		defer stopProgress()
 		data, err := provider.Download(ctx)
 		if err != nil {
 			return err
 		}
+		stopProgress()
 
 		password, err := syncPasswordForOperation(cmd, cfg, cp, false, !dryRun)
 		if err != nil {
@@ -179,8 +187,11 @@ var syncProviderAddCmd = &cobra.Command{
 			providerType = strings.ToLower(strings.TrimSpace(args[0]))
 		}
 		if providerType == "" {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("sync provider type is required: pass webdav or s3")
+			}
 			var err error
-			providerType, err = promptRequiredValue("Provider type (webdav): ")
+			providerType, err = promptRequiredValue("Provider type (webdav/s3): ")
 			if err != nil {
 				return err
 			}
@@ -189,6 +200,8 @@ var syncProviderAddCmd = &cobra.Command{
 		switch providerType {
 		case config.SyncProviderWebDAV:
 			return addOrUpdateWebDAVProvider(cmd, nil)
+		case config.SyncProviderS3:
+			return addOrUpdateS3Provider(cmd, nil)
 		default:
 			return fmt.Errorf("unsupported sync provider type: %s", providerType)
 		}
@@ -201,6 +214,15 @@ var syncProviderAddWebDAVCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return addOrUpdateWebDAVProvider(cmd, args)
+	},
+}
+
+var syncProviderAddS3Cmd = &cobra.Command{
+	Use:   "s3 [alias]",
+	Short: "Add an S3 sync provider",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return addOrUpdateS3Provider(cmd, args)
 	},
 }
 
@@ -218,10 +240,14 @@ var syncProviderEditCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("sync provider '%s' not found", args[0])
 		}
-		if provider.Type != config.SyncProviderWebDAV {
+		switch provider.Type {
+		case config.SyncProviderWebDAV:
+			return editWebDAVProvider(cmd, cp, cfg, id, provider)
+		case config.SyncProviderS3:
+			return editS3Provider(cmd, cp, cfg, id, provider)
+		default:
 			return fmt.Errorf("editing %s sync providers is not implemented yet", provider.Type)
 		}
-		return editWebDAVProvider(cmd, cp, cfg, id, provider)
 	},
 }
 
@@ -306,6 +332,19 @@ var syncProviderShowCmd = &cobra.Command{
 				fmt.Printf("url: %s\n", provider.URL)
 				fmt.Printf("username: %s\n", provider.Username)
 				fmt.Printf("has_password: %t\n", provider.Password != "")
+			} else if provider.Type == config.SyncProviderS3 {
+				endpoint := provider.Endpoint
+				if endpoint == "" {
+					endpoint = "-"
+				}
+				fmt.Printf("bucket: %s\n", provider.Bucket)
+				fmt.Printf("key: %s\n", provider.Key)
+				fmt.Printf("region: %s\n", provider.Region)
+				fmt.Printf("endpoint: %s\n", endpoint)
+				fmt.Printf("path_style: %t\n", provider.PathStyle)
+				fmt.Printf("has_access_key_id: %t\n", provider.AccessKeyID != "")
+				fmt.Printf("has_secret_access_key: %t\n", provider.SecretAccessKey != "")
+				fmt.Printf("has_session_token: %t\n", provider.SessionToken != "")
 			}
 			return nil
 		})
@@ -526,6 +565,45 @@ func addOrUpdateWebDAVProvider(cmd *cobra.Command, args []string) error {
 	return saveSyncProvider(cp, cfg, provider, exists)
 }
 
+func addOrUpdateS3Provider(cmd *cobra.Command, args []string) error {
+	cp, cfg, err := loadConfigForSync()
+	if err != nil {
+		return err
+	}
+	alias, err := syncProviderAliasFromArgs(args)
+	if err != nil {
+		return err
+	}
+	id, existing, exists := cfg.FindSyncProviderByAlias(alias)
+	if exists && existing.Type != config.SyncProviderS3 {
+		return fmt.Errorf("sync provider '%s' already exists with type %s", alias, existing.Type)
+	}
+	if !exists {
+		id, err = cfg.NewSyncProviderID()
+		if err != nil {
+			return err
+		}
+	}
+
+	provider := config.SyncProviderConfig{
+		ID:              id,
+		Alias:           alias,
+		Type:            config.SyncProviderS3,
+		Bucket:          existing.Bucket,
+		Key:             existing.Key,
+		Region:          existing.Region,
+		Endpoint:        existing.Endpoint,
+		AccessKeyID:     existing.AccessKeyID,
+		SecretAccessKey: existing.SecretAccessKey,
+		SessionToken:    existing.SessionToken,
+		PathStyle:       existing.PathStyle,
+	}
+	if err := collectS3ProviderValues(cmd, &provider, !exists); err != nil {
+		return err
+	}
+	return saveSyncProvider(cp, cfg, provider, exists)
+}
+
 func editWebDAVProvider(cmd *cobra.Command, cp crypto.Provider, cfg *config.Config, id string, provider config.SyncProviderConfig) error {
 	var err error
 	providerType, err := promptOptionalValue(fmt.Sprintf("Provider type [%s]: ", provider.Type), provider.Type, false)
@@ -570,6 +648,243 @@ func editWebDAVProvider(cmd *cobra.Command, cp crypto.Provider, cfg *config.Conf
 	return saveSyncProvider(cp, cfg, provider, true)
 }
 
+func editS3Provider(cmd *cobra.Command, cp crypto.Provider, cfg *config.Config, id string, provider config.SyncProviderConfig) error {
+	providerType, err := promptOptionalValue(fmt.Sprintf("Provider type [%s]: ", provider.Type), provider.Type, false)
+	if err != nil {
+		return err
+	}
+	if strings.ToLower(strings.TrimSpace(providerType)) != config.SyncProviderS3 {
+		return fmt.Errorf("unsupported sync provider type: %s", providerType)
+	}
+	provider.ID = id
+	provider.Type = config.SyncProviderS3
+	if err := collectS3ProviderValues(cmd, &provider, false); err != nil {
+		return err
+	}
+	return saveSyncProvider(cp, cfg, provider, true)
+}
+
+func collectS3ProviderValues(cmd *cobra.Command, provider *config.SyncProviderConfig, creating bool) error {
+	var err error
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
+	if flagChanged(cmd, "bucket") {
+		provider.Bucket = stringFlagValue(cmd, "bucket")
+	} else if provider.Bucket == "" {
+		provider.Bucket, err = promptS3Required("S3 bucket: ", "s3 bucket is required: pass --bucket or run interactively")
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		provider.Bucket, err = promptOptionalValue(fmt.Sprintf("S3 bucket [%s]: ", provider.Bucket), provider.Bucket, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	if flagChanged(cmd, "key") {
+		provider.Key = configsync.NormalizeS3Key(stringFlagValue(cmd, "key"))
+	} else if provider.Key == "" {
+		current := configsync.DefaultS3SyncKey
+		provider.Key, err = promptOptionalValue(fmt.Sprintf("S3 object key [%s]: ", current), current, false)
+		if err != nil {
+			return err
+		}
+		provider.Key = configsync.NormalizeS3Key(provider.Key)
+	} else if !creating && interactive {
+		provider.Key, err = promptOptionalValue(fmt.Sprintf("S3 object key [%s]: ", provider.Key), provider.Key, false)
+		if err != nil {
+			return err
+		}
+		provider.Key = configsync.NormalizeS3Key(provider.Key)
+	}
+
+	if flagChanged(cmd, "region") {
+		provider.Region = stringFlagValue(cmd, "region")
+	} else if provider.Region == "" {
+		provider.Region, err = promptS3Required("S3 region: ", "s3 region is required: pass --region or run interactively")
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		provider.Region, err = promptOptionalValue(fmt.Sprintf("S3 region [%s]: ", provider.Region), provider.Region, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	if flagChanged(cmd, "endpoint") {
+		provider.Endpoint = stringFlagValue(cmd, "endpoint")
+	} else if provider.Endpoint == "" && creating && interactive {
+		provider.Endpoint, err = promptOptionalValue("S3 endpoint URL (optional, leave blank for AWS S3): ", "", false)
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		current := provider.Endpoint
+		display := current
+		if display == "" {
+			display = "-"
+		}
+		provider.Endpoint, err = promptOptionalValue(fmt.Sprintf("S3 endpoint URL [%s]: ", display), current, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	if flagChanged(cmd, "path-style") {
+		provider.PathStyle, _ = cmd.Flags().GetBool("path-style")
+	} else if creating && interactive {
+		fmt.Println("Path-style places the bucket in the URL path for S3-compatible services such as MinIO; AWS S3 usually does not need it.")
+		provider.PathStyle, err = promptBoolValue("Use path-style URLs? (y/N) [recommended: N]: ", false)
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		fmt.Println("Path-style places the bucket in the URL path for S3-compatible services such as MinIO; AWS S3 usually does not need it.")
+		prompt := "Use path-style URLs? [y/N] [recommended: N]: "
+		if provider.PathStyle {
+			prompt = "Use path-style URLs? [Y/n] [recommended: N]: "
+		}
+		provider.PathStyle, err = promptBoolValue(prompt, provider.PathStyle)
+		if err != nil {
+			return err
+		}
+	}
+
+	if flagChanged(cmd, "access-key-id") {
+		provider.AccessKeyID = stringFlagValue(cmd, "access-key-id")
+	} else if provider.AccessKeyID == "" {
+		provider.AccessKeyID, err = promptS3RequiredSecret("S3 access key ID (hidden): ", "s3 access key id is required: pass --access-key-id or run interactively")
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		provider.AccessKeyID, err = promptOptionalValue("S3 access key ID (hidden, leave blank to keep current): ", provider.AccessKeyID, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	if flagChanged(cmd, "secret-access-key") {
+		provider.SecretAccessKey = stringFlagValue(cmd, "secret-access-key")
+	} else if provider.SecretAccessKey == "" {
+		provider.SecretAccessKey, err = promptS3RequiredSecret("S3 secret access key (hidden): ", "s3 secret access key is required: pass --secret-access-key or run interactively")
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		provider.SecretAccessKey, err = promptOptionalValue("S3 secret access key (hidden, leave blank to keep current): ", provider.SecretAccessKey, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	if flagChanged(cmd, "session-token") {
+		provider.SessionToken = stringFlagValue(cmd, "session-token")
+		if provider.SessionToken == "-" {
+			provider.SessionToken = ""
+		}
+	} else if creating && interactive {
+		provider.SessionToken, err = promptOptionalValue("S3 session token (hidden, optional): ", "", true)
+		if err != nil {
+			return err
+		}
+	} else if !creating && interactive {
+		provider.SessionToken, err = promptOptionalValue("S3 session token (hidden, leave blank to keep current, '-' to clear): ", provider.SessionToken, true)
+		if err != nil {
+			return err
+		}
+		if provider.SessionToken == "-" {
+			provider.SessionToken = ""
+		}
+	}
+
+	provider.Bucket = strings.TrimSpace(provider.Bucket)
+	provider.Key = configsync.NormalizeS3Key(provider.Key)
+	provider.Region = strings.TrimSpace(provider.Region)
+	provider.Endpoint = strings.TrimRight(strings.TrimSpace(provider.Endpoint), "/")
+	return nil
+}
+
+func promptS3Required(prompt, nonInteractiveErr string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", errors.New(nonInteractiveErr)
+	}
+	return promptRequiredValue(prompt)
+}
+
+func promptS3RequiredSecret(prompt, nonInteractiveErr string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", errors.New(nonInteractiveErr)
+	}
+	value, err := promptOptionalValue(prompt, "", true)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%s is required", strings.TrimSuffix(strings.TrimSpace(prompt), ":"))
+	}
+	return value, nil
+}
+
+func promptBoolValue(prompt string, current bool) (bool, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return current, nil
+	}
+	line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+	if err != nil {
+		return false, err
+	}
+	defer line.Close()
+	resp, err := readLineWithPrompt(line, prompt)
+	if err != nil {
+		return false, err
+	}
+	resp = strings.ToLower(strings.TrimSpace(resp))
+	if resp == "" {
+		return current, nil
+	}
+	switch resp {
+	case "y", "yes", "true", "1":
+		return true, nil
+	case "n", "no", "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean response: %s", resp)
+	}
+}
+
+func startSyncProgress(label string) func() {
+	if jsonOutput || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		defer close(done)
+		frames := []string{"[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]", "[ ===]", "[  ==]", "[   =]"}
+		i := 0
+		for {
+			select {
+			case <-stop:
+				fmt.Print("\r\033[K")
+				return
+			default:
+				fmt.Printf("\r%s %s", label, frames[i%len(frames)])
+				i++
+				time.Sleep(120 * time.Millisecond)
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+		})
+	}
+}
+
 func saveSyncProvider(cp crypto.Provider, cfg *config.Config, provider config.SyncProviderConfig, existed bool) error {
 	if err := provider.Validate(cfg); err != nil {
 		return err
@@ -577,15 +892,25 @@ func saveSyncProvider(cp crypto.Provider, cfg *config.Config, provider config.Sy
 	if cfg.SyncProviders == nil {
 		cfg.SyncProviders = make(map[string]config.SyncProviderConfig)
 	}
+	setAsDefault := !existed && cfg.Settings.DefaultSyncProvider == "" && len(cfg.SyncProviders) == 0
+	if setAsDefault {
+		cfg.Settings.DefaultSyncProvider = provider.Alias
+	}
 	cfg.SyncProviders[provider.ID] = provider
 	if err := cfg.Save(cp); err != nil {
 		return err
 	}
-	return NewFormatter().Render(syncProviderJSON(provider), func() error {
+	payload := syncProviderJSON(provider)
+	payload["default"] = cfg.Settings.DefaultSyncProvider == provider.Alias
+	payload["default_set"] = setAsDefault
+	return NewFormatter().Render(payload, func() error {
 		if existed {
 			fmt.Printf("Sync provider '%s' updated.\n", provider.Alias)
 		} else {
 			fmt.Printf("Sync provider '%s' added.\n", provider.Alias)
+			if setAsDefault {
+				fmt.Println("Set as default; you can run 'knot sync push' or 'knot sync pull' without an alias.")
+			}
 		}
 		return nil
 	})
@@ -594,6 +919,9 @@ func saveSyncProvider(cp crypto.Provider, cfg *config.Config, provider config.Sy
 func syncProviderAliasFromArgs(args []string) (string, error) {
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		return strings.TrimSpace(args[0]), nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("sync provider alias is required: pass an alias or run interactively")
 	}
 	return promptRequiredValue("Provider Alias: ")
 }
@@ -802,20 +1130,36 @@ func printSyncSummary(summary configsync.MergeSummary) {
 }
 
 func syncProviderJSON(provider config.SyncProviderConfig) map[string]interface{} {
-	return map[string]interface{}{
-		"id":           provider.ID,
-		"alias":        provider.Alias,
-		"type":         provider.Type,
-		"url":          provider.URL,
-		"username":     provider.Username,
-		"has_password": provider.Password != "",
+	item := map[string]interface{}{
+		"id":    provider.ID,
+		"alias": provider.Alias,
+		"type":  provider.Type,
 	}
+	switch provider.Type {
+	case config.SyncProviderWebDAV:
+		item["url"] = provider.URL
+		item["username"] = provider.Username
+		item["has_password"] = provider.Password != ""
+	case config.SyncProviderS3:
+		item["bucket"] = provider.Bucket
+		item["key"] = provider.Key
+		item["region"] = provider.Region
+		item["endpoint"] = provider.Endpoint
+		item["path_style"] = provider.PathStyle
+		item["has_access_key_id"] = provider.AccessKeyID != ""
+		item["has_secret_access_key"] = provider.SecretAccessKey != ""
+		item["has_session_token"] = provider.SessionToken != ""
+	}
+	return item
 }
 
 func syncProviderTarget(provider config.SyncProviderConfig) string {
 	switch provider.Type {
 	case config.SyncProviderWebDAV:
 		return provider.URL
+	case config.SyncProviderS3:
+		key := configsync.NormalizeS3Key(provider.Key)
+		return "s3://" + provider.Bucket + "/" + key
 	default:
 		return "-"
 	}
@@ -852,13 +1196,30 @@ func init() {
 	syncProviderAddWebDAVCmd.Flags().String("user", "", "WebDAV username")
 	syncProviderAddWebDAVCmd.Flags().String("password", "", "WebDAV password")
 
+	syncProviderAddS3Cmd.Flags().String("bucket", "", "S3 bucket")
+	syncProviderAddS3Cmd.Flags().String("key", "", "S3 object key")
+	syncProviderAddS3Cmd.Flags().String("region", "", "S3 region")
+	syncProviderAddS3Cmd.Flags().String("endpoint", "", "S3 endpoint URL")
+	syncProviderAddS3Cmd.Flags().String("access-key-id", "", "S3 access key ID")
+	syncProviderAddS3Cmd.Flags().String("secret-access-key", "", "S3 secret access key")
+	syncProviderAddS3Cmd.Flags().String("session-token", "", "S3 session token")
+	syncProviderAddS3Cmd.Flags().Bool("path-style", false, "Use S3 path-style URLs")
+
 	syncProviderEditCmd.Flags().String("url", "", "WebDAV object URL")
 	syncProviderEditCmd.Flags().String("user", "", "WebDAV username")
 	syncProviderEditCmd.Flags().String("password", "", "WebDAV password")
+	syncProviderEditCmd.Flags().String("bucket", "", "S3 bucket")
+	syncProviderEditCmd.Flags().String("key", "", "S3 object key")
+	syncProviderEditCmd.Flags().String("region", "", "S3 region")
+	syncProviderEditCmd.Flags().String("endpoint", "", "S3 endpoint URL")
+	syncProviderEditCmd.Flags().String("access-key-id", "", "S3 access key ID")
+	syncProviderEditCmd.Flags().String("secret-access-key", "", "S3 secret access key")
+	syncProviderEditCmd.Flags().String("session-token", "", "S3 session token")
+	syncProviderEditCmd.Flags().Bool("path-style", false, "Use S3 path-style URLs")
 
 	syncPasswordSetCmd.Flags().Bool("password-stdin", false, "Read sync encryption password from stdin")
 
-	syncProviderAddCmd.AddCommand(syncProviderAddWebDAVCmd)
+	syncProviderAddCmd.AddCommand(syncProviderAddWebDAVCmd, syncProviderAddS3Cmd)
 	syncProviderCmd.AddCommand(syncProviderAddCmd, syncProviderEditCmd, syncProviderListCmd, syncProviderShowCmd, syncProviderRemoveCmd, syncProviderSetDefaultCmd, syncProviderClearDefaultCmd)
 	syncPasswordCmd.AddCommand(syncPasswordSetCmd, syncPasswordClearCmd, syncPasswordStatusCmd)
 	syncCmd.AddCommand(syncPushCmd, syncPullCmd, syncProviderCmd, syncPasswordCmd)

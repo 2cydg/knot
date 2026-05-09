@@ -9,6 +9,7 @@ import (
 	"knot/internal/fileutil"
 	"knot/internal/paths"
 	"knot/pkg/crypto"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -28,6 +29,7 @@ const (
 	ProxyTypeHTTP   = "http"
 
 	SyncProviderWebDAV = "webdav"
+	SyncProviderS3     = "s3"
 )
 
 type ProxyConfig struct {
@@ -129,9 +131,20 @@ type SyncProviderConfig struct {
 	Alias string `toml:"alias"`
 	Type  string `toml:"type"`
 
+	// WebDAV
 	URL      string `toml:"url,omitempty"`
 	Username string `toml:"username,omitempty"`
 	Password string `toml:"password,omitempty"`
+
+	// S3
+	Bucket          string `toml:"bucket,omitempty"`
+	Key             string `toml:"key,omitempty"`
+	Region          string `toml:"region,omitempty"`
+	Endpoint        string `toml:"endpoint,omitempty"`
+	AccessKeyID     string `toml:"access_key_id,omitempty"`
+	SecretAccessKey string `toml:"secret_access_key,omitempty"`
+	SessionToken    string `toml:"session_token,omitempty"`
+	PathStyle       bool   `toml:"path_style,omitempty"`
 }
 
 func NewID(prefix string) (string, error) {
@@ -368,7 +381,7 @@ func (s *SettingsConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
 }
 
 func (s *SyncProviderConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
-	fields := []*string{&s.Password}
+	fields := []*string{&s.Password, &s.AccessKeyID, &s.SecretAccessKey, &s.SessionToken}
 	for _, field := range fields {
 		if *field == "" {
 			continue
@@ -733,8 +746,52 @@ func (s *SyncProviderConfig) Validate(cfg *Config) error {
 		if HasControlChar(s.URL) {
 			return fmt.Errorf("webdav url contains control characters")
 		}
+	case SyncProviderS3:
+		if strings.TrimSpace(s.Bucket) == "" {
+			return fmt.Errorf("s3 bucket cannot be empty")
+		}
+		if strings.TrimSpace(s.Key) == "" {
+			return fmt.Errorf("s3 key cannot be empty")
+		}
+		if strings.TrimSpace(s.Region) == "" {
+			return fmt.Errorf("s3 region cannot be empty")
+		}
+		if s.Endpoint == "" && strings.EqualFold(strings.TrimSpace(s.Region), "auto") {
+			return fmt.Errorf("s3 region auto requires an explicit endpoint")
+		}
+		if err := validateS3Endpoint(s.Endpoint); err != nil {
+			return err
+		}
+		if strings.TrimSpace(s.AccessKeyID) == "" {
+			return fmt.Errorf("s3 access key id cannot be empty")
+		}
+		if strings.TrimSpace(s.SecretAccessKey) == "" {
+			return fmt.Errorf("s3 secret access key cannot be empty")
+		}
+		if HasControlChar(s.Bucket) || HasControlChar(s.Key) || HasControlChar(s.Region) ||
+			HasControlChar(s.Endpoint) || HasControlChar(s.AccessKeyID) ||
+			HasControlChar(s.SecretAccessKey) || HasControlChar(s.SessionToken) {
+			return fmt.Errorf("s3 provider contains control characters")
+		}
 	default:
 		return fmt.Errorf("unsupported sync provider type: %s", s.Type)
+	}
+	return nil
+}
+
+func validateS3Endpoint(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("invalid s3 endpoint: %s", endpoint)
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("s3 endpoint must not include userinfo, query, or fragment")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return fmt.Errorf("s3 endpoint path must be empty")
 	}
 	return nil
 }

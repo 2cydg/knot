@@ -156,6 +156,16 @@ knot exec web-prod "uptime" --json
 
 自动化场景下，`--json` 只改变输出格式，不吞掉失败退出码。需要显式控制 host key 提示时，可以使用 `--host-key-policy accept-new` 或 `fail`。
 
+### 8. 加密配置同步
+```bash
+knot sync provider add webdav home --url https://dav.example.com/knot/ --user alice --password "$WEBDAV_PASSWORD"
+knot sync provider add s3 s3home --bucket my-bucket --region us-east-1 --access-key-id "$S3_ACCESS_KEY_ID" --secret-access-key "$S3_SECRET_ACCESS_KEY"
+knot sync push s3home --force
+knot sync pull s3home --strategy local-first
+```
+
+同步 provider 支持 WebDAV 和 S3 兼容对象存储。Provider 凭据只保存在本机配置中，并通过平台凭据能力加密；同步归档上传前还会用同步密码单独加密。
+
 ---
 
 ## 架构设计
@@ -203,6 +213,7 @@ Knot 使用自己的 `known_hosts` 文件保存主机密钥。非交互命令可
 | **管理工具** | `knot list [模式]` | 查看服务器别名、目标地址、标签和最近使用情况 |
 | | `knot status` | 查看守护进程与连接池状态 |
 | | `knot export/import` | 加密后的配置备份与导入 |
+| | `knot sync` | 通过 WebDAV 或 S3 进行加密配置同步 |
 
 ---
 

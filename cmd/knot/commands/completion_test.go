@@ -163,13 +163,13 @@ func TestSyncProviderAliasCompleter(t *testing.T) {
 				ID:    "sync_backup",
 				Alias: "backup",
 				Type:  config.SyncProviderWebDAV,
-				URL:   "https://example.invalid/backup/config-sync.toml.enc",
+				URL:   "https://example.invalid/backup/config.toml.enc",
 			},
 			"sync_home": {
 				ID:    "sync_home",
 				Alias: "home",
 				Type:  config.SyncProviderWebDAV,
-				URL:   "https://example.invalid/home/config-sync.toml.enc",
+				URL:   "https://example.invalid/home/config.toml.enc",
 			},
 		},
 	}

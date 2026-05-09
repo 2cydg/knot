@@ -34,6 +34,42 @@ PowerShell:
 knot completion powershell | Out-String | Invoke-Expression
 ```
 
+## Sync 命令
+
+```sh
+knot sync provider add [webdav|s3] [alias]
+knot sync provider add webdav [alias]
+knot sync provider add s3 [alias]
+knot sync provider edit <alias>
+knot sync provider list
+knot sync provider show <alias>
+knot sync push [provider]
+knot sync pull [provider] --strategy local-first
+```
+
+WebDAV provider 选项：
+
+| 选项 | 类型 | 说明 |
+| --- | --- | --- |
+| `--url` | string | WebDAV 对象 URL 或目录 URL。 |
+| `--user` | string | WebDAV 用户名。 |
+| `--password` | string | WebDAV 密码，会加密保存在本机。 |
+
+S3 provider add/edit 选项：
+
+| 选项 | 类型 | 说明 |
+| --- | --- | --- |
+| `--bucket` | string | S3 bucket，新增时必填。 |
+| `--key` | string | S3 object key，默认 `config.toml.enc`。 |
+| `--region` | string | S3 签名 region，新增时必填。 |
+| `--endpoint` | string | 可选 S3-compatible endpoint URL。 |
+| `--access-key-id` | string | S3 access key ID，会加密保存在本机。 |
+| `--secret-access-key` | string | S3 secret access key，会加密保存在本机。 |
+| `--session-token` | string | 可选 S3 session token，会加密保存在本机。编辑时传 `-` 可清空。 |
+| `--path-style` | bool | 对要求 bucket 放在路径里的兼容 endpoint 使用 S3 path-style URL。 |
+
+`provider show` 不会输出 provider 敏感信息。`provider list` 中 S3 target 显示为 `s3://bucket/key`。
+
 ## 版本信息
 
 ```sh
