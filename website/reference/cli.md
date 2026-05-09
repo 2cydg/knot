@@ -75,9 +75,23 @@ S3 provider add/edit flags:
 ```sh
 knot version
 knot version --json
+knot version check
+knot version check --json
+knot version upgrade [-y|--yes]
+knot version upgrade [-y|--yes] --json
+knot upgrade [-y|--yes]
+knot upgrade [-y|--yes] --json
 ```
 
 `knot version` shows the Knot version, commit, build date, operating system, and architecture.
+
+`knot version check` checks the latest stable release manifest and reports whether an update is available. JSON output uses the global `--json` flag.
+
+`knot version upgrade` checks first, then upgrades only when a newer release exists. `knot upgrade` is the shortcut for the same operation.
+
+If the daemon has active SSH sessions, upgrade asks before stopping the daemon because those sessions will be disconnected. In non-interactive scripts, pass `-y` or `--yes`; otherwise the command refuses to proceed when active sessions exist.
+
+Development builds (`version=dev`) do not self-upgrade. They report that self-upgrade is unsupported and exit successfully.
 
 The root command also supports:
 

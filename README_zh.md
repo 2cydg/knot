@@ -212,6 +212,7 @@ Knot 使用自己的 `known_hosts` 文件保存主机密钥。非交互命令可
 | **网络功能** | `knot forward` | 管理 L/R/D 端口转发规则 |
 | **管理工具** | `knot list [模式]` | 查看服务器别名、目标地址、标签和最近使用情况 |
 | | `knot status` | 查看守护进程与连接池状态 |
+| | `knot upgrade [-y]` | 检查新版本并自升级 |
 | | `knot export/import` | 加密后的配置备份与导入 |
 | | `knot sync` | 通过 WebDAV 或 S3 进行加密配置同步 |
 

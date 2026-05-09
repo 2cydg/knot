@@ -152,6 +152,32 @@ func (c *Client) GetForwardList(alias string) (*protocol.ForwardListResponse, er
 	return &resp, nil
 }
 
+// Status retrieves the daemon status without auto-starting it.
+func (c *Client) Status() (*protocol.StatusResponse, error) {
+	conn, err := c.Connect()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := protocol.WriteMessage(conn, protocol.TypeStatusReq, 0, nil); err != nil {
+		return nil, err
+	}
+	msg, err := protocol.ReadMessage(conn)
+	if err != nil {
+		return nil, err
+	}
+	if msg.Header.Type != protocol.TypeStatusResp {
+		return nil, fmt.Errorf("unexpected response type: %d", msg.Header.Type)
+	}
+	var status protocol.StatusResponse
+	if err := json.Unmarshal(msg.Payload, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
 func (c *Client) SendBroadcastRequest(req protocol.BroadcastRequest) (*protocol.BroadcastResponse, error) {
 	conn, err := c.ConnectWithAutoStart()
 	if err != nil {

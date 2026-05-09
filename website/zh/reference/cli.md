@@ -75,9 +75,23 @@ S3 provider add/edit 选项：
 ```sh
 knot version
 knot version --json
+knot version check
+knot version check --json
+knot version upgrade [-y|--yes]
+knot version upgrade [-y|--yes] --json
+knot upgrade [-y|--yes]
+knot upgrade [-y|--yes] --json
 ```
 
 `knot version` 显示 Knot 版本、commit、构建日期、操作系统和架构。
+
+`knot version check` 会读取最新 stable release manifest，并报告是否有可用更新。JSON 输出使用全局 `--json` 选项。
+
+`knot version upgrade` 会先检查版本，只在发现新版本时升级。`knot upgrade` 是同一操作的快捷命令。
+
+如果 daemon 中有活跃 SSH 会话，升级会在停止 daemon 前确认，因为这些会话会被断开。非交互脚本中需要显式传入 `-y` 或 `--yes`；否则存在活跃会话时命令会拒绝继续。
+
+开发构建（`version=dev`）不支持自升级。命令会提示不支持并以成功状态退出。
 
 根命令也支持：
 
