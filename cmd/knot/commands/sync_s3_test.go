@@ -41,10 +41,7 @@ func TestSyncProviderAddS3FlagsWritesEncryptedConfig(t *testing.T) {
 		}
 	}
 
-	cp, err := crypto.NewProvider()
-	if err != nil {
-		t.Fatalf("crypto provider failed: %v", err)
-	}
+	cp := syncTestCryptoProvider{}
 	cfg, err := config.Load(cp)
 	if err != nil {
 		t.Fatalf("config load failed: %v", err)
@@ -101,10 +98,7 @@ func TestSyncProviderEditS3UpdatesFieldsAndClearsSessionToken(t *testing.T) {
 		}
 	})
 
-	loadedCP, err := crypto.NewProvider()
-	if err != nil {
-		t.Fatalf("crypto provider failed: %v", err)
-	}
+	loadedCP := syncTestCryptoProvider{}
 	loaded, err := config.Load(loadedCP)
 	if err != nil {
 		t.Fatalf("config load failed: %v", err)
@@ -151,10 +145,7 @@ func TestSyncProviderAddS3DoesNotReplaceExistingDefault(t *testing.T) {
 		t.Fatalf("unexpected default provider hint: %s", output)
 	}
 
-	loadedCP, err := crypto.NewProvider()
-	if err != nil {
-		t.Fatalf("crypto provider failed: %v", err)
-	}
+	loadedCP := syncTestCryptoProvider{}
 	loaded, err := config.Load(loadedCP)
 	if err != nil {
 		t.Fatalf("config load failed: %v", err)
@@ -206,9 +197,33 @@ func setupSyncCommandTest(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
 	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+	provider := syncTestCryptoProvider{}
+	oldProvider := newSyncCryptoProvider
+	newSyncCryptoProvider = func() (crypto.Provider, error) {
+		return provider, nil
+	}
+	t.Cleanup(func() {
+		newSyncCryptoProvider = oldProvider
+	})
 	resetSyncProviderFlags(t)
 	jsonOutput = false
 }
+
+type syncTestCryptoProvider struct{}
+
+func (syncTestCryptoProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	return crypto.EncryptWithKey(plaintext, syncTestCryptoKey)
+}
+
+func (syncTestCryptoProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	return crypto.DecryptWithKey(ciphertext, syncTestCryptoKey)
+}
+
+func (syncTestCryptoProvider) Name() string {
+	return "sync-test"
+}
+
+var syncTestCryptoKey = []byte("0123456789abcdef0123456789abcdef")
 
 func resetSyncProviderFlags(t *testing.T) {
 	t.Helper()
@@ -232,10 +247,7 @@ func resetSyncProviderFlags(t *testing.T) {
 
 func writeSyncProviderTestConfig(t *testing.T, provider config.SyncProviderConfig) (crypto.Provider, *config.Config) {
 	t.Helper()
-	cp, err := crypto.NewProvider()
-	if err != nil {
-		t.Fatalf("crypto provider failed: %v", err)
-	}
+	cp := syncTestCryptoProvider{}
 	cfg := &config.Config{
 		Servers:       make(map[string]config.ServerConfig),
 		Proxies:       make(map[string]config.ProxyConfig),

@@ -428,6 +428,8 @@ var syncPasswordCmd = &cobra.Command{
 	Short: "Manage the saved sync encryption password",
 }
 
+var newSyncCryptoProvider = crypto.NewProvider
+
 var syncPasswordSetCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Save the sync encryption password on this machine",
@@ -491,7 +493,7 @@ var syncPasswordStatusCmd = &cobra.Command{
 }
 
 func loadConfigForSync() (crypto.Provider, *config.Config, error) {
-	cp, err := crypto.NewProvider()
+	cp, err := newSyncCryptoProvider()
 	if err != nil {
 		return nil, nil, err
 	}

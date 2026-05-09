@@ -24,6 +24,7 @@ The project favors simple command-line interaction, persistent SSH connection re
 - Avoid adding new dependencies unless they are necessary. Prefer the Go standard library first, then third-party packages only when the benefit is clear, because binary size matters for this project.
 - When modifying older code that lacks test coverage, add focused unit tests or regression tests where practical.
 - When adding tests, pay special attention to Windows compatibility: use `filepath` for local paths, avoid Unix-only assumptions, and consider Windows CI behavior for sockets, terminals, file locking, and platform-backed crypto.
+- Do not let tests depend on live platform credential stores such as macOS Keychain, Windows DPAPI, or Linux Secret Service when asserting encrypted config behavior; inject a deterministic test crypto provider so CI can decrypt data across repeated loads.
 - After core logic changes, prefer running `go test ./...`; for release or build-related changes, also confirm `go build -o knot cmd/knot/main.go` succeeds.
 
 ## Common Commands
