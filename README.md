@@ -213,6 +213,7 @@ Knot stores host keys in its own `known_hosts` file. Non-interactive commands ca
 | **Network** | `knot forward` | Manage L/R/D port forwarding rules |
 | **Manager** | `knot list [pattern]` | List servers by alias, target, tags, and recent usage |
 | | `knot status` | Check daemon and connection pool health |
+| | `knot upgrade [-y]` | Check for a newer release and self-upgrade |
 | | `knot export/import` | Encrypted configuration backup |
 | | `knot sync` | Encrypted config sync via WebDAV or S3 |
 

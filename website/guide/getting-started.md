@@ -14,6 +14,20 @@ Windows uses the PowerShell installer:
 irm https://knot.clay.li/i/install.ps1 | iex
 ```
 
+Upgrade an installed release:
+
+```sh
+knot upgrade
+```
+
+For non-interactive scripts, use:
+
+```sh
+knot upgrade -y
+```
+
+`-y` confirms that the daemon may be stopped and active SSH sessions may be disconnected. Development builds created from source do not self-upgrade.
+
 Build from source:
 
 ```sh

@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/json"
 	"fmt"
 	"knot/internal/protocol"
 	"knot/pkg/daemon"
@@ -20,30 +19,9 @@ var statusCmd = &cobra.Command{
 			return err
 		}
 
-		conn, err := client.Connect()
+		status, err := client.Status()
 		if err != nil {
 			return fmt.Errorf("knot daemon is not running")
-		}
-		defer conn.Close()
-
-		// Send Status Request
-		if err := protocol.WriteMessage(conn, protocol.TypeStatusReq, 0, nil); err != nil {
-			return fmt.Errorf("failed to send status request: %w", err)
-		}
-
-		// Read Status Response
-		msg, err := protocol.ReadMessage(conn)
-		if err != nil {
-			return fmt.Errorf("failed to read status response: %w", err)
-		}
-
-		if msg.Header.Type != protocol.TypeStatusResp {
-			return fmt.Errorf("unexpected response type: %d", msg.Header.Type)
-		}
-
-		var status protocol.StatusResponse
-		if err := json.Unmarshal(msg.Payload, &status); err != nil {
-			return fmt.Errorf("failed to unmarshal status response: %w", err)
 		}
 
 		formatter := NewFormatter()

@@ -14,6 +14,20 @@ Windows 使用 PowerShell 安装脚本：
 irm https://knot.clay.li/i/install.ps1 | iex
 ```
 
+升级已安装的 release：
+
+```sh
+knot upgrade
+```
+
+非交互脚本中使用：
+
+```sh
+knot upgrade -y
+```
+
+`-y` 表示确认可以停止 daemon，并允许断开活跃 SSH 会话。从源码构建的开发版本不支持自升级。
+
 从源码构建：
 
 ```sh
