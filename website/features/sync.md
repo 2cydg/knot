@@ -2,7 +2,7 @@
 
 `knot sync` synchronizes server profiles, proxies, and managed keys through an encrypted remote archive. It is separate from `knot export` and `knot import`: sync is for day-to-day multi-device sharing, while import/export remains a full local backup and migration workflow.
 
-Only WebDAV providers are supported currently.
+WebDAV and S3-compatible providers are supported.
 
 ## What Is Synced
 
@@ -25,11 +25,13 @@ This keeps machine-local preferences and provider credentials on each device.
 knot sync provider add
 knot sync provider add webdav
 knot sync provider add webdav home
+knot sync provider add s3
+knot sync provider add s3 home
 ```
 
-All of these forms can run interactively. If you only run `provider add`, Knot asks for the provider type first. The current provider type is `webdav`. If you pass `webdav`, Knot starts from the alias prompt. If you pass the alias too, Knot starts from the WebDAV fields.
+All of these forms can run interactively. If you only run `provider add`, Knot asks for the provider type first. Supported provider types are `webdav` and `s3`. If you pass the provider type, Knot starts from the alias prompt. If you pass the alias too, Knot starts from the provider fields. The first provider you add is set as the default automatically, so `knot sync push` and `knot sync pull` can be used without a provider alias.
 
-For scripts, pass the WebDAV fields as flags:
+For WebDAV scripts, pass the WebDAV fields as flags:
 
 ```sh
 knot sync provider add webdav home \
@@ -44,15 +46,65 @@ knot sync provider add webdav home \
 | `--user` | WebDAV username. |
 | `--password` | WebDAV password. It is stored encrypted in the local config. |
 
-When the URL is treated as a directory, Knot uses `config-sync.toml.enc` as the remote file name. Missing WebDAV directories are created before upload when the server supports `MKCOL`.
+When the URL is treated as a directory, Knot uses `config.toml.enc` as the remote file name. Missing WebDAV directories are created before upload when the server supports `MKCOL`.
 
 Examples:
 
 | Input URL | Remote object |
 | --- | --- |
-| `https://dav.example.com/knot/config-sync.toml.enc` | that exact file |
-| `https://dav.example.com/knot/` | `https://dav.example.com/knot/config-sync.toml.enc` |
-| `https://dav.example.com/knot` | `https://dav.example.com/knot/config-sync.toml.enc` |
+| `https://dav.example.com/knot/config.toml.enc` | that exact file |
+| `https://dav.example.com/knot/` | `https://dav.example.com/knot/config.toml.enc` |
+| `https://dav.example.com/knot` | `https://dav.example.com/knot/config.toml.enc` |
+
+For AWS S3:
+
+```sh
+knot sync provider add s3 home \
+  --bucket my-bucket \
+  --key knot/config.toml.enc \
+  --region us-east-1 \
+  --access-key-id "$S3_ACCESS_KEY_ID" \
+  --secret-access-key "$S3_SECRET_ACCESS_KEY"
+```
+
+For S3-compatible services such as MinIO:
+
+```sh
+knot sync provider add s3 minio \
+  --endpoint https://minio.example.com \
+  --bucket knot \
+  --key config.toml.enc \
+  --region us-east-1 \
+  --access-key-id minioadmin \
+  --secret-access-key "$MINIO_SECRET_ACCESS_KEY" \
+  --path-style
+```
+
+For services such as Cloudflare R2, pass the service endpoint and its expected signing region:
+
+```sh
+knot sync provider add s3 r2 \
+  --endpoint https://<account-id>.r2.cloudflarestorage.com \
+  --bucket knot \
+  --region auto \
+  --access-key-id "$R2_ACCESS_KEY_ID" \
+  --secret-access-key "$R2_SECRET_ACCESS_KEY"
+```
+
+| Flag | Description |
+| --- | --- |
+| `--bucket` | S3 bucket. Required. |
+| `--key` | S3 object key. Defaults to `config.toml.enc`. |
+| `--region` | S3 signing region. Required. `auto` is only accepted with an explicit endpoint. |
+| `--endpoint` | Optional S3-compatible endpoint URL. Leave empty for AWS S3. |
+| `--access-key-id` | S3 access key ID. Stored encrypted in the local config. |
+| `--secret-access-key` | S3 secret access key. Stored encrypted in the local config. |
+| `--session-token` | Optional S3 session token. Stored encrypted in the local config. Use `-` with `provider edit` to clear it. |
+| `--path-style` | Use path-style URLs. Leave it off for AWS S3 unless your endpoint requires it. |
+
+By default, Knot uses virtual-hosted-style S3 URLs, where the bucket is part of the host name: `https://bucket.s3.region.amazonaws.com/key`. This is the recommended mode for AWS S3 and for compatible services that support bucket host names.
+
+Enable `--path-style` only when your S3-compatible server expects the bucket in the path, for example `https://minio.example.com/bucket/key`. This is common for MinIO, local test servers, and deployments where wildcard DNS or bucket-specific TLS host names are not available. The setting only changes URL construction; signing still uses the configured `--region`, credentials, and endpoint.
 
 ## Provider Commands
 
@@ -69,9 +121,9 @@ knot sync provider clear-default
 
 | Command | Description |
 | --- | --- |
-| `provider list` | List providers in a table. Alias: `provider ls`. |
-| `provider show <alias>` | Show one provider without printing secrets. |
-| `provider edit <alias>` | Edit a provider. With only an alias, it enters interactive mode. |
+| `provider list` | List providers in a table. WebDAV targets show the URL; S3 targets show `s3://bucket/key`. Alias: `provider ls`. |
+| `provider show <alias>` | Show one provider without printing secrets. S3 credentials are shown only as `has_*` booleans. |
+| `provider edit <alias>` | Edit a provider. With only an alias, it enters interactive mode. WebDAV and S3 edit flags match their add flags. |
 | `provider remove <alias>` | Remove a provider. Aliases: `rm`, `delete`. |
 | `provider set-default <alias>` | Store the default sync provider in `settings.default_sync_provider`. |
 | `provider clear-default` | Clear the default sync provider. |
@@ -84,7 +136,7 @@ knot config set default_sync_provider home
 
 ## Sync Password
 
-The sync archive is encrypted with a sync password before it is uploaded. This password is independent from the WebDAV password.
+The sync archive is encrypted with a sync password before it is uploaded. This password is independent from WebDAV passwords and S3 credentials. Provider credentials stay local and are not included in the sync archive.
 
 ```sh
 knot sync password set
@@ -141,4 +193,3 @@ In non-interactive mode, pass `--strategy` explicitly.
 | `overwrite` | Replace local `servers`, `proxies`, and `keys` with the remote archive. Local `settings` and `sync_providers` stay local. |
 
 Knot remaps internal IDs during merge so server references to keys, proxies, and jump hosts continue to point at the final kept objects.
-

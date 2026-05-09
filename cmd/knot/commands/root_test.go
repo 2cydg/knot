@@ -12,6 +12,7 @@ func TestRewriteArgsForAlias(t *testing.T) {
 	root.AddCommand(&cobra.Command{Use: "ssh"})
 	root.AddCommand(&cobra.Command{Use: "broadcast"})
 	root.AddCommand(&cobra.Command{Use: "completion"})
+	root.AddCommand(&cobra.Command{Use: "sync"})
 
 	tests := []struct {
 		name    string
@@ -58,6 +59,11 @@ func TestRewriteArgsForAlias(t *testing.T) {
 			name: "preserves shell completion known subcommand",
 			args: []string{"knot", cobra.ShellCompRequestCmd, "broadcast", "show", ""},
 			want: []string{"knot", cobra.ShellCompRequestCmd, "broadcast", "show", ""},
+		},
+		{
+			name: "preserves shell completion subcommand prefix",
+			args: []string{"knot", cobra.ShellCompRequestCmd, "sy", ""},
+			want: []string{"knot", cobra.ShellCompRequestCmd, "sy", ""},
 		},
 		{
 			name: "preserves shell completion no desc request",

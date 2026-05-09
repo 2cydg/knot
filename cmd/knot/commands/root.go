@@ -71,7 +71,7 @@ func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {
 	}
 
 	for _, c := range root.Commands() {
-		if c.Name() == firstArg || c.HasAlias(firstArg) {
+		if commandNameOrAliasMatches(c, firstArg) {
 			return args, nil
 		}
 	}
@@ -101,7 +101,7 @@ func rewriteCompletionArgsForAlias(args []string, root *cobra.Command) ([]string
 		return args, nil
 	}
 	for _, c := range root.Commands() {
-		if c.Name() == firstArg || c.HasAlias(firstArg) {
+		if commandNameOrAliasMatches(c, firstArg) || commandNameOrAliasHasPrefix(c, firstArg) {
 			return args, nil
 		}
 	}
@@ -120,6 +120,25 @@ func rewriteCompletionArgsForAlias(args []string, root *cobra.Command) ([]string
 
 func isShellCompletionCommand(arg string) bool {
 	return arg == cobra.ShellCompRequestCmd || arg == cobra.ShellCompNoDescRequestCmd
+}
+
+func commandNameOrAliasMatches(cmd *cobra.Command, value string) bool {
+	if cmd.Name() == value || cmd.HasAlias(value) {
+		return true
+	}
+	return false
+}
+
+func commandNameOrAliasHasPrefix(cmd *cobra.Command, prefix string) bool {
+	if strings.HasPrefix(cmd.Name(), prefix) {
+		return true
+	}
+	for _, alias := range cmd.Aliases {
+		if strings.HasPrefix(alias, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

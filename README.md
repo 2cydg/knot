@@ -156,6 +156,16 @@ knot exec web-prod "uptime" --json
 
 For automation, `--json` keeps failure exit codes meaningful while returning machine-readable output. Use `--host-key-policy accept-new` or `fail` when host key prompts must be controlled explicitly.
 
+### 8. Encrypted Config Sync
+```bash
+knot sync provider add webdav home --url https://dav.example.com/knot/ --user alice --password "$WEBDAV_PASSWORD"
+knot sync provider add s3 s3home --bucket my-bucket --region us-east-1 --access-key-id "$S3_ACCESS_KEY_ID" --secret-access-key "$S3_SECRET_ACCESS_KEY"
+knot sync push s3home --force
+knot sync pull s3home --strategy local-first
+```
+
+Sync providers support WebDAV and S3-compatible object storage. Provider credentials stay in the local config and are encrypted with the platform-backed credential store. The sync archive itself is separately encrypted with the sync password before upload.
+
 ---
 
 ## Architecture
@@ -204,6 +214,7 @@ Knot stores host keys in its own `known_hosts` file. Non-interactive commands ca
 | **Manager** | `knot list [pattern]` | List servers by alias, target, tags, and recent usage |
 | | `knot status` | Check daemon and connection pool health |
 | | `knot export/import` | Encrypted configuration backup |
+| | `knot sync` | Encrypted config sync via WebDAV or S3 |
 
 ---
 

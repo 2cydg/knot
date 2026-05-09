@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	SyncArchiveMagic   = "KNOTSYNC"
-	SyncArchiveVersion = 1
+	SyncArchiveMagic           = "KNOTSYNC"
+	SyncArchiveVersion         = 1
+	DefaultSyncArchiveFilename = "config.toml.enc"
+	maxSyncArchiveSize         = 8 * 1024 * 1024
 )
 
 type SyncConfig struct {
@@ -75,6 +77,18 @@ func DecryptSyncConfig(data []byte, password string) (*SyncConfig, error) {
 		cfg.Keys = make(map[string]config.KeyConfig)
 	}
 	return &cfg, nil
+}
+
+func readLimitedArchive(r io.Reader) ([]byte, error) {
+	lr := io.LimitReader(r, maxSyncArchiveSize+1)
+	data, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSyncArchiveSize {
+		return nil, fmt.Errorf("sync archive too large")
+	}
+	return data, nil
 }
 
 func encryptArchive(magic string, version byte, plaintext []byte, password string) ([]byte, error) {

@@ -23,6 +23,8 @@ func NewProvider(cfg config.SyncProviderConfig) (Provider, error) {
 	switch cfg.Type {
 	case config.SyncProviderWebDAV:
 		return NewWebDAVProvider(cfg)
+	case config.SyncProviderS3:
+		return NewS3Provider(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported sync provider type: %s", cfg.Type)
 	}

@@ -130,13 +130,24 @@ func TestSyncProviderLoadSaveEncryptsSecrets(t *testing.T) {
 		Proxies: make(map[string]ProxyConfig),
 		Keys:    make(map[string]KeyConfig),
 		SyncProviders: map[string]SyncProviderConfig{
-			"sync_test": {
-				ID:       "sync_test",
+			"sync_webdav": {
+				ID:       "sync_webdav",
 				Alias:    "home",
 				Type:     SyncProviderWebDAV,
 				URL:      "https://example.invalid/config.sync.enc",
 				Username: "alice",
 				Password: "webdav-secret",
+			},
+			"sync_s3": {
+				ID:              "sync_s3",
+				Alias:           "s3home",
+				Type:            SyncProviderS3,
+				Bucket:          "bucket",
+				Key:             "config.toml.enc",
+				Region:          "us-east-1",
+				AccessKeyID:     "access-key",
+				SecretAccessKey: "secret-key",
+				SessionToken:    "session-token",
 			},
 		},
 	}
@@ -151,7 +162,7 @@ func TestSyncProviderLoadSaveEncryptsSecrets(t *testing.T) {
 	if !strings.Contains(string(raw), "ENC:") {
 		t.Fatalf("expected encrypted sync secrets in raw config: %s", string(raw))
 	}
-	for _, secret := range []string{"sync-secret", "webdav-secret"} {
+	for _, secret := range []string{"sync-secret", "webdav-secret", "access-key", "secret-key", "session-token"} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("raw config leaked secret %q: %s", secret, string(raw))
 		}
@@ -164,9 +175,13 @@ func TestSyncProviderLoadSaveEncryptsSecrets(t *testing.T) {
 	if loaded.Settings.SyncPassword != "sync-secret" {
 		t.Fatalf("sync password was not decrypted")
 	}
-	p := loaded.SyncProviders["sync_test"]
-	if p.Password != "webdav-secret" {
-		t.Fatalf("provider secrets were not decrypted: %+v", p)
+	webdav := loaded.SyncProviders["sync_webdav"]
+	if webdav.Password != "webdav-secret" {
+		t.Fatalf("provider secrets were not decrypted: %+v", webdav)
+	}
+	s3 := loaded.SyncProviders["sync_s3"]
+	if s3.AccessKeyID != "access-key" || s3.SecretAccessKey != "secret-key" || s3.SessionToken != "session-token" {
+		t.Fatalf("s3 provider secrets were not decrypted: %+v", s3)
 	}
 }
 
@@ -189,6 +204,46 @@ func TestSyncProviderAliasLookupAndValidation(t *testing.T) {
 	valid := SyncProviderConfig{ID: "sync_work", Alias: "work", Type: SyncProviderWebDAV, URL: "https://example.invalid/work.enc"}
 	if err := valid.Validate(cfg); err != nil {
 		t.Fatalf("expected valid provider: %v", err)
+	}
+}
+
+func TestSyncProviderS3Validation(t *testing.T) {
+	valid := SyncProviderConfig{
+		ID:              "sync_s3",
+		Alias:           "s3home",
+		Type:            SyncProviderS3,
+		Bucket:          "bucket",
+		Key:             "config.toml.enc",
+		Region:          "us-east-1",
+		AccessKeyID:     "access",
+		SecretAccessKey: "secret",
+	}
+	if err := valid.Validate(nil); err != nil {
+		t.Fatalf("expected valid s3 provider: %v", err)
+	}
+
+	autoWithoutEndpoint := valid
+	autoWithoutEndpoint.Region = "auto"
+	if err := autoWithoutEndpoint.Validate(nil); err == nil || !strings.Contains(err.Error(), "explicit endpoint") {
+		t.Fatalf("expected region auto endpoint error, got %v", err)
+	}
+
+	missingSecret := valid
+	missingSecret.SecretAccessKey = ""
+	if err := missingSecret.Validate(nil); err == nil || !strings.Contains(err.Error(), "secret access key") {
+		t.Fatalf("expected missing secret access key error, got %v", err)
+	}
+
+	controlChar := valid
+	controlChar.Bucket = "bucket\nbad"
+	if err := controlChar.Validate(nil); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("expected control character error, got %v", err)
+	}
+
+	badEndpoint := valid
+	badEndpoint.Endpoint = "https://example.invalid/base"
+	if err := badEndpoint.Validate(nil); err == nil || !strings.Contains(err.Error(), "endpoint path") {
+		t.Fatalf("expected endpoint path error, got %v", err)
 	}
 }
 
