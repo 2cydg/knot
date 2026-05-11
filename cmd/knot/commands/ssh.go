@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,11 @@ import (
 var (
 	sshBroadcastGroup string
 	sshEscape         string
+)
+
+const (
+	defaultTerminalCols = 80
+	defaultTerminalRows = 24
 )
 
 var sshCmd = &cobra.Command{
@@ -63,18 +69,16 @@ var sshCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		// Get terminal size
 		fd := int(os.Stdin.Fd())
 		outFd := int(os.Stdout.Fd())
-		cols, rows, err := term.GetSize(outFd)
-		if err != nil {
-			cols, rows = 80, 40
-		}
+		errFd := int(os.Stderr.Fd())
+		cols, rows := detectTerminalSize(fd, outFd, errFd)
 
 		envTerm := os.Getenv("TERM")
 		if envTerm == "" {
 			envTerm = "xterm-256color"
 		}
+		envTerm = normalizeRemoteTerm(envTerm)
 
 		req := protocol.SSHRequest{
 			Alias:          alias,
@@ -87,6 +91,7 @@ var sshCmd = &cobra.Command{
 			HostKeyPolicy:  hostKeyPolicy,
 			BroadcastGroup: sshBroadcastGroup,
 			Escape:         resolveSSHEscape(cmd, cfg, sshBroadcastGroup),
+			Env:            sshEnvironment(),
 		}
 		if err := validateSSHEscapeValue(req.Escape); err != nil {
 			return err
@@ -247,6 +252,13 @@ var sshCmd = &cobra.Command{
 			defer connWriteMu.Unlock()
 			return protocol.WriteMessage(conn, msgType, reserved, payload)
 		}
+		var resizeSync *terminalResizeSynchronizer
+		if req.IsInteractive && term.IsTerminal(fd) {
+			resizeSync = newTerminalResizeSynchronizer(100*time.Millisecond, func() {
+				_ = sendTerminalResize(writeMessage, fd, outFd, errFd)
+			})
+		}
+		defer resizeSync.Stop()
 
 		// Set terminal to raw mode
 		var oldState *term.State
@@ -258,13 +270,13 @@ var sshCmd = &cobra.Command{
 			}
 			defer term.Restore(fd, oldState)
 
-			// Send initial resize to ensure remote side is synced
-			initialResizePayload, _ := json.Marshal(protocol.ResizePayload{Rows: rows, Cols: cols})
-			_ = writeMessage(protocol.TypeSignal, protocol.SignalResize, initialResizePayload)
+			// Send an initial resize using the current TTY state, because the
+			// request may have been built before auth prompts or daemon startup.
+			_ = sendTerminalResize(writeMessage, fd, outFd, errFd)
 		}
 
 		// Handle resize
-		setupResizeHandler(writeMessage, fd)
+		setupResizeHandler(writeMessage, fd, outFd, errFd)
 
 		// stdin -> daemon
 		go func() {
@@ -329,6 +341,7 @@ var sshCmd = &cobra.Command{
 		// daemon -> stdout/stderr
 		exitStatusCh := make(chan int, 1)
 		go func() {
+			var screenObserver terminalScreenObserver
 			for {
 				msg, err := protocol.ReadMessage(conn)
 				if err != nil {
@@ -392,6 +405,9 @@ var sshCmd = &cobra.Command{
 							}
 						}
 					}()
+					if screenObserver.Observe(msg.Payload) {
+						resizeSync.Pulse()
+					}
 				}
 			}
 		}()
@@ -459,6 +475,120 @@ func formatBroadcastResponse(payload []byte) string {
 	return "[broadcast: ok]"
 }
 
+type terminalResizeSynchronizer struct {
+	delay   time.Duration
+	send    func()
+	mu      sync.Mutex
+	timer   *time.Timer
+	stopped bool
+}
+
+func newTerminalResizeSynchronizer(delay time.Duration, send func()) *terminalResizeSynchronizer {
+	return &terminalResizeSynchronizer{delay: delay, send: send}
+}
+
+func (s *terminalResizeSynchronizer) Pulse() {
+	if s == nil || s.send == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return
+	}
+	if s.timer == nil {
+		s.timer = time.AfterFunc(s.delay, func() {
+			s.mu.Lock()
+			if s.stopped {
+				s.mu.Unlock()
+				return
+			}
+			s.timer = nil
+			send := s.send
+			s.mu.Unlock()
+			send()
+		})
+		return
+	}
+	s.timer.Reset(s.delay)
+}
+
+func (s *terminalResizeSynchronizer) Stop() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = true
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+}
+
+type terminalScreenObserver struct {
+	tail []byte
+}
+
+func (o *terminalScreenObserver) Observe(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	since := len(o.tail)
+	data := make([]byte, 0, len(o.tail)+len(payload))
+	data = append(data, o.tail...)
+	data = append(data, payload...)
+	entered := containsAlternateScreenEnter(data, since)
+	o.tail = terminalControlTail(data)
+	return entered
+}
+
+func terminalControlTail(data []byte) []byte {
+	const maxTail = 64
+	if len(data) <= maxTail {
+		return append([]byte(nil), data...)
+	}
+	return append([]byte(nil), data[len(data)-maxTail:]...)
+}
+
+func containsAlternateScreenEnter(data []byte, since int) bool {
+	for i := 0; i+1 < len(data); i++ {
+		if data[i] != 0x1b || data[i+1] != '[' {
+			continue
+		}
+		final := i + 2
+		for final < len(data) && !isCSIFinalByte(data[final]) {
+			final++
+		}
+		if final >= len(data) {
+			break
+		}
+		if final >= since && data[final] == 'h' && csiParamsSetAlternateScreen(data[i+2:final]) {
+			return true
+		}
+		i = final
+	}
+	return false
+}
+
+func csiParamsSetAlternateScreen(params []byte) bool {
+	if len(params) < 2 || params[0] != '?' {
+		return false
+	}
+	for _, b := range params {
+		if b != '?' && b != ';' && (b < '0' || b > '9') {
+			return false
+		}
+	}
+	for _, part := range bytes.Split(params[1:], []byte{';'}) {
+		switch string(part) {
+		case "47", "1047", "1049":
+			return true
+		}
+	}
+	return false
+}
+
 func sshTerminalTitle(alias, broadcastGroup string, paused bool) string {
 	if broadcastGroup == "" {
 		return alias
@@ -477,11 +607,21 @@ func isTerminalResponse(payload []byte) bool {
 type terminalResponseClassifier struct {
 	inStringControl bool
 	inCSIResponse   bool
+	pendingESC      bool
+	pendingCSI      bool
 }
 
 func (c *terminalResponseClassifier) IsTerminalResponse(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
+	}
+	if c.pendingESC {
+		c.pendingESC = false
+		return c.classifyEscapeContinuation(payload)
+	}
+	if c.pendingCSI {
+		c.pendingCSI = false
+		return c.isCSIResponse(payload)
 	}
 	if c.inStringControl {
 		if hasStringControlTerminator(payload) {
@@ -498,21 +638,35 @@ func (c *terminalResponseClassifier) IsTerminalResponse(payload []byte) bool {
 	if len(payload) == 0 || payload[0] != 0x1b {
 		return false
 	}
-	if len(payload) >= 2 {
-		switch payload[1] {
-		case ']':
-			if !isCompleteStringControl(payload[2:]) {
-				c.inStringControl = true
-			}
-			return true
-		case '[':
-			return c.isCSIResponse(payload[2:])
-		case 'P', '^', '_':
-			if !isCompleteStringControl(payload[2:]) {
-				c.inStringControl = true
-			}
+	if len(payload) == 1 {
+		c.pendingESC = true
+		return true
+	}
+	return c.classifyEscapeContinuation(payload[1:])
+}
+
+func (c *terminalResponseClassifier) classifyEscapeContinuation(payload []byte) bool {
+	if len(payload) == 0 {
+		c.pendingESC = true
+		return true
+	}
+	switch payload[0] {
+	case ']':
+		if !isCompleteStringControl(payload[1:]) {
+			c.inStringControl = true
+		}
+		return true
+	case '[':
+		if len(payload) == 1 {
+			c.pendingCSI = true
 			return true
 		}
+		return c.isCSIResponse(payload[1:])
+	case 'P', '^', '_':
+		if !isCompleteStringControl(payload[1:]) {
+			c.inStringControl = true
+		}
+		return true
 	}
 	return false
 }
@@ -582,7 +736,7 @@ func isCSIFinalByte(b byte) bool {
 
 func isCSIResponseFinal(b byte) bool {
 	switch b {
-	case 'R', 'c', 'n', 't', 'u', 'x', 'y':
+	case 'R', 'c', 'f', 'n', 't', 'u', 'x', 'y':
 		return true
 	default:
 		return false
@@ -614,6 +768,49 @@ func resolveSSHEscape(cmd *cobra.Command, cfg *config.Config, broadcastGroup str
 		return cfg.Settings.GetBroadcastEscapeChar()
 	}
 	return "none"
+}
+
+func normalizeRemoteTerm(term string) string {
+	switch term {
+	case "xterm-kitty", "xterm-ghostty":
+		return "xterm-256color"
+	default:
+		return term
+	}
+}
+
+func sshEnvironment() map[string]string {
+	allowed := []string{
+		"LANG",
+		"LC_ALL",
+		"LC_CTYPE",
+		"COLORTERM",
+		"NO_COLOR",
+		"CLICOLOR",
+		"CLICOLOR_FORCE",
+	}
+	env := make(map[string]string)
+	for _, key := range allowed {
+		if value, ok := os.LookupEnv(key); ok && validSSHEnvValue(value) {
+			env[key] = value
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
+func validSSHEnvValue(value string) bool {
+	if len(value) > 1024 {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validateSSHEscapeValue(value string) error {

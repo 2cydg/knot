@@ -5,8 +5,11 @@ import (
 	"io"
 	"knot/internal/protocol"
 	"knot/pkg/config"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -206,6 +209,80 @@ func TestResolveSSHEscape(t *testing.T) {
 	}
 }
 
+func TestNormalizeRemoteTerm(t *testing.T) {
+	tests := []struct {
+		name string
+		term string
+		want string
+	}{
+		{name: "kitty", term: "xterm-kitty", want: "xterm-256color"},
+		{name: "ghostty", term: "xterm-ghostty", want: "xterm-256color"},
+		{name: "xterm", term: "xterm-256color", want: "xterm-256color"},
+		{name: "screen", term: "screen-256color", want: "screen-256color"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeRemoteTerm(tt.term); got != tt.want {
+				t.Fatalf("normalizeRemoteTerm(%q) = %q, want %q", tt.term, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSSHEnvironmentIncludesLocaleAndColor(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("LC_CTYPE", "zh_CN.UTF-8")
+	t.Setenv("COLORTERM", "truecolor")
+	t.Setenv("TERM", "xterm-256color")
+
+	env := sshEnvironment()
+	if env["LANG"] != "en_US.UTF-8" {
+		t.Fatalf("LANG = %q", env["LANG"])
+	}
+	if env["LC_CTYPE"] != "zh_CN.UTF-8" {
+		t.Fatalf("LC_CTYPE = %q", env["LC_CTYPE"])
+	}
+	if env["COLORTERM"] != "truecolor" {
+		t.Fatalf("COLORTERM = %q", env["COLORTERM"])
+	}
+	if _, ok := env["TERM"]; ok {
+		t.Fatal("TERM should be carried by pty request, not env")
+	}
+}
+
+func TestSSHEnvironmentRejectsControlCharacters(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8\x1b")
+	t.Setenv("COLORTERM", "truecolor")
+
+	env := sshEnvironment()
+	if _, ok := env["LANG"]; ok {
+		t.Fatal("LANG with control character should be rejected")
+	}
+	if env["COLORTERM"] != "truecolor" {
+		t.Fatalf("COLORTERM = %q", env["COLORTERM"])
+	}
+}
+
+func TestSSHEnvironmentReturnsNilWhenEmpty(t *testing.T) {
+	for _, key := range []string{"LANG", "LC_ALL", "LC_CTYPE", "COLORTERM", "NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE"} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+	if env := sshEnvironment(); env != nil {
+		t.Fatalf("sshEnvironment() = %#v, want nil", env)
+	}
+}
+
+func TestDetectTerminalSizeFallback(t *testing.T) {
+	cols, rows := detectTerminalSize(-1)
+	if cols != defaultTerminalCols || rows != defaultTerminalRows {
+		t.Fatalf("detectTerminalSize fallback = %dx%d, want %dx%d", cols, rows, defaultTerminalCols, defaultTerminalRows)
+	}
+}
+
 func TestValidateSSHEscapeValue(t *testing.T) {
 	valid := []string{"", "none", "~", "%"}
 	for _, value := range valid {
@@ -272,7 +349,7 @@ func TestIsTerminalResponse(t *testing.T) {
 		{name: "decrqss mode response", payload: []byte("\x1b[?2004;1$y"), want: true},
 		{name: "arrow key input", payload: []byte("\x1b[A"), want: false},
 		{name: "bracketed paste start", payload: []byte("\x1b[200~"), want: false},
-		{name: "keyboard escape alone", payload: []byte("\x1b"), want: false},
+		{name: "keyboard escape prefix", payload: []byte("\x1b"), want: true},
 		{name: "enter key", payload: []byte("\r"), want: false},
 		{name: "plain text", payload: []byte("duf\n"), want: false},
 	}
@@ -315,6 +392,42 @@ func TestTerminalResponseClassifierSplitCSI(t *testing.T) {
 	}
 }
 
+func TestTerminalResponseClassifierSplitCSIIntroducer(t *testing.T) {
+	classifier := terminalResponseClassifier{}
+	if !classifier.IsTerminalResponse([]byte("\x1b[")) {
+		t.Fatal("split CSI introducer should be classified as terminal response prefix")
+	}
+	if !classifier.IsTerminalResponse([]byte("15;29f")) {
+		t.Fatal("cursor-position continuation should be classified as terminal response")
+	}
+	if classifier.IsTerminalResponse([]byte("pwd\n")) {
+		t.Fatal("plain input after split CSI should not be terminal response")
+	}
+}
+
+func TestTerminalResponseClassifierSplitEscapeThenCSI(t *testing.T) {
+	classifier := terminalResponseClassifier{}
+	if !classifier.IsTerminalResponse([]byte("\x1b")) {
+		t.Fatal("split escape prefix should be classified as terminal response prefix")
+	}
+	if !classifier.IsTerminalResponse([]byte("[15;29f")) {
+		t.Fatal("CSI continuation after split escape should be classified as terminal response")
+	}
+	if classifier.IsTerminalResponse([]byte("pwd\n")) {
+		t.Fatal("plain input after split escape CSI should not be terminal response")
+	}
+}
+
+func TestTerminalResponseClassifierSplitEscapeKeyboardInput(t *testing.T) {
+	classifier := terminalResponseClassifier{}
+	if !classifier.IsTerminalResponse([]byte("\x1b")) {
+		t.Fatal("split escape prefix should be classified as terminal response prefix")
+	}
+	if classifier.IsTerminalResponse([]byte("x")) {
+		t.Fatal("plain key after split escape should not be terminal response")
+	}
+}
+
 func TestTerminalResponseClassifierSplitCSIWithIntermediate(t *testing.T) {
 	classifier := terminalResponseClassifier{}
 	if !classifier.IsTerminalResponse([]byte("\x1b[?2004;")) {
@@ -325,5 +438,54 @@ func TestTerminalResponseClassifierSplitCSIWithIntermediate(t *testing.T) {
 	}
 	if classifier.IsTerminalResponse([]byte("\x1b[A")) {
 		t.Fatal("arrow key input should not be terminal response after split CSI")
+	}
+}
+
+func TestTerminalScreenObserverDetectsAlternateScreen(t *testing.T) {
+	var observer terminalScreenObserver
+
+	if !observer.Observe([]byte("\x1b[?1049h")) {
+		t.Fatal("alternate screen enter should be detected")
+	}
+	if observer.Observe([]byte("\x1b[?1049l")) {
+		t.Fatal("alternate screen leave should not request resize")
+	}
+}
+
+func TestTerminalScreenObserverDetectsSplitAlternateScreen(t *testing.T) {
+	var observer terminalScreenObserver
+
+	if observer.Observe([]byte("\x1b[?10")) {
+		t.Fatal("partial alternate screen sequence should wait for final byte")
+	}
+	if !observer.Observe([]byte("49h")) {
+		t.Fatal("split alternate screen enter should be detected")
+	}
+}
+
+func TestTerminalScreenObserverIgnoresNonAlternateScreenCSI(t *testing.T) {
+	var observer terminalScreenObserver
+
+	if observer.Observe([]byte("\x1b[2J\x1b[H")) {
+		t.Fatal("ordinary screen clear should not request resize")
+	}
+	if observer.Observe([]byte("\x1b[?2004h")) {
+		t.Fatal("bracketed paste should not request resize")
+	}
+}
+
+func TestTerminalResizeSynchronizerDebouncesPulses(t *testing.T) {
+	var calls atomic.Int32
+	syncer := newTerminalResizeSynchronizer(10*time.Millisecond, func() {
+		calls.Add(1)
+	})
+	defer syncer.Stop()
+
+	syncer.Pulse()
+	syncer.Pulse()
+	time.Sleep(50 * time.Millisecond)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("resize calls = %d, want 1", got)
 	}
 }

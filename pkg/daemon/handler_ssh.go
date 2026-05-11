@@ -64,7 +64,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	}
 
 	// 3. Create session
-	if req.Rows <= 0 || req.Rows > 10000 || req.Cols <= 0 || req.Cols > 10000 {
+	if !validTerminalDimensions(req.Rows, req.Cols) {
 		sendError("invalid terminal dimensions")
 		return
 	}
@@ -85,6 +85,7 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		sendError("failed to request pty: " + err.Error())
 		return
 	}
+	setSSHSessionEnvironment(session, req.Env, req.Alias)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -201,12 +202,12 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			n, err := stdout.Read(buf)
 			if n > 0 {
 				filtered := s.FilterSuppressedInputEcho(buf[:n])
-				clean, paths, _ := osc7.Observe(filtered)
+				_, paths, _ := osc7.Observe(filtered)
 				for _, dir := range paths {
 					s.UpdateCurrentDir(dir)
 				}
-				if len(clean) > 0 {
-					if err := s.WriteMessage(protocol.TypeData, protocol.DataStdout, clean); err != nil {
+				if len(filtered) > 0 {
+					if err := s.WriteMessage(protocol.TypeData, protocol.DataStdout, filtered); err != nil {
 						return
 					}
 				}
@@ -226,12 +227,12 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 		for {
 			n, err := stderr.Read(buf)
 			if n > 0 {
-				clean, paths, _ := osc7.Observe(buf[:n])
+				_, paths, _ := osc7.Observe(buf[:n])
 				for _, dir := range paths {
 					s.UpdateCurrentDir(dir)
 				}
-				if len(clean) > 0 {
-					if err := s.WriteMessage(protocol.TypeData, protocol.DataStderr, clean); err != nil {
+				if len(buf[:n]) > 0 {
+					if err := s.WriteMessage(protocol.TypeData, protocol.DataStderr, buf[:n]); err != nil {
 						return
 					}
 				}
@@ -284,7 +285,13 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 				if msg.Header.Reserved == protocol.SignalResize {
 					var payload protocol.ResizePayload
 					if err := json.Unmarshal(msg.Payload, &payload); err == nil {
-						session.WindowChange(payload.Rows, payload.Cols)
+						if validTerminalDimensions(payload.Rows, payload.Cols) {
+							if err := session.WindowChange(payload.Rows, payload.Cols); err != nil {
+								logger.Warn("Failed to apply terminal resize", "alias", req.Alias, "error", err)
+							}
+						} else {
+							logger.Warn("Ignoring invalid terminal resize", "alias", req.Alias, "rows", payload.Rows, "cols", payload.Cols)
+						}
 					} else {
 						logger.Error("Failed to unmarshal resize payload", "error", err)
 					}
@@ -334,6 +341,50 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 			s.WriteMessage(protocol.TypeDisconnect, 0, []byte("SSH connection lost: "+req.Alias))
 		}
 	}
+}
+
+func validTerminalDimensions(rows, cols int) bool {
+	return rows > 0 && rows <= 10000 && cols > 0 && cols <= 10000
+}
+
+func setSSHSessionEnvironment(session *ssh.Session, env map[string]string, alias string) {
+	for key, value := range env {
+		if !validSSHEnvName(key) || !validSSHEnvValue(value) {
+			logger.Warn("Ignoring invalid SSH environment value", "alias", alias, "key", key)
+			continue
+		}
+		if err := session.Setenv(key, value); err != nil {
+			logger.Debug("Remote SSH server rejected environment value", "alias", alias, "key", key, "error", err)
+		}
+	}
+}
+
+func validSSHEnvName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validSSHEnvValue(value string) bool {
+	if len(value) > 1024 {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func sshTerminalModes() ssh.TerminalModes {

@@ -21,6 +21,7 @@ The project favors simple command-line interaction, persistent SSH connection re
 - When committing code, the commit message must follow Conventional Commits, for example `feat: add sftp batch command` or `fix: handle stale daemon socket`.
 - Always respect `.gitignore`; do not force-add, stage, or otherwise bypass ignored paths unless the user explicitly asks.
 - Keep Go code idiomatic, follow the existing package boundaries and style, and avoid unrelated refactors.
+- For terminal-facing SSH features, preserve the byte stream from the remote server to the local terminal as faithfully as possible. Avoid filtering, buffering, rewriting, or interpreting PTY output unless the behavior is explicitly required and covered by focused regression tests.
 - Avoid adding new dependencies unless they are necessary. Prefer the Go standard library first, then third-party packages only when the benefit is clear, because binary size matters for this project.
 - When modifying older code that lacks test coverage, add focused unit tests or regression tests where practical.
 - When adding tests, pay special attention to Windows compatibility: use `filepath` for local paths, avoid Unix-only assumptions, and consider Windows CI behavior for sockets, terminals, file locking, and platform-backed crypto.

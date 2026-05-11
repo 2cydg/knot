@@ -4,7 +4,12 @@ package crypto
 
 import (
 	"bytes"
+	"fmt"
+	"reflect"
 	"testing"
+	"time"
+
+	"github.com/godbus/dbus/v5"
 )
 
 func TestLinuxProvider(t *testing.T) {
@@ -34,6 +39,14 @@ func TestLinuxProvider(t *testing.T) {
 }
 
 func TestLinuxFallbackV2CanDecryptLegacyV1(t *testing.T) {
+	oldGetSecretServiceKey := getSecretServiceKeyFunc
+	getSecretServiceKeyFunc = func(time.Duration) ([]byte, error) {
+		return nil, fmt.Errorf("unavailable")
+	}
+	defer func() {
+		getSecretServiceKeyFunc = oldGetSecretServiceKey
+	}()
+
 	salt := bytes.Repeat([]byte{7}, saltLength)
 	machineID := "machine-id-for-test"
 	v1Key := DeriveKey(machineID, salt)
@@ -91,5 +104,85 @@ func TestLinuxSecretServiceKeyTakesPrecedence(t *testing.T) {
 	}
 	if _, err := DecryptWithKey(ciphertext, v1Key); err == nil {
 		t.Fatal("secret service ciphertext should not decrypt with fallback v1")
+	}
+}
+
+func TestNewLinuxProviderUsesShortSecretServiceTimeout(t *testing.T) {
+	oldGetSecretServiceKey := getSecretServiceKeyFunc
+	getSecretServiceKeyFunc = func(timeout time.Duration) ([]byte, error) {
+		if timeout != ssInitialTimeout {
+			t.Fatalf("timeout = %v, want %v", timeout, ssInitialTimeout)
+		}
+		return nil, fmt.Errorf("locked")
+	}
+	defer func() {
+		getSecretServiceKeyFunc = oldGetSecretServiceKey
+	}()
+
+	provider, err := NewLinuxProvider()
+	if err != nil {
+		t.Fatalf("NewLinuxProvider failed: %v", err)
+	}
+	if provider.Name() != "Machine ID (Fallback)" {
+		t.Fatalf("provider name = %q, want Machine ID (Fallback)", provider.Name())
+	}
+}
+
+func TestLinuxDecryptRefreshesSecretServiceAfterFallbackFailure(t *testing.T) {
+	salt := bytes.Repeat([]byte{3}, saltLength)
+	ssKey := DeriveKey("secret-service", salt)
+	fallbackKey := DeriveKey(linuxFallbackKeyMaterial("machine-id"), salt)
+
+	ciphertext, err := EncryptWithKey([]byte("secret service only"), ssKey)
+	if err != nil {
+		t.Fatalf("EncryptWithKey failed: %v", err)
+	}
+
+	calls := 0
+	oldGetSecretServiceKey := getSecretServiceKeyFunc
+	getSecretServiceKeyFunc = func(timeout time.Duration) ([]byte, error) {
+		calls++
+		if timeout != ssPromptTimeout {
+			t.Fatalf("timeout = %v, want %v", timeout, ssPromptTimeout)
+		}
+		return ssKey, nil
+	}
+	defer func() {
+		getSecretServiceKeyFunc = oldGetSecretServiceKey
+	}()
+
+	provider := &linuxProvider{fallbackKey: fallbackKey}
+	plaintext, err := provider.Decrypt(ciphertext)
+	if err != nil {
+		t.Fatalf("Decrypt failed: %v", err)
+	}
+	if string(plaintext) != "secret service only" {
+		t.Fatalf("plaintext = %q", plaintext)
+	}
+	if calls != 1 {
+		t.Fatalf("getSecretServiceKey calls = %d, want 1", calls)
+	}
+	if provider.Name() != "Secret Service" {
+		t.Fatalf("provider name = %q, want Secret Service", provider.Name())
+	}
+}
+
+func TestSecretServiceCollectionCandidates(t *testing.T) {
+	got := secretServiceCollectionCandidates(
+		dbus.ObjectPath("/org/freedesktop/secrets/collection/kdewallet"),
+		[]dbus.ObjectPath{
+			"/org/freedesktop/secrets/collection/kdewallet",
+			"/org/freedesktop/secrets/collection/session",
+			"",
+			"/",
+		},
+	)
+	want := []dbus.ObjectPath{
+		"/org/freedesktop/secrets/collection/kdewallet",
+		"/org/freedesktop/secrets/collection/session",
+		ssLoginCollPath,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 }
