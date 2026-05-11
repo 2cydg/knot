@@ -199,6 +199,54 @@ func TestSyncProviderAliasCompleter(t *testing.T) {
 	}
 }
 
+func TestKeyCommandAliasCompletion(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		t.Fatalf("failed to create crypto provider: %v", err)
+	}
+
+	cfg := &config.Config{
+		Settings: config.SettingsConfig{},
+		Servers:  make(map[string]config.ServerConfig),
+		Proxies:  make(map[string]config.ProxyConfig),
+		Keys: map[string]config.KeyConfig{
+			"key_deploy": {ID: "key_deploy", Alias: "deploy"},
+			"key_prod":   {ID: "key_prod", Alias: "prod"},
+		},
+		SyncProviders: make(map[string]config.SyncProviderConfig),
+	}
+	if err := cfg.Save(provider); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{name: "key edit", cmd: keyEditCmd},
+		{name: "key remove", cmd: keyRemoveCmd},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cmd.ValidArgsFunction == nil {
+				t.Fatalf("%s should register ValidArgsFunction", tc.cmd.Use)
+			}
+
+			got, directive := tc.cmd.ValidArgsFunction(tc.cmd, nil, "d")
+			if directive != cobra.ShellCompDirectiveNoFileComp {
+				t.Fatalf("%s directive = %v, want %v", tc.cmd.Use, directive, cobra.ShellCompDirectiveNoFileComp)
+			}
+			if want := []string{"deploy"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s completions = %#v, want %#v", tc.cmd.Use, got, want)
+			}
+		})
+	}
+}
+
 func TestEnsureZshCompinit(t *testing.T) {
 	script := "#compdef knot\ncompdef _knot knot\n\n_knot() {\n  return 0\n}\n"
 
