@@ -12,7 +12,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -36,17 +35,40 @@ var ssItemAttributes = map[string]string{
 }
 
 var getSecretServiceKeyFunc = getSecretServiceKey
-
-type linuxProvider struct {
-	mu            sync.Mutex
-	key           []byte
-	fallbackKey   []byte
-	fallbackKeyV1 []byte
-}
+var getOrCreateSecretServiceKeyFunc = getOrCreateSecretServiceKey
 
 func NewLinuxProvider() (Provider, error) {
 	logger.Debug("Initializing Linux crypto provider")
 
+	state, err := LoadState()
+	if err != nil {
+		return nil, err
+	}
+
+	factory, err := newLinuxProviderFactory()
+	if err != nil {
+		return nil, err
+	}
+
+	if state != nil {
+		provider, err := factory.providerForState(state.Provider)
+		if err != nil {
+			return nil, err
+		}
+		if err := ValidateState(state, provider); err != nil {
+			return nil, err
+		}
+		return provider, nil
+	}
+
+	return factory.bootstrapProvider()
+}
+
+type linuxProviderFactory struct {
+	machineIDKey []byte
+}
+
+func newLinuxProviderFactory() (*linuxProviderFactory, error) {
 	machineID, err := getMachineID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get machine id: %w", err)
@@ -59,113 +81,66 @@ func NewLinuxProvider() (Provider, error) {
 	}
 
 	fallbackKey := DeriveKey(linuxFallbackKeyMaterial(machineID), salt)
-	fallbackKeyV1 := DeriveKey(machineID, salt)
+	return &linuxProviderFactory{machineIDKey: fallbackKey}, nil
+}
 
-	// Try secret-service via D-Bus
-	ssKey, err := getSecretServiceKeyFunc(ssInitialTimeout)
+func (f *linuxProviderFactory) providerForState(providerID string) (Provider, error) {
+	switch providerID {
+	case ProviderLinuxSecretService:
+		key, err := getSecretServiceKeyFunc(ssInitialTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("Knot encryption backend is %s, but Secret Service is unavailable or locked. Unlock your keyring and retry, or remove the .crypto-state file to let Knot choose a backend again: %w", ProviderLinuxSecretService, err)
+		}
+		return newKeyProvider(ProviderLinuxSecretService, key), nil
+	case ProviderLinuxMachineID:
+		return newKeyProvider(ProviderLinuxMachineID, f.machineIDKey), nil
+	default:
+		return nil, fmt.Errorf("unknown encryption provider %q", providerID)
+	}
+}
+
+func (f *linuxProviderFactory) bootstrapProvider() (Provider, error) {
+	var candidates []Provider
+	var selected Provider
+	var reason string
+	ssKey, err := getOrCreateSecretServiceKeyFunc(ssInitialTimeout)
 	if err != nil {
 		logger.Debug("Secret Service access failed, will use Machine ID fallback", "error", err)
+		reason = err.Error()
 	} else {
+		selected = newKeyProvider(ProviderLinuxSecretService, ssKey)
+		candidates = append(candidates, selected)
 		logger.Debug("Secret Service key retrieved successfully")
 	}
 
-	return &linuxProvider{
-		key:           ssKey,
-		fallbackKey:   fallbackKey,
-		fallbackKeyV1: fallbackKeyV1,
-	}, nil
+	machineProvider := newKeyProvider(ProviderLinuxMachineID, f.machineIDKey)
+	if selected == nil {
+		selected = machineProvider
+	}
+	candidates = append(candidates, machineProvider)
+
+	return NewBootstrapProviderWithReason(selected, candidates, NewLinuxProvider, reason), nil
 }
 
-func (p *linuxProvider) Name() string {
-	if p.cachedSecretServiceKey() == nil {
-		return "Machine ID (Fallback)"
-	}
-	return "Secret Service"
+type keyProvider struct {
+	name string
+	key  []byte
 }
 
-func (p *linuxProvider) Encrypt(plaintext []byte) ([]byte, error) {
-	key := p.cachedSecretServiceKey()
-	usingSecretService := key != nil
-	if key == nil {
-		var err error
-		key, err = p.refreshSecretServiceKey()
-		if err != nil {
-			logger.Debug("Secret Service refresh failed before encryption, using Machine ID fallback", "error", err)
-			key = p.fallbackKey
-		} else {
-			usingSecretService = true
-		}
-	}
-
-	if usingSecretService {
-		logger.Debug("Encrypting using Secret Service")
-	} else {
-		logger.Debug("Encrypting using Machine ID fallback")
-	}
-
-	return EncryptWithKey(plaintext, key)
+func newKeyProvider(name string, key []byte) Provider {
+	return &keyProvider{name: name, key: key}
 }
 
-func (p *linuxProvider) Decrypt(ciphertext []byte) ([]byte, error) {
-	// Try main key first (Secret Service if available)
-	if key := p.cachedSecretServiceKey(); key != nil {
-		logger.Debug("Attempting decryption with Secret Service key")
-		plaintext, err := DecryptWithKey(ciphertext, key)
-		if err == nil {
-			return plaintext, nil
-		}
-		logger.Debug("Decryption with Secret Service key failed", "error", err)
-	}
-
-	// Fallback to machine-id key
-	logger.Debug("Attempting decryption with Machine ID fallback key")
-	plaintext, err := DecryptWithKey(ciphertext, p.fallbackKey)
-	if err == nil {
-		return plaintext, nil
-	}
-	if p.fallbackKeyV1 != nil {
-		logger.Debug("Attempting decryption with legacy Machine ID fallback key")
-		plaintext, legacyErr := DecryptWithKey(ciphertext, p.fallbackKeyV1)
-		if legacyErr == nil {
-			return plaintext, nil
-		}
-	}
-
-	if p.cachedSecretServiceKey() == nil {
-		logger.Debug("Fallback decryption failed, retrying Secret Service key retrieval")
-		key, ssErr := p.refreshSecretServiceKey()
-		if ssErr != nil {
-			logger.Debug("Secret Service refresh after fallback decryption failed", "error", ssErr)
-			return nil, err
-		}
-		logger.Debug("Attempting decryption with refreshed Secret Service key")
-		plaintext, ssDecryptErr := DecryptWithKey(ciphertext, key)
-		if ssDecryptErr == nil {
-			return plaintext, nil
-		}
-		return nil, ssDecryptErr
-	}
-	return nil, err
+func (p *keyProvider) Name() string {
+	return p.name
 }
 
-func (p *linuxProvider) cachedSecretServiceKey() []byte {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.key
+func (p *keyProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	return EncryptWithKey(plaintext, p.key)
 }
 
-func (p *linuxProvider) refreshSecretServiceKey() ([]byte, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.key != nil {
-		return p.key, nil
-	}
-	key, err := getSecretServiceKeyFunc(ssPromptTimeout)
-	if err != nil {
-		return nil, err
-	}
-	p.key = key
-	return p.key, nil
+func (p *keyProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	return DecryptWithKey(ciphertext, p.key)
 }
 
 func linuxFallbackKeyMaterial(machineID string) string {
@@ -192,6 +167,14 @@ func getDBusConn() (*dbus.Conn, error) {
 }
 
 func getSecretServiceKey(timeout time.Duration) ([]byte, error) {
+	return secretServiceKey(timeout, false)
+}
+
+func getOrCreateSecretServiceKey(timeout time.Duration) ([]byte, error) {
+	return secretServiceKey(timeout, true)
+}
+
+func secretServiceKey(timeout time.Duration, allowCreate bool) ([]byte, error) {
 	conn, err := getDBusConn()
 	if err != nil {
 		return nil, err
@@ -247,6 +230,10 @@ func getSecretServiceKey(timeout time.Duration) ([]byte, error) {
 		if err == nil && len(secret.Value) > 0 {
 			return base64.StdEncoding.DecodeString(strings.TrimSpace(string(secret.Value)))
 		}
+	}
+
+	if !allowCreate {
+		return nil, fmt.Errorf("Secret Service item not found")
 	}
 
 	// 4. Create new key if not found

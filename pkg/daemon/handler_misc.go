@@ -28,8 +28,16 @@ func (d *Daemon) handleStatusRequest(conn net.Conn) {
 
 	cfg, err := config.Load(d.crypto)
 	if err != nil {
-		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: load config failed"))
-		return
+		if !config.IsSecretDecryptError(err) {
+			protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: load config failed"))
+			return
+		}
+		rawCfg, rawErr := config.LoadRaw()
+		if rawErr != nil {
+			protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("error: load config failed"))
+			return
+		}
+		cfg = rawCfg
 	}
 
 	forwardRules := forwardStatusesForServer(d.fm.ListRules(), cfg, "")

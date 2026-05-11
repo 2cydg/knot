@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,7 @@ var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the background daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		config.CryptoBootstrapNotify = nil
 		foreground, _ := cmd.Flags().GetBool("foreground")
 		if !foreground {
 			// Restart the process in the background
@@ -90,14 +92,18 @@ var daemonStartCmd = &cobra.Command{
 			return err
 		}
 
-		// Temporary load to get settings
-		tmpProvider, _ := crypto.NewProvider() // We don't care if this fails/fallbacks yet
-		cfg, _ := config.Load(tmpProvider)
-
 		logLevel := slog.LevelError
-		if cfg != nil && cfg.Settings.LogLevel != "" {
-			if err := logLevel.UnmarshalText([]byte(cfg.Settings.LogLevel)); err != nil {
-				logLevel = slog.LevelError
+		configPath, err := paths.GetConfigPath()
+		if err == nil {
+			var rawSettings struct {
+				Settings struct {
+					LogLevel string `toml:"log_level"`
+				} `toml:"settings"`
+			}
+			if _, err := toml.DecodeFile(configPath, &rawSettings); err == nil && rawSettings.Settings.LogLevel != "" {
+				if err := logLevel.UnmarshalText([]byte(rawSettings.Settings.LogLevel)); err != nil {
+					logLevel = slog.LevelError
+				}
 			}
 		}
 
@@ -113,8 +119,7 @@ var daemonStartCmd = &cobra.Command{
 		}
 
 		// Re-load config with the real provider
-		cfg, err = config.Load(provider)
-		if err != nil {
+		if _, err := config.Load(provider); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
 		}
 

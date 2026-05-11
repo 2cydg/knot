@@ -21,7 +21,10 @@ var statusCmd = &cobra.Command{
 
 		status, err := client.Status()
 		if err != nil {
-			return fmt.Errorf("knot daemon is not running")
+			if daemon.IsNotRunningError(err) {
+				return fmt.Errorf("knot daemon is not running")
+			}
+			return fmt.Errorf("failed to read daemon status: %w", err)
 		}
 
 		formatter := NewFormatter()
@@ -32,8 +35,9 @@ var statusCmd = &cobra.Command{
 
 			// Colorize Crypto Provider
 			cryptoDisplay := status.CryptoProvider
-			if strings.Contains(strings.ToLower(status.CryptoProvider), "fallback") {
-				// Yellow/Orange for fallback
+			cryptoProvider := strings.ToLower(status.CryptoProvider)
+			if strings.Contains(cryptoProvider, "fallback") || cryptoProvider == "linux-machine-id" {
+				// Yellow/Orange for Machine ID fallback
 				cryptoDisplay = fmt.Sprintf("\033[33m%s\033[0m", status.CryptoProvider)
 			} else {
 				// Green for OS-native

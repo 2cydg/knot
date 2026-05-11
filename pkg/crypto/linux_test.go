@@ -5,6 +5,7 @@ package crypto
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -13,6 +14,17 @@ import (
 )
 
 func TestLinuxProvider(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+
+	oldGetOrCreateSecretServiceKey := getOrCreateSecretServiceKeyFunc
+	getOrCreateSecretServiceKeyFunc = func(time.Duration) ([]byte, error) {
+		return nil, fmt.Errorf("unavailable")
+	}
+	defer func() {
+		getOrCreateSecretServiceKeyFunc = oldGetOrCreateSecretServiceKey
+	}()
+
 	provider, err := NewLinuxProvider()
 	if err != nil {
 		t.Fatalf("failed to create linux provider: %v", err)
@@ -38,15 +50,7 @@ func TestLinuxProvider(t *testing.T) {
 	}
 }
 
-func TestLinuxFallbackV2CanDecryptLegacyV1(t *testing.T) {
-	oldGetSecretServiceKey := getSecretServiceKeyFunc
-	getSecretServiceKeyFunc = func(time.Duration) ([]byte, error) {
-		return nil, fmt.Errorf("unavailable")
-	}
-	defer func() {
-		getSecretServiceKeyFunc = oldGetSecretServiceKey
-	}()
-
+func TestLinuxMachineIDDoesNotDecryptLegacyV1(t *testing.T) {
 	salt := bytes.Repeat([]byte{7}, saltLength)
 	machineID := "machine-id-for-test"
 	v1Key := DeriveKey(machineID, salt)
@@ -57,16 +61,9 @@ func TestLinuxFallbackV2CanDecryptLegacyV1(t *testing.T) {
 		t.Fatalf("EncryptWithKey legacy failed: %v", err)
 	}
 
-	provider := &linuxProvider{
-		fallbackKey:   v2Key,
-		fallbackKeyV1: v1Key,
-	}
-	plaintext, err := provider.Decrypt(legacyCiphertext)
-	if err != nil {
-		t.Fatalf("Decrypt legacy failed: %v", err)
-	}
-	if string(plaintext) != "legacy secret" {
-		t.Fatalf("plaintext = %q", plaintext)
+	provider := newKeyProvider(ProviderLinuxMachineID, v2Key)
+	if _, err := provider.Decrypt(legacyCiphertext); err == nil {
+		t.Fatal("legacy v1 Machine ID ciphertext should not decrypt with v2 provider")
 	}
 
 	newCiphertext, err := provider.Encrypt([]byte("new secret"))
@@ -81,17 +78,13 @@ func TestLinuxFallbackV2CanDecryptLegacyV1(t *testing.T) {
 	}
 }
 
-func TestLinuxSecretServiceKeyTakesPrecedence(t *testing.T) {
+func TestLinuxSecretServiceProviderUsesOnlySecretServiceKey(t *testing.T) {
 	salt := bytes.Repeat([]byte{9}, saltLength)
 	ssKey := DeriveKey("secret-service", salt)
 	v1Key := DeriveKey("machine-id", salt)
 	v2Key := DeriveKey(linuxFallbackKeyMaterial("machine-id"), salt)
 
-	provider := &linuxProvider{
-		key:           ssKey,
-		fallbackKey:   v2Key,
-		fallbackKeyV1: v1Key,
-	}
+	provider := newKeyProvider(ProviderLinuxSecretService, ssKey)
 	ciphertext, err := provider.Encrypt([]byte("secret service"))
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
@@ -108,62 +101,68 @@ func TestLinuxSecretServiceKeyTakesPrecedence(t *testing.T) {
 }
 
 func TestNewLinuxProviderUsesShortSecretServiceTimeout(t *testing.T) {
-	oldGetSecretServiceKey := getSecretServiceKeyFunc
-	getSecretServiceKeyFunc = func(timeout time.Duration) ([]byte, error) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+
+	oldGetOrCreateSecretServiceKey := getOrCreateSecretServiceKeyFunc
+	getOrCreateSecretServiceKeyFunc = func(timeout time.Duration) ([]byte, error) {
 		if timeout != ssInitialTimeout {
 			t.Fatalf("timeout = %v, want %v", timeout, ssInitialTimeout)
 		}
 		return nil, fmt.Errorf("locked")
 	}
 	defer func() {
-		getSecretServiceKeyFunc = oldGetSecretServiceKey
+		getOrCreateSecretServiceKeyFunc = oldGetOrCreateSecretServiceKey
 	}()
 
 	provider, err := NewLinuxProvider()
 	if err != nil {
 		t.Fatalf("NewLinuxProvider failed: %v", err)
 	}
-	if provider.Name() != "Machine ID (Fallback)" {
-		t.Fatalf("provider name = %q, want Machine ID (Fallback)", provider.Name())
+	if provider.Name() != ProviderLinuxMachineID {
+		t.Fatalf("provider name = %q, want %s", provider.Name(), ProviderLinuxMachineID)
 	}
 }
 
-func TestLinuxDecryptRefreshesSecretServiceAfterFallbackFailure(t *testing.T) {
+func TestLinuxProviderWithStateUsesReadOnlySecretService(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+
 	salt := bytes.Repeat([]byte{3}, saltLength)
 	ssKey := DeriveKey("secret-service", salt)
-	fallbackKey := DeriveKey(linuxFallbackKeyMaterial("machine-id"), salt)
-
-	ciphertext, err := EncryptWithKey([]byte("secret service only"), ssKey)
-	if err != nil {
-		t.Fatalf("EncryptWithKey failed: %v", err)
+	ssProvider := newKeyProvider(ProviderLinuxSecretService, ssKey)
+	if err := PersistState(ssProvider); err != nil {
+		t.Fatalf("PersistState failed: %v", err)
 	}
 
 	calls := 0
 	oldGetSecretServiceKey := getSecretServiceKeyFunc
 	getSecretServiceKeyFunc = func(timeout time.Duration) ([]byte, error) {
 		calls++
-		if timeout != ssPromptTimeout {
-			t.Fatalf("timeout = %v, want %v", timeout, ssPromptTimeout)
+		if timeout != ssInitialTimeout {
+			t.Fatalf("timeout = %v, want %v", timeout, ssInitialTimeout)
 		}
 		return ssKey, nil
 	}
+	oldGetOrCreateSecretServiceKey := getOrCreateSecretServiceKeyFunc
+	getOrCreateSecretServiceKeyFunc = func(time.Duration) ([]byte, error) {
+		t.Fatal("read-only state path must not create a Secret Service key")
+		return nil, nil
+	}
 	defer func() {
 		getSecretServiceKeyFunc = oldGetSecretServiceKey
+		getOrCreateSecretServiceKeyFunc = oldGetOrCreateSecretServiceKey
 	}()
 
-	provider := &linuxProvider{fallbackKey: fallbackKey}
-	plaintext, err := provider.Decrypt(ciphertext)
+	provider, err := NewLinuxProvider()
 	if err != nil {
-		t.Fatalf("Decrypt failed: %v", err)
-	}
-	if string(plaintext) != "secret service only" {
-		t.Fatalf("plaintext = %q", plaintext)
+		t.Fatalf("NewLinuxProvider failed: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("getSecretServiceKey calls = %d, want 1", calls)
 	}
-	if provider.Name() != "Secret Service" {
-		t.Fatalf("provider name = %q, want Secret Service", provider.Name())
+	if provider.Name() != ProviderLinuxSecretService {
+		t.Fatalf("provider name = %q, want %s", provider.Name(), ProviderLinuxSecretService)
 	}
 }
 

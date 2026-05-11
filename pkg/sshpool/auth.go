@@ -5,6 +5,7 @@ import (
 	"io"
 	"knot/pkg/config"
 	"net"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -53,6 +54,9 @@ func buildAuthMethods(srv config.ServerConfig, cfg *config.Config, opts DialOpti
 			if !ok {
 				return nil, nil, fmt.Errorf("key %s not found in config", srv.KeyID)
 			}
+			if strings.HasPrefix(keyCfg.PrivateKey, "ENC:") {
+				return nil, nil, fmt.Errorf("saved private key could not be decrypted for %s: %w", srv.Alias, ErrAuthFailed)
+			}
 
 			signer, err := ssh.ParsePrivateKey([]byte(keyCfg.PrivateKey))
 			if err != nil {
@@ -63,6 +67,9 @@ func buildAuthMethods(srv config.ServerConfig, cfg *config.Config, opts DialOpti
 
 	case config.AuthMethodPassword:
 		if srv.Password != "" {
+			if strings.HasPrefix(srv.Password, "ENC:") {
+				return nil, nil, fmt.Errorf("saved password could not be decrypted for %s: %w", srv.Alias, ErrAuthFailed)
+			}
 			authMethods = append(authMethods, ssh.Password(srv.Password))
 		}
 	}

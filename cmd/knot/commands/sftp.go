@@ -75,7 +75,15 @@ paths support ~/... expansion.`,
 		}
 		cfg, err := config.Load(provider)
 		if err != nil {
-			return err
+			if !config.IsSecretDecryptError(err) {
+				return err
+			}
+			rawCfg, rawErr := config.LoadRaw()
+			if rawErr != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Warning: failed to decrypt saved secrets; you may need to re-enter credentials.\n")
+			cfg = rawCfg
 		}
 		serverID, _, err := resolveServerAlias(cfg, alias)
 		if err != nil {

@@ -7,11 +7,17 @@ import (
 	"knot/pkg/config"
 	"knot/pkg/crypto"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestDaemonClient(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
 	tmpFile, err := os.CreateTemp("", "knot_test_*.sock")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
@@ -21,7 +27,10 @@ func TestDaemonClient(t *testing.T) {
 	os.Remove(tmpPath)
 	defer os.Remove(tmpPath)
 
-	provider, _ := crypto.NewProvider()
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
 	d, err := NewDaemon(provider)
 	if err != nil {
 		t.Fatalf("failed to create daemon: %v", err)
@@ -62,6 +71,11 @@ func TestDaemonClient(t *testing.T) {
 }
 
 func TestSSHRequest(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
 	keyPath := os.ExpandEnv("$HOME/.ssh/id_rsa_knot")
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
 		t.Skip("SSH test key not found, skipping")
@@ -86,7 +100,10 @@ func TestSSHRequest(t *testing.T) {
 	cfgFile.Close()
 	defer os.Remove(cfgPath)
 
-	provider, _ := crypto.NewProvider()
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
 
 	user := os.Getenv("USER")
 	if user == "" {

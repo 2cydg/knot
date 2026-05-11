@@ -28,8 +28,17 @@ func (d *Daemon) handleSSHRequest(conn net.Conn, req *protocol.SSHRequest) {
 	// 1. Load config
 	cfg, err := config.LoadFromPath(d.configPath, d.crypto)
 	if err != nil {
-		sendError("failed to load config: " + err.Error())
-		return
+		if !config.IsSecretDecryptError(err) {
+			sendError("failed to load config: " + err.Error())
+			return
+		}
+		rawCfg, rawErr := config.LoadRawFromPath(d.configPath)
+		if rawErr != nil {
+			sendError("failed to load config: " + err.Error())
+			return
+		}
+		logger.Warn("failed to decrypt one or more saved secrets; continuing with raw config for interactive auth recovery", "alias", req.Alias, "error", err)
+		cfg = rawCfg
 	}
 
 	serverID, srv, ok := cfg.FindServerByAlias(req.Alias)
