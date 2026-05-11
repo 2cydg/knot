@@ -259,9 +259,10 @@ Note: If using --passphrase, it may be visible in process lists. Use interactive
 }
 
 var keyRemoveCmd = &cobra.Command{
-	Use:     "remove [alias]",
-	Aliases: []string{"rm"},
-	Short:   "Remove a key",
+	Use:               "remove [alias]",
+	Aliases:           []string{"rm"},
+	Short:             "Remove a key",
+	ValidArgsFunction: keyAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("alias is required")
@@ -322,8 +323,9 @@ var keyRemoveCmd = &cobra.Command{
 }
 
 var keyEditCmd = &cobra.Command{
-	Use:   "edit [alias]",
-	Short: "Edit a key",
+	Use:               "edit [alias]",
+	Short:             "Edit a key",
+	ValidArgsFunction: keyAliasCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("alias is required")

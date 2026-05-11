@@ -28,6 +28,41 @@ The project favors simple command-line interaction, persistent SSH connection re
 - Do not let tests depend on live platform credential stores such as macOS Keychain, Windows DPAPI, or Linux Secret Service when asserting encrypted config behavior; inject a deterministic test crypto provider so CI can decrypt data across repeated loads.
 - After core logic changes, prefer running `go test ./...`; for release or build-related changes, also confirm `go build -o knot cmd/knot/main.go` succeeds.
 
+## Workflow Automation
+
+### PR Creation and Merge
+
+When the user says "pr", "create pr", "submit pr", or similar, the Agent automatically:
+
+1. `git push -u origin HEAD` — push the current branch
+2. `gh pr create` — create PR with title and description
+3. `gh pr checks --watch` — wait for CI checks to pass
+4. `gh pr merge --squash --delete-branch` — squash merge and delete branch
+
+If `gh` authentication fails, the Agent generates PR info (link, title, body) and provides commands for the user to execute manually.
+
+### Version Upgrade and Release
+
+When the user says "upgrade", "release", "tag", or similar:
+
+1. **Version number**: use user-specified version if provided; otherwise determine from code changes:
+   - Breaking changes or major features → bump major version
+   - New features (backward compatible) → bump minor version
+   - Bug fixes → bump patch version
+2. **Diff check**: `git diff main...HEAD` or `git log` to review unmerged commits
+3. **Release Note**: bilingual, Chinese first then English, one item per line:
+   ```
+   feat: feature description
+   fix: fix description
+   refactor: refactor description
+   ...
+
+   feature description in English
+   fix description in English
+   refactor description in English
+   ```
+4. **Tag push**: attempt `git tag v{x.y.z} && git push origin v{x.y.z}`; if auth fails, provide commands for the user
+
 ## Common Commands
 
 ```bash
