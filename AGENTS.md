@@ -30,38 +30,38 @@ The project favors simple command-line interaction, persistent SSH connection re
 
 ## Workflow Automation
 
-### PR 创建与合并
+### PR Creation and Merge
 
-当用户说"pr"、"创建pr"、"提交pr"或类似指令时，Agent 自动执行以下操作：
+When the user says "pr", "create pr", "submit pr", or similar, the Agent automatically:
 
-1. `git push -u origin HEAD` — 推送当前分支到远程
-2. `gh pr create` — 创建 PR，包含标题和描述
-3. `gh pr checks --watch` — 等待 CI 检查通过
-4. `gh pr merge --squash --delete-branch` — 自动 squash merge 并删除分支
+1. `git push -u origin HEAD` — push the current branch
+2. `gh pr create` — create PR with title and description
+3. `gh pr checks --watch` — wait for CI checks to pass
+4. `gh pr merge --squash --delete-branch` — squash merge and delete branch
 
-如果 `gh` 认证失败导致无法提交，Agent 生成 PR 信息（链接、标题、内容）并提供命令让用户手动执行。
+If `gh` authentication fails, the Agent generates PR info (link, title, body) and provides commands for the user to execute manually.
 
-### 版本升级与 Release
+### Version Upgrade and Release
 
-当用户说"升级版本"、"release"、"打版本"或类似指令时：
+When the user says "upgrade", "release", "tag", or similar:
 
-1. **版本号判定**：用户指定版本号时使用用户指定的；未指定时根据代码变更内容自行判定：
-   - 破坏性变更或大功能 → 升级主版本
-   - 新功能向后兼容 → 升级副版本
-   - bug 修复 → 升级修订版本
-2. **差异检查**：`git diff main...HEAD` 或 `git log` 查看未合并的提交
-3. **Release Note 生成**：中英文对照，格式如下，每项一行：
+1. **Version number**: use user-specified version if provided; otherwise determine from code changes:
+   - Breaking changes or major features → bump major version
+   - New features (backward compatible) → bump minor version
+   - Bug fixes → bump patch version
+2. **Diff check**: `git diff main...HEAD` or `git log` to review unmerged commits
+3. **Release Note**: bilingual, Chinese first then English, one item per line:
    ```
-   feat: 新功能描述
-   fix: 修复描述
-   refactor: 重构描述
+   feat: feature description
+   fix: fix description
+   refactor: refactor description
    ...
-   
-   新功能描述英文
-   修复描述英文
-   重构描述英文英文
+
+   feature description in English
+   fix description in English
+   refactor description in English
    ```
-4. **Tag 提交**：尝试 `git tag v{x.y.z} && git push origin v{x.y.z}`；如果认证失败，提供命令让用户手动 push
+4. **Tag push**: attempt `git tag v{x.y.z} && git push origin v{x.y.z}`; if auth fails, provide commands for the user
 
 ## Common Commands
 
