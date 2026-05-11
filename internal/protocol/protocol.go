@@ -87,16 +87,17 @@ type AuthResponsePayload struct {
 
 // SSHRequest defines the payload for an SSH session request.
 type SSHRequest struct {
-	Alias          string `json:"alias"`
-	Term           string `json:"term"`
-	Rows           int    `json:"rows"`
-	Cols           int    `json:"cols"`
-	ForwardAgent   bool   `json:"forward_agent"`
-	SSHAuthSock    string `json:"ssh_auth_sock,omitempty"`
-	IsInteractive  bool   `json:"is_interactive"`
-	HostKeyPolicy  string `json:"host_key_policy,omitempty"`
-	BroadcastGroup string `json:"broadcast_group,omitempty"`
-	Escape         string `json:"escape,omitempty"`
+	Alias          string            `json:"alias"`
+	Term           string            `json:"term"`
+	Rows           int               `json:"rows"`
+	Cols           int               `json:"cols"`
+	ForwardAgent   bool              `json:"forward_agent"`
+	SSHAuthSock    string            `json:"ssh_auth_sock,omitempty"`
+	IsInteractive  bool              `json:"is_interactive"`
+	HostKeyPolicy  string            `json:"host_key_policy,omitempty"`
+	BroadcastGroup string            `json:"broadcast_group,omitempty"`
+	Escape         string            `json:"escape,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
 }
 
 // SFTPRequest defines the payload for an SFTP session request.

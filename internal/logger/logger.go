@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-
-	"golang.org/x/term"
 )
 
 var (
@@ -45,14 +43,7 @@ func Setup(logPath string, level slog.Level, isJSON bool) error {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
 
-		// If we're logging to a file and stdout is not a terminal, we assume
-		// stdout is already redirected (e.g., in background daemon mode)
-		// and we avoid double logging by not using MultiWriter.
-		if term.IsTerminal(int(os.Stdout.Fd())) {
-			writer = io.MultiWriter(os.Stdout, file)
-		} else {
-			writer = file
-		}
+		writer = file
 		logFile = file
 	}
 

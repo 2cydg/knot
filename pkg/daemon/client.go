@@ -168,6 +168,9 @@ func (c *Client) Status() (*protocol.StatusResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	if msg.Header.Type == protocol.TypeResp && strings.HasPrefix(string(msg.Payload), "error:") {
+		return nil, fmt.Errorf("%s", string(msg.Payload))
+	}
 	if msg.Header.Type != protocol.TypeStatusResp {
 		return nil, fmt.Errorf("unexpected response type: %d", msg.Header.Type)
 	}

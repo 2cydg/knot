@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -51,35 +52,35 @@ func TestOSC7ParserObserve(t *testing.T) {
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("paths = %#v, want %#v", got, tt.want)
 			}
-			if string(clean) == tt.input[0] && len(tt.want) > 0 {
-				t.Fatalf("OSC7 sequence was not stripped from output")
+			if string(clean) != strings.Join(tt.input, "") {
+				t.Fatalf("observed output = %q, want original input", string(clean))
 			}
 		})
 	}
 }
 
-func TestOSC7ParserStripsSequenceAndKeepsText(t *testing.T) {
+func TestOSC7ParserObservesSequenceAndKeepsText(t *testing.T) {
 	var p osc7Parser
 	out, paths, firstPathAt := p.Observe([]byte("before\x1b]7;file://host/tmp\aafter"))
-	if string(out) != "beforeafter" {
-		t.Fatalf("clean output = %q, want beforeafter", string(out))
+	if string(out) != "before\x1b]7;file://host/tmp\aafter" {
+		t.Fatalf("observed output = %q, want original input", string(out))
 	}
 	if !reflect.DeepEqual(paths, []string{"/tmp"}) {
 		t.Fatalf("paths = %#v", paths)
 	}
-	if firstPathAt != len("before") {
-		t.Fatalf("firstPathAt = %d, want %d", firstPathAt, len("before"))
+	if firstPathAt != -1 {
+		t.Fatalf("firstPathAt = %d, want -1", firstPathAt)
 	}
 }
 
 func TestOSC7ParserKeepsSplitPrefix(t *testing.T) {
 	var p osc7Parser
 	out, paths, _ := p.Observe([]byte("abc\x1b]"))
-	if string(out) != "abc" || len(paths) != 0 {
+	if string(out) != "abc\x1b]" || len(paths) != 0 {
 		t.Fatalf("first observe output=%q paths=%#v", string(out), paths)
 	}
 	out, paths, _ = p.Observe([]byte("7;file://host/tmp\aZ"))
-	if string(out) != "Z" || !reflect.DeepEqual(paths, []string{"/tmp"}) {
+	if string(out) != "7;file://host/tmp\aZ" || !reflect.DeepEqual(paths, []string{"/tmp"}) {
 		t.Fatalf("second observe output=%q paths=%#v", string(out), paths)
 	}
 }

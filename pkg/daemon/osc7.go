@@ -26,17 +26,14 @@ func (p *osc7Parser) Observe(data []byte) ([]byte, []string, int) {
 		p.buf = p.buf[:osc7MaxBuffer]
 	}
 
-	clean := make([]byte, 0, len(p.buf))
 	var paths []string
-	firstPathCleanLen := -1
 	for {
 		start := bytes.Index(p.buf, []byte(osc7Prefix))
 		if start < 0 {
-			clean = append(clean, p.flushUntilPartialPrefix()...)
-			return clean, paths, firstPathCleanLen
+			p.flushUntilPartialPrefix()
+			return data, paths, -1
 		}
 		if start > 0 {
-			clean = append(clean, p.buf[:start]...)
 			p.buf = p.buf[start:]
 		}
 
@@ -46,14 +43,11 @@ func (p *osc7Parser) Observe(data []byte) ([]byte, []string, int) {
 			if len(p.buf) > osc7MaxBuffer {
 				p.buf = p.buf[:0]
 			}
-			return clean, paths, firstPathCleanLen
+			return data, paths, -1
 		}
 
 		payload := string(p.buf[payloadStart : payloadStart+payloadEnd])
 		if dir := parseOSC7Payload(payload); dir != "" {
-			if firstPathCleanLen < 0 {
-				firstPathCleanLen = len(clean)
-			}
 			paths = append(paths, dir)
 		}
 		p.buf = p.buf[payloadStart+payloadEnd+terminatorLen:]

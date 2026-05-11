@@ -7,8 +7,7 @@ import (
 )
 
 type terminalTitleManager struct {
-	w      io.Writer
-	active bool
+	w io.Writer
 }
 
 func newTerminalTitleManager(w io.Writer) *terminalTitleManager {
@@ -25,9 +24,7 @@ func (m *terminalTitleManager) PushAndSet(title string) {
 		return
 	}
 
-	_, _ = fmt.Fprint(m.w, "\033[22;0t")
 	m.writeTitle(title)
-	m.active = true
 }
 
 func (m *terminalTitleManager) Set(title string) {
@@ -46,12 +43,8 @@ func (m *terminalTitleManager) writeTitle(title string) {
 }
 
 func (m *terminalTitleManager) Restore() {
-	if m == nil || m.w == nil || !m.active {
-		return
-	}
-
-	_, _ = fmt.Fprint(m.w, "\033[23;0t")
-	m.active = false
+	// Intentionally do not use xterm title-stack controls here. Some terminals
+	// answer those queries on stdin, which can leak into the remote SSH session.
 }
 
 func sanitizeTerminalTitle(title string) string {

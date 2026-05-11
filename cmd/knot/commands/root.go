@@ -2,6 +2,11 @@ package commands
 
 import (
 	"fmt"
+	"knot/internal/logger"
+	"knot/internal/paths"
+	"knot/pkg/config"
+	"knot/pkg/crypto"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -30,6 +35,9 @@ var (
 )
 
 func Execute() error {
+	setupCommandLogging()
+	setupCryptoBootstrapNotice()
+
 	rewrittenArgs, err := rewriteArgsForAlias(os.Args, rootCmd)
 	if err != nil {
 		return err
@@ -52,6 +60,31 @@ func Execute() error {
 		os.Exit(exitCode)
 	}
 	return nil
+}
+
+func setupCommandLogging() {
+	logPath, err := paths.GetLogPath()
+	if err != nil {
+		return
+	}
+	_ = logger.Setup(logPath, slog.LevelInfo, false)
+}
+
+func setupCryptoBootstrapNotice() {
+	config.CryptoBootstrapNotify = func(event config.CryptoBootstrapEvent) {
+		if jsonOutput {
+			return
+		}
+		if event.MigratedFields > 0 {
+			fmt.Fprintf(os.Stderr, "Knot migrated saved secrets to %s.\n", event.Provider)
+			return
+		}
+		if event.Provider == crypto.ProviderLinuxMachineID && event.FallbackReason != "" {
+			fmt.Fprintln(os.Stderr, "Knot selected linux-machine-id for local secret encryption because Secret Service is unavailable.")
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Knot selected %s for local secret encryption.\n", event.Provider)
+	}
 }
 
 func rewriteArgsForAlias(args []string, root *cobra.Command) ([]string, error) {

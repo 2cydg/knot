@@ -126,6 +126,9 @@ func TestSSHRequestBroadcastJSONFields(t *testing.T) {
 		IsInteractive:  true,
 		BroadcastGroup: "deploy",
 		Escape:         "~",
+		Env: map[string]string{
+			"LANG": "en_US.UTF-8",
+		},
 	}
 
 	data, err := json.Marshal(req)
@@ -142,5 +145,9 @@ func TestSSHRequestBroadcastJSONFields(t *testing.T) {
 	}
 	if fields["escape"] != "~" {
 		t.Fatalf("escape = %v", fields["escape"])
+	}
+	env, ok := fields["env"].(map[string]any)
+	if !ok || env["LANG"] != "en_US.UTF-8" {
+		t.Fatalf("env = %#v", fields["env"])
 	}
 }

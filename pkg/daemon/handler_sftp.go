@@ -31,8 +31,17 @@ func (d *Daemon) handleSFTPRequest(conn net.Conn, requestPayload []byte) {
 	// 1. Load config
 	cfg, err := config.LoadFromPath(d.configPath, d.crypto)
 	if err != nil {
-		sendError("failed to load config: " + err.Error())
-		return
+		if !config.IsSecretDecryptError(err) {
+			sendError("failed to load config: " + err.Error())
+			return
+		}
+		rawCfg, rawErr := config.LoadRawFromPath(d.configPath)
+		if rawErr != nil {
+			sendError("failed to load config: " + err.Error())
+			return
+		}
+		logger.Warn("failed to decrypt one or more saved secrets; continuing with raw config for interactive auth recovery", "alias", alias, "error", err)
+		cfg = rawCfg
 	}
 
 	serverID, srv, ok := cfg.FindServerByAlias(alias)

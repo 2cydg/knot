@@ -24,6 +24,9 @@ const (
 	saltFile   = ".salt"
 	saltLength = 32
 	iterations = 100000
+
+	ProviderLinuxSecretService = "linux-secret-service"
+	ProviderLinuxMachineID     = "linux-machine-id"
 )
 
 // Provider is the interface for platform-specific secure storage.

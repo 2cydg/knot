@@ -13,7 +13,7 @@ func TestTerminalTitleManagerPushSetAndRestore(t *testing.T) {
 	mgr.Restore()
 
 	got := buf.String()
-	want := "\033[22;0t\033]0;prod-app\a\033[23;0t"
+	want := "\033]0;prod-app\a"
 	if got != want {
 		t.Fatalf("unexpected title control sequence: got %q want %q", got, want)
 	}

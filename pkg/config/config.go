@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"knot/internal/fileutil"
+	"knot/internal/logger"
 	"knot/internal/paths"
 	"knot/pkg/crypto"
 	"net/url"
@@ -286,9 +288,39 @@ func Load(cryptoProvider crypto.Provider) (*Config, error) {
 	return LoadFromPath(configPath, cryptoProvider)
 }
 
+func LoadRaw() (*Config, error) {
+	configPath, err := paths.GetConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	return LoadRawFromPath(configPath)
+}
+
+func LoadRawFromPath(configPath string) (*Config, error) {
+	return loadRawConfig(configPath)
+}
+
+func IsSecretDecryptError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, crypto.ErrDecryptionFailed) {
+		return true
+	}
+	return strings.Contains(err.Error(), "could not decrypt one or more saved secrets")
+}
+
 type SecretManager interface {
 	ProcessSecrets(crypto.Provider, bool) error
 }
+
+type CryptoBootstrapEvent struct {
+	Provider       string
+	MigratedFields int
+	FallbackReason string
+}
+
+var CryptoBootstrapNotify func(CryptoBootstrapEvent)
 
 func (s *ServerConfig) ProcessSecrets(p crypto.Provider, encrypt bool) error {
 	if s.Password != "" {
@@ -419,25 +451,174 @@ func processSecretsMap[T any, PT interface {
 	return nil
 }
 
+type encryptedFieldRef struct {
+	item      string
+	name      string
+	encrypted string
+	set       func(string)
+}
+
+func collectEncryptedFields(cfg *Config) []encryptedFieldRef {
+	var fields []encryptedFieldRef
+	add := func(item, name, value string, set func(string)) {
+		if strings.HasPrefix(value, encPrefix) {
+			fields = append(fields, encryptedFieldRef{item: item, name: name, encrypted: value, set: set})
+		}
+	}
+
+	add("settings", "sync_password", cfg.Settings.SyncPassword, func(v string) {
+		cfg.Settings.SyncPassword = v
+	})
+	for id, srv := range cfg.Servers {
+		id := id
+		add("server "+srv.Alias, "password", srv.Password, func(v string) {
+			srv := cfg.Servers[id]
+			srv.Password = v
+			cfg.Servers[id] = srv
+		})
+	}
+	for id, proxy := range cfg.Proxies {
+		id := id
+		add("proxy "+proxy.Alias, "password", proxy.Password, func(v string) {
+			proxy := cfg.Proxies[id]
+			proxy.Password = v
+			cfg.Proxies[id] = proxy
+		})
+	}
+	for id, key := range cfg.Keys {
+		id := id
+		add("key "+key.Alias, "private_key", key.PrivateKey, func(v string) {
+			key := cfg.Keys[id]
+			key.PrivateKey = v
+			cfg.Keys[id] = key
+		})
+	}
+	for id, provider := range cfg.SyncProviders {
+		id := id
+		item := "sync provider " + provider.Alias
+		add(item, "password", provider.Password, func(v string) {
+			provider := cfg.SyncProviders[id]
+			provider.Password = v
+			cfg.SyncProviders[id] = provider
+		})
+		add(item, "access_key_id", provider.AccessKeyID, func(v string) {
+			provider := cfg.SyncProviders[id]
+			provider.AccessKeyID = v
+			cfg.SyncProviders[id] = provider
+		})
+		add(item, "secret_access_key", provider.SecretAccessKey, func(v string) {
+			provider := cfg.SyncProviders[id]
+			provider.SecretAccessKey = v
+			cfg.SyncProviders[id] = provider
+		})
+		add(item, "session_token", provider.SessionToken, func(v string) {
+			provider := cfg.SyncProviders[id]
+			provider.SessionToken = v
+			cfg.SyncProviders[id] = provider
+		})
+	}
+	return fields
+}
+
+func decryptEncryptedFieldsCompat(fields []encryptedFieldRef, candidates []crypto.Provider) ([]string, error) {
+	providers := make([]string, 0, len(fields))
+	for _, field := range fields {
+		encoded := strings.TrimPrefix(field.encrypted, encPrefix)
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("%s %s: %w", field.item, field.name, err)
+		}
+
+		var lastErr error
+		var decrypted []byte
+		var providerName string
+		for _, candidate := range candidates {
+			plaintext, err := candidate.Decrypt(decoded)
+			if err == nil {
+				decrypted = plaintext
+				providerName = candidate.Name()
+				break
+			}
+			lastErr = err
+		}
+		if providerName == "" {
+			return nil, fmt.Errorf("%s %s: %w", field.item, field.name, lastErr)
+		}
+		field.set(string(decrypted))
+		providers = append(providers, providerName)
+	}
+	return providers, nil
+}
+
 func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, error) {
+	if cryptoProvider == nil {
+		return nil, fmt.Errorf("crypto provider is required")
+	}
+	if bootstrapProvider, ok := crypto.IsBootstrapProvider(cryptoProvider); ok {
+		var cfg *Config
+		err := WithConfigLock(configPath, func() error {
+			if fixedProvider := bootstrapProvider.Persisted(); fixedProvider != nil {
+				loaded, err := loadFromPathNoBootstrap(configPath, fixedProvider)
+				if err != nil {
+					return err
+				}
+				cfg = loaded
+				return nil
+			}
+
+			state, err := crypto.LoadState()
+			if err != nil {
+				return err
+			}
+			if state != nil {
+				fixedProvider, err := bootstrapProvider.AfterPersist()
+				if err != nil {
+					return err
+				}
+				loaded, err := loadFromPathNoBootstrap(configPath, fixedProvider)
+				if err != nil {
+					return err
+				}
+				cfg = loaded
+				return nil
+			}
+
+			loaded, err := loadFromPathBootstrapLocked(configPath, bootstrapProvider)
+			if err != nil {
+				return err
+			}
+			cfg = loaded
+			return nil
+		})
+		return cfg, err
+	}
+
+	return loadFromPathNoBootstrap(configPath, cryptoProvider)
+}
+
+func defaultConfig() *Config {
+	defaultTrue := true
+	return &Config{
+		Settings: SettingsConfig{
+			ForwardAgent:          &defaultTrue,
+			ClearScreenOnConnect:  &defaultTrue,
+			BroadcastEscapeEnable: boolPtr(false),
+			BroadcastEscapeChar:   "~",
+			IdleTimeout:           "30m",
+			KeepaliveInterval:     "20s",
+			LogLevel:              "error",
+			RecentLimit:           5,
+		},
+		Servers:       make(map[string]ServerConfig),
+		Proxies:       make(map[string]ProxyConfig),
+		Keys:          make(map[string]KeyConfig),
+		SyncProviders: make(map[string]SyncProviderConfig),
+	}
+}
+
+func loadRawConfig(configPath string) (*Config, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		defaultTrue := true
-		return &Config{
-			Settings: SettingsConfig{
-				ForwardAgent:          &defaultTrue,
-				ClearScreenOnConnect:  &defaultTrue,
-				BroadcastEscapeEnable: boolPtr(false),
-				BroadcastEscapeChar:   "~",
-				IdleTimeout:           "30m",
-				KeepaliveInterval:     "20s",
-				LogLevel:              "error",
-				RecentLimit:           5,
-			},
-			Servers:       make(map[string]ServerConfig),
-			Proxies:       make(map[string]ProxyConfig),
-			Keys:          make(map[string]KeyConfig),
-			SyncProviders: make(map[string]SyncProviderConfig),
-		}, nil
+		return defaultConfig(), nil
 	}
 
 	var cfg Config
@@ -482,6 +663,15 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		cfg.SyncProviders = make(map[string]SyncProviderConfig)
 	}
 
+	return &cfg, nil
+}
+
+func loadFromPathNoBootstrap(configPath string, cryptoProvider crypto.Provider) (*Config, error) {
+	cfg, err := loadRawConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+
 	// Decrypt all sensitive fields
 	if err := cfg.Settings.ProcessSecrets(cryptoProvider, false); err != nil {
 		return nil, err
@@ -499,7 +689,84 @@ func LoadFromPath(configPath string, cryptoProvider crypto.Provider) (*Config, e
 		return nil, err
 	}
 
-	return &cfg, nil
+	return cfg, nil
+}
+
+func loadFromPathBootstrapLocked(configPath string, bootstrapProvider *crypto.BootstrapProvider) (*Config, error) {
+	rawCfg, err := loadRawConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	fields := collectEncryptedFields(rawCfg)
+	selected := bootstrapProvider.Selected()
+	if len(fields) == 0 {
+		if err := crypto.PersistState(selected); err != nil {
+			return nil, err
+		}
+		bootstrapProvider.MarkPersisted(selected)
+		logSelectedEncryptionBackend(bootstrapProvider)
+		notifyCryptoBootstrap(CryptoBootstrapEvent{Provider: selected.Name(), FallbackReason: bootstrapProvider.Reason()})
+		return rawCfg, nil
+	}
+
+	fieldProviders, err := decryptEncryptedFieldsCompat(fields, bootstrapProvider.Candidates())
+	if err != nil {
+		return nil, fmt.Errorf("Knot could not decrypt one or more saved secrets with any available local encryption backend. No changes were written. Restore the previous backend/key material or re-enter the affected secrets: %w", err)
+	}
+
+	migrationNeeded := false
+	for _, providerName := range fieldProviders {
+		if providerName != selected.Name() {
+			migrationNeeded = true
+			break
+		}
+	}
+
+	if migrationNeeded {
+		logger.Info("crypto migration started", "target", selected.Name(), "total", len(fields))
+		if err := saveConfigToPathLocked(configPath, rawCfg, selected); err != nil {
+			return nil, err
+		}
+		verified, err := loadFromPathNoBootstrap(configPath, selected)
+		if err != nil {
+			return nil, err
+		}
+		if err := crypto.PersistState(selected); err != nil {
+			return nil, err
+		}
+		bootstrapProvider.MarkPersisted(selected)
+		logger.Info("crypto migration completed", "target", selected.Name(), "migrated", len(fields))
+		notifyCryptoBootstrap(CryptoBootstrapEvent{Provider: selected.Name(), MigratedFields: len(fields)})
+		return verified, nil
+	}
+
+	verified, err := loadFromPathNoBootstrap(configPath, selected)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap provider verification failed: %w", err)
+	}
+	if err := crypto.PersistState(selected); err != nil {
+		return nil, err
+	}
+	bootstrapProvider.MarkPersisted(selected)
+	logSelectedEncryptionBackend(bootstrapProvider)
+	notifyCryptoBootstrap(CryptoBootstrapEvent{Provider: selected.Name(), FallbackReason: bootstrapProvider.Reason()})
+	return verified, nil
+}
+
+func notifyCryptoBootstrap(event CryptoBootstrapEvent) {
+	if CryptoBootstrapNotify != nil {
+		CryptoBootstrapNotify(event)
+	}
+}
+
+func logSelectedEncryptionBackend(bootstrapProvider *crypto.BootstrapProvider) {
+	selected := bootstrapProvider.Selected()
+	if selected.Name() == crypto.ProviderLinuxMachineID && bootstrapProvider.Reason() != "" {
+		logger.Info("Knot selected local secret encryption backend", "provider", selected.Name(), "note", "Secret Service is unavailable; saved secrets will use the local machine fallback", "reason", bootstrapProvider.Reason())
+		return
+	}
+	logger.Info("Knot selected local secret encryption backend", "provider", selected.Name())
 }
 
 func (c *Config) Save(cryptoProvider crypto.Provider) error {
@@ -511,6 +778,9 @@ func (c *Config) Save(cryptoProvider crypto.Provider) error {
 }
 
 func (c *Config) SaveToPath(configPath string, cryptoProvider crypto.Provider) error {
+	if cryptoProvider == nil {
+		return fmt.Errorf("crypto provider is required")
+	}
 	return WithConfigLock(configPath, func() error {
 		return c.saveToPathLocked(configPath, cryptoProvider)
 	})
@@ -521,6 +791,10 @@ func WithConfigLock(configPath string, fn func() error) error {
 }
 
 func (c *Config) saveToPathLocked(configPath string, cryptoProvider crypto.Provider) error {
+	return saveConfigToPathLocked(configPath, c, crypto.UnwrapBootstrapProvider(cryptoProvider))
+}
+
+func saveConfigToPathLocked(configPath string, c *Config, cryptoProvider crypto.Provider) error {
 	if c.Settings.ForwardAgent == nil {
 		defaultTrue := true
 		c.Settings.ForwardAgent = &defaultTrue

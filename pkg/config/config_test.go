@@ -1,6 +1,7 @@
 package config
 
 import (
+	"knot/internal/fileutil"
 	"knot/internal/paths"
 	"knot/pkg/crypto"
 	"os"
@@ -183,6 +184,242 @@ func TestSyncProviderLoadSaveEncryptsSecrets(t *testing.T) {
 	if s3.AccessKeyID != "access-key" || s3.SecretAccessKey != "secret-key" || s3.SessionToken != "session-token" {
 		t.Fatalf("s3 provider secrets were not decrypted: %+v", s3)
 	}
+}
+
+func TestBootstrapWritesStateWhenNoEncryptedFields(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	configPath := filepath.Join(tmp, "config.toml")
+	provider := crypto.NewBootstrapProvider(testNamedProvider{name: "linux-machine-id", key: []byte("01234567890123456789012345678901")}, nil, nil)
+
+	cfg, err := LoadFromPath(configPath, provider)
+	if err != nil {
+		t.Fatalf("LoadFromPath failed: %v", err)
+	}
+	if len(cfg.Servers) != 0 {
+		t.Fatalf("unexpected servers: %+v", cfg.Servers)
+	}
+	state, err := crypto.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState failed: %v", err)
+	}
+	if state == nil || state.Provider != "linux-machine-id" {
+		t.Fatalf("state = %+v, want linux-machine-id", state)
+	}
+}
+
+func TestBootstrapMigratesEncryptedFieldsToSelectedProvider(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	configPath := filepath.Join(tmp, "config.toml")
+
+	oldProvider := testNamedProvider{name: "linux-machine-id", key: []byte("11111111111111111111111111111111")}
+	newProvider := testNamedProvider{name: "linux-secret-service", key: []byte("22222222222222222222222222222222")}
+	writeEncryptedConfigForProvider(t, configPath, oldProvider, "secret")
+
+	bootstrap := crypto.NewBootstrapProvider(newProvider, []crypto.Provider{newProvider, oldProvider}, nil)
+	cfg, err := LoadFromPath(configPath, bootstrap)
+	if err != nil {
+		t.Fatalf("LoadFromPath failed: %v", err)
+	}
+	if cfg.Servers["srv_test"].Password != "secret" {
+		t.Fatalf("password = %q, want secret", cfg.Servers["srv_test"].Password)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if strings.Contains(string(raw), "secret") {
+		t.Fatalf("raw config leaked secret: %s", raw)
+	}
+	loaded, err := LoadFromPath(configPath, newProvider)
+	if err != nil {
+		t.Fatalf("load with new provider failed: %v", err)
+	}
+	if loaded.Servers["srv_test"].Password != "secret" {
+		t.Fatalf("loaded password = %q, want secret", loaded.Servers["srv_test"].Password)
+	}
+	if _, err := LoadFromPath(configPath, oldProvider); err == nil {
+		t.Fatal("old provider should not decrypt migrated config")
+	}
+	state, err := crypto.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState failed: %v", err)
+	}
+	if state == nil || state.Provider != "linux-secret-service" {
+		t.Fatalf("state = %+v, want linux-secret-service", state)
+	}
+}
+
+func TestBootstrapKeepsConfigWhenSelectedProviderAlreadyDecrypts(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	configPath := filepath.Join(tmp, "config.toml")
+
+	provider := testNamedProvider{name: "linux-machine-id", key: []byte("33333333333333333333333333333333")}
+	writeEncryptedConfigForProvider(t, configPath, provider, "secret")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	bootstrap := crypto.NewBootstrapProvider(provider, []crypto.Provider{provider}, nil)
+	cfg, err := LoadFromPath(configPath, bootstrap)
+	if err != nil {
+		t.Fatalf("LoadFromPath failed: %v", err)
+	}
+	if cfg.Servers["srv_test"].Password != "secret" {
+		t.Fatalf("password = %q, want secret", cfg.Servers["srv_test"].Password)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("config changed without migration\nbefore:%s\nafter:%s", before, after)
+	}
+}
+
+func TestBootstrapVerifiesSelectedProviderBeforePersistingState(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	configPath := filepath.Join(tmp, "config.toml")
+
+	baseProvider := testNamedProvider{name: "linux-machine-id", key: []byte("66666666666666666666666666666666")}
+	writeEncryptedConfigForProvider(t, configPath, baseProvider, "secret")
+
+	provider := &flakyDecryptProvider{Provider: baseProvider, failAfter: 1}
+	bootstrap := crypto.NewBootstrapProvider(provider, []crypto.Provider{provider}, nil)
+	if _, err := LoadFromPath(configPath, bootstrap); err == nil {
+		t.Fatal("expected selected provider verification failure")
+	}
+	state, err := crypto.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState failed: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("state was written after verification failure: %+v", state)
+	}
+}
+
+func TestBootstrapProviderCachesFixedProviderAfterStateExists(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	configPath := filepath.Join(tmp, "config.toml")
+
+	selected := testNamedProvider{name: "linux-machine-id", key: []byte("77777777777777777777777777777777")}
+	writeEncryptedConfigForProvider(t, configPath, selected, "secret")
+	if err := crypto.PersistState(selected); err != nil {
+		t.Fatalf("PersistState failed: %v", err)
+	}
+
+	afterPersistCalls := 0
+	bootstrap := crypto.NewBootstrapProvider(selected, []crypto.Provider{selected}, func() (crypto.Provider, error) {
+		afterPersistCalls++
+		return selected, nil
+	})
+	for i := 0; i < 2; i++ {
+		cfg, err := LoadFromPath(configPath, bootstrap)
+		if err != nil {
+			t.Fatalf("LoadFromPath #%d failed: %v", i+1, err)
+		}
+		if cfg.Servers["srv_test"].Password != "secret" {
+			t.Fatalf("password #%d = %q, want secret", i+1, cfg.Servers["srv_test"].Password)
+		}
+	}
+	if afterPersistCalls != 1 {
+		t.Fatalf("afterPersist calls = %d, want 1", afterPersistCalls)
+	}
+}
+
+func TestBootstrapFailsWithoutWritingStateOrConfigWhenNoProviderDecrypts(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	configPath := filepath.Join(tmp, "config.toml")
+
+	oldProvider := testNamedProvider{name: "linux-machine-id", key: []byte("44444444444444444444444444444444")}
+	newProvider := testNamedProvider{name: "linux-secret-service", key: []byte("55555555555555555555555555555555")}
+	writeEncryptedConfigForProvider(t, configPath, oldProvider, "secret")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	bootstrap := crypto.NewBootstrapProvider(newProvider, []crypto.Provider{newProvider}, nil)
+	if _, err := LoadFromPath(configPath, bootstrap); err == nil {
+		t.Fatal("expected bootstrap decryption failure")
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("config changed after failed bootstrap\nbefore:%s\nafter:%s", before, after)
+	}
+	state, err := crypto.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState failed: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("state was written after failure: %+v", state)
+	}
+}
+
+func writeEncryptedConfigForProvider(t *testing.T, configPath string, provider crypto.Provider, password string) {
+	t.Helper()
+	cfg := &Config{
+		Settings: SettingsConfig{},
+		Servers: map[string]ServerConfig{
+			"srv_test": {
+				ID:       "srv_test",
+				Alias:    "test",
+				Host:     "127.0.0.1",
+				Port:     22,
+				User:     "root",
+				Password: password,
+			},
+		},
+		Proxies:       make(map[string]ProxyConfig),
+		Keys:          make(map[string]KeyConfig),
+		SyncProviders: make(map[string]SyncProviderConfig),
+	}
+	if err := fileutil.WithLock(configPath+".lock", func() error {
+		return saveConfigToPathLocked(configPath, cfg, provider)
+	}); err != nil {
+		t.Fatalf("saveConfigToPathLocked failed: %v", err)
+	}
+}
+
+type testNamedProvider struct {
+	name string
+	key  []byte
+}
+
+func (p testNamedProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	return crypto.EncryptWithKey(plaintext, p.key)
+}
+
+func (p testNamedProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	return crypto.DecryptWithKey(ciphertext, p.key)
+}
+
+func (p testNamedProvider) Name() string {
+	return p.name
+}
+
+type flakyDecryptProvider struct {
+	crypto.Provider
+	failAfter int
+	calls     int
+}
+
+func (p *flakyDecryptProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	p.calls++
+	if p.calls > p.failAfter {
+		return nil, os.ErrPermission
+	}
+	return p.Provider.Decrypt(ciphertext)
 }
 
 func TestSyncProviderAliasLookupAndValidation(t *testing.T) {
