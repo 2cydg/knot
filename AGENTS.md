@@ -28,6 +28,41 @@ The project favors simple command-line interaction, persistent SSH connection re
 - Do not let tests depend on live platform credential stores such as macOS Keychain, Windows DPAPI, or Linux Secret Service when asserting encrypted config behavior; inject a deterministic test crypto provider so CI can decrypt data across repeated loads.
 - After core logic changes, prefer running `go test ./...`; for release or build-related changes, also confirm `go build -o knot cmd/knot/main.go` succeeds.
 
+## Workflow Automation
+
+### PR 创建与合并
+
+当用户说"pr"、"创建pr"、"提交pr"或类似指令时，Agent 自动执行以下操作：
+
+1. `git push -u origin HEAD` — 推送当前分支到远程
+2. `gh pr create` — 创建 PR，包含标题和描述
+3. `gh pr checks --watch` — 等待 CI 检查通过
+4. `gh pr merge --squash --delete-branch` — 自动 squash merge 并删除分支
+
+如果 `gh` 认证失败导致无法提交，Agent 生成 PR 信息（链接、标题、内容）并提供命令让用户手动执行。
+
+### 版本升级与 Release
+
+当用户说"升级版本"、"release"、"打版本"或类似指令时：
+
+1. **版本号判定**：用户指定版本号时使用用户指定的；未指定时根据代码变更内容自行判定：
+   - 破坏性变更或大功能 → 升级主版本
+   - 新功能向后兼容 → 升级副版本
+   - bug 修复 → 升级修订版本
+2. **差异检查**：`git diff main...HEAD` 或 `git log` 查看未合并的提交
+3. **Release Note 生成**：中英文对照，格式如下，每项一行：
+   ```
+   feat: 新功能描述
+   fix: 修复描述
+   refactor: 重构描述
+   ...
+   
+   新功能描述英文
+   修复描述英文
+   重构描述英文英文
+   ```
+4. **Tag 提交**：尝试 `git tag v{x.y.z} && git push origin v{x.y.z}`；如果认证失败，提供命令让用户手动 push
+
 ## Common Commands
 
 ```bash
