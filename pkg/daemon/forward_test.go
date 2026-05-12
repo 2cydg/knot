@@ -11,6 +11,7 @@ import (
 	"knot/pkg/config"
 	"knot/pkg/sshpool"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +30,20 @@ type forwardDirectTCPIPReq struct {
 type forwardTestSSHServer struct {
 	listener net.Listener
 	config   *ssh.ServerConfig
+}
+
+type forwardTestCryptoProvider struct{}
+
+func (forwardTestCryptoProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	return append([]byte(nil), plaintext...), nil
+}
+
+func (forwardTestCryptoProvider) Decrypt(ciphertext []byte) ([]byte, error) {
+	return append([]byte(nil), ciphertext...), nil
+}
+
+func (forwardTestCryptoProvider) Name() string {
+	return "forward-test"
 }
 
 func startForwardTestSSHServer(t *testing.T, user string, password string) *forwardTestSSHServer {
@@ -272,6 +287,80 @@ func TestHandleForwardRequestRejectsInvalidRemoteAddr(t *testing.T) {
 	}
 	if !strings.Contains(string(msg.Payload), "control characters") {
 		t.Fatalf("expected control character error, got %s", msg.Payload)
+	}
+}
+
+func TestValidateForwardRequestConfigAllowsRemoveWithoutRemoteAddr(t *testing.T) {
+	err := validateForwardRequestConfig("remove", config.ForwardConfig{
+		Type:      "L",
+		LocalPort: 8080,
+	})
+	if err != nil {
+		t.Fatalf("remove without remote address returned error: %v", err)
+	}
+}
+
+func TestHandleForwardRequestRemovesRuleWithoutRemoteAddr(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
+	provider := forwardTestCryptoProvider{}
+	cfg := &config.Config{
+		Servers: map[string]config.ServerConfig{
+			"target-id": {
+				ID:    "target-id",
+				Alias: "target",
+				Host:  "127.0.0.1",
+				Port:  22,
+				User:  "tester",
+				Forwards: []config.ForwardConfig{
+					{Type: "L", LocalPort: 8080, RemoteAddr: "127.0.0.1:80"},
+				},
+			},
+		},
+		Proxies: make(map[string]config.ProxyConfig),
+		Keys:    make(map[string]config.KeyConfig),
+	}
+	if err := cfg.Save(provider); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	pool := sshpool.NewPool()
+	defer pool.CloseAll()
+	d := &Daemon{
+		crypto: provider,
+		pool:   pool,
+		fm:     NewForwardManager(pool),
+	}
+	if err := d.fm.AddRule("target-id", config.ForwardConfig{Type: "L", LocalPort: 8080, RemoteAddr: "127.0.0.1:80"}, false, false, nil, nil); err != nil {
+		t.Fatalf("AddRule returned error: %v", err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	req := &protocol.ForwardRequest{
+		Action: "remove",
+		Alias:  "target",
+		Config: protocol.ForwardProtocolConfig{
+			Type:      "L",
+			LocalPort: 8080,
+		},
+	}
+
+	go d.handleForwardRequest(server, req)
+	msg, err := protocol.ReadMessage(client)
+	if err != nil {
+		t.Fatalf("ReadMessage failed: %v", err)
+	}
+	if msg.Header.Type != protocol.TypeResp || msg.Header.Reserved != 0 {
+		t.Fatalf("unexpected response: type=%d reserved=%d payload=%s", msg.Header.Type, msg.Header.Reserved, msg.Payload)
+	}
+	if _, ok := d.fm.GetRule("target-id", "L", 8080); ok {
+		t.Fatal("expected rule to be removed")
 	}
 }
 

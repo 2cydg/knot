@@ -27,7 +27,7 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 			LocalPort:  req.Config.LocalPort,
 			RemoteAddr: req.Config.RemoteAddr,
 		}
-		if err = requestForward.Validate(); err != nil {
+		if err = validateForwardRequestConfig(req.Action, requestForward); err != nil {
 			protocol.WriteMessage(conn, protocol.TypeResp, 1, []byte(err.Error()))
 			return
 		}
@@ -144,6 +144,19 @@ func (d *Daemon) handleForwardRequest(conn net.Conn, req *protocol.ForwardReques
 	} else {
 		protocol.WriteMessage(conn, protocol.TypeResp, 0, []byte("OK"))
 	}
+}
+
+func validateForwardRequestConfig(action string, cfg config.ForwardConfig) error {
+	if action == "add" {
+		return cfg.Validate()
+	}
+	if cfg.Type != "L" && cfg.Type != "R" && cfg.Type != "D" {
+		return fmt.Errorf("invalid forward type: %s", cfg.Type)
+	}
+	if cfg.LocalPort <= 0 || cfg.LocalPort > 65535 {
+		return fmt.Errorf("invalid port number: %d", cfg.LocalPort)
+	}
+	return nil
 }
 
 func (d *Daemon) handleForwardListRequest(conn net.Conn, alias string) {
