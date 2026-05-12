@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var exportCmd = &cobra.Command{
@@ -21,6 +23,7 @@ var exportCmd = &cobra.Command{
 		if len(args) > 0 {
 			path = args[0]
 		}
+		force, _ := cmd.Flags().GetBool("force")
 
 		provider, err := crypto.NewProvider()
 		if err != nil {
@@ -33,15 +36,17 @@ var exportCmd = &cobra.Command{
 			return err
 		}
 
-		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
-		if err != nil {
-			return err
-		}
-		defer line.Close()
-
 		// Check if file exists
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Stat(path); err == nil && !force {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("export destination %s already exists: use --force to overwrite", path)
+			}
+			line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+			if err != nil {
+				return err
+			}
 			resp, err := readLineWithPrompt(line, fmt.Sprintf("File %s already exists. Overwrite? (y/N): ", path))
+			line.Close()
 			if err != nil {
 				return err
 			}
@@ -51,29 +56,12 @@ var exportCmd = &cobra.Command{
 			}
 		}
 
-		password, err := line.ReadPassword("Enter encryption password: ")
+		password, err := archivePasswordFromStdinOrPrompt(cmd, "export", true)
 		if err != nil {
-			if err == readline.ErrInterrupt {
-				return fmt.Errorf("export cancelled")
-			}
 			return err
 		}
-		if string(password) == "" {
-			return fmt.Errorf("password cannot be empty")
-		}
 
-		confirm, err := line.ReadPassword("Confirm password: ")
-		if err != nil {
-			if err == readline.ErrInterrupt {
-				return fmt.Errorf("export cancelled")
-			}
-			return err
-		}
-		if string(password) != string(confirm) {
-			return fmt.Errorf("passwords do not match")
-		}
-
-		data, err := config.ExportConfig(cfg, string(password))
+		data, err := config.ExportConfig(cfg, password)
 		if err != nil {
 			return err
 		}
@@ -102,21 +90,12 @@ var importCmd = &cobra.Command{
 			return fmt.Errorf("failed to read file: %w", err)
 		}
 
-		line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+		password, err := archivePasswordFromStdinOrPrompt(cmd, "import", false)
 		if err != nil {
 			return err
 		}
-		defer line.Close()
 
-		password, err := line.ReadPassword("Enter decryption password: ")
-		if err != nil {
-			if err == readline.ErrInterrupt {
-				return fmt.Errorf("import cancelled")
-			}
-			return err
-		}
-
-		importedCfg, err := config.DecryptConfig(data, string(password))
+		importedCfg, err := config.DecryptConfig(data, password)
 		if err != nil {
 			return err
 		}
@@ -125,23 +104,37 @@ var importCmd = &cobra.Command{
 			fmt.Println("Warning: The imported configuration is empty.")
 		}
 
-		fmt.Println("Choose merge strategy:")
-		fmt.Println("1) Full Overwrite (Replace local config with imported)")
-		fmt.Println("2) Merge (Local-first: Keep local, add new aliases from imported)")
-		fmt.Println("3) Merge (Import-first: Overwrite local with imported on alias conflict)")
-
-		var mode int
-		for {
-			choice, err := readLineWithPrompt(line, "Selection (1-3): ")
+		mode, err := archiveImportMode(cmd)
+		if err != nil {
+			return err
+		}
+		if mode == 0 {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("import merge strategy is required in non-interactive mode: use --mode overwrite, --mode local-first, or --mode import-first")
+			}
+			line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
 			if err != nil {
 				return err
 			}
-			idx, err := strconv.Atoi(choice)
-			if err == nil && idx >= 1 && idx <= 3 {
-				mode = idx
-				break
+			defer line.Close()
+
+			fmt.Println("Choose merge strategy:")
+			fmt.Println("1) Full Overwrite (Replace local config with imported)")
+			fmt.Println("2) Merge (Local-first: Keep local, add new aliases from imported)")
+			fmt.Println("3) Merge (Import-first: Overwrite local with imported on alias conflict)")
+
+			for {
+				choice, err := readLineWithPrompt(line, "Selection (1-3): ")
+				if err != nil {
+					return err
+				}
+				idx, err := strconv.Atoi(choice)
+				if err == nil && idx >= 1 && idx <= 3 {
+					mode = idx
+					break
+				}
+				fmt.Println("Invalid selection. Please enter 1, 2, or 3.")
 			}
-			fmt.Println("Invalid selection. Please enter 1, 2, or 3.")
 		}
 
 		provider, err := crypto.NewProvider()
@@ -165,9 +158,81 @@ var importCmd = &cobra.Command{
 	},
 }
 
+func archivePasswordFromStdinOrPrompt(cmd *cobra.Command, operation string, confirm bool) (string, error) {
+	useStdin, _ := cmd.Flags().GetBool("password-stdin")
+	if useStdin {
+		password, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("failed to read %s password from stdin: %w", operation, err)
+		}
+		password = strings.TrimRight(password, "\r\n")
+		if password == "" {
+			return "", fmt.Errorf("%s password cannot be empty", operation)
+		}
+		return password, nil
+	}
+
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("%s password is required: use --password-stdin or run interactively", operation)
+	}
+
+	line, err := readline.NewEx(&readline.Config{Prompt: "> ", InterruptPrompt: "^C", EOFPrompt: "exit"})
+	if err != nil {
+		return "", err
+	}
+	defer line.Close()
+
+	password, err := line.ReadPassword(fmt.Sprintf("Enter %s password: ", operation))
+	if err != nil {
+		if err == readline.ErrInterrupt {
+			return "", fmt.Errorf("%s cancelled", operation)
+		}
+		return "", err
+	}
+	if string(password) == "" {
+		return "", fmt.Errorf("%s password cannot be empty", operation)
+	}
+
+	if confirm {
+		again, err := line.ReadPassword(fmt.Sprintf("Confirm %s password: ", operation))
+		if err != nil {
+			if err == readline.ErrInterrupt {
+				return "", fmt.Errorf("%s cancelled", operation)
+			}
+			return "", err
+		}
+		if string(password) != string(again) {
+			return "", fmt.Errorf("passwords do not match")
+		}
+	}
+
+	return string(password), nil
+}
+
+func archiveImportMode(cmd *cobra.Command) (int, error) {
+	if !cmd.Flags().Changed("mode") {
+		return 0, nil
+	}
+	mode, _ := cmd.Flags().GetString("mode")
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "overwrite":
+		return config.MergeModeOverwrite, nil
+	case "local-first":
+		return config.MergeModeLocalFirst, nil
+	case "import-first":
+		return config.MergeModeImportFirst, nil
+	default:
+		return 0, fmt.Errorf("invalid import mode: %s (use overwrite, local-first, or import-first)", mode)
+	}
+}
+
 func init() {
 	exportCmd.GroupID = managementGroup.ID
 	importCmd.GroupID = managementGroup.ID
+	exportCmd.Flags().Bool("password-stdin", false, "Read export encryption password from stdin")
+	exportCmd.Flags().BoolP("force", "f", false, "Overwrite existing export file without prompting")
+	importCmd.Flags().Bool("password-stdin", false, "Read import decryption password from stdin")
+	importCmd.Flags().String("mode", "", "Merge strategy: overwrite, local-first, or import-first")
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(importCmd)
 }

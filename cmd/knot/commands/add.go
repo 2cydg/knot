@@ -20,6 +20,11 @@ var addCmd = &cobra.Command{
 		if len(args) > 0 {
 			alias = args[0]
 		}
+		if alias != "" {
+			if err := validateServerAliasForAdd(alias); err != nil {
+				return err
+			}
+		}
 
 		provider, err := crypto.NewProvider()
 		if err != nil {
@@ -48,10 +53,6 @@ var addCmd = &cobra.Command{
 			if alias == "" {
 				return fmt.Errorf("alias is required in non-interactive mode")
 			}
-			if len(alias) > 255 {
-				return fmt.Errorf("alias too long (max 255 characters)")
-			}
-
 			serverID, _, exists := cfg.FindServerByAlias(alias)
 			if !exists {
 				serverID, err = cfg.NewServerID()
@@ -155,8 +156,8 @@ var addCmd = &cobra.Command{
 				}
 				aliasStr = strings.TrimSpace(aliasStr)
 				if aliasStr != "" {
-					if len(aliasStr) > 255 {
-						fmt.Println("Alias too long (max 255 characters)")
+					if err := validateServerAliasForAdd(aliasStr); err != nil {
+						fmt.Println(err)
 						continue
 					}
 					alias = aliasStr
@@ -424,4 +425,19 @@ func init() {
 
 	addCmd.GroupID = coreGroup.ID
 	rootCmd.AddCommand(addCmd)
+}
+
+func validateServerAliasForAdd(alias string) error {
+	if len(alias) > 255 {
+		return fmt.Errorf("alias too long (max 255 characters)")
+	}
+	if !config.IsValidAlias(alias) {
+		return fmt.Errorf("invalid server alias format")
+	}
+	for _, cmd := range rootCmd.Commands() {
+		if commandNameOrAliasMatches(cmd, alias) {
+			return fmt.Errorf("server alias '%s' conflicts with a built-in command", alias)
+		}
+	}
+	return nil
 }
