@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"knot/internal/paths"
 	"knot/pkg/config"
 	"knot/pkg/crypto"
@@ -16,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var configOutput io.Writer = os.Stdout
+
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage global settings",
@@ -26,6 +29,8 @@ var configInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize or reset global configuration to defaults",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+
 		provider, err := crypto.NewProvider()
 		if err != nil {
 			return err
@@ -46,7 +51,7 @@ var configInitCmd = &cobra.Command{
 			return err
 		}
 
-		if exists {
+		if exists && !force {
 			// Interactive confirmation
 			line, err := readline.NewEx(&readline.Config{
 				Prompt:          "Configuration file already exists. Reset global settings to defaults? (y/N): ",
@@ -63,6 +68,8 @@ var configInitCmd = &cobra.Command{
 				fmt.Println("Initialization cancelled.")
 				return nil
 			}
+			fmt.Println("Resetting global settings (Servers/Proxies/Keys will be preserved)...")
+		} else if exists {
 			fmt.Println("Resetting global settings (Servers/Proxies/Keys will be preserved)...")
 		}
 
@@ -155,9 +162,9 @@ var configGetCmd = &cobra.Command{
 		}, func() error {
 			switch v := value.(type) {
 			case string, bool, int:
-				fmt.Println(v)
+				fmt.Fprintln(configOutput, v)
 			default:
-				encoder := json.NewEncoder(os.Stdout)
+				encoder := json.NewEncoder(configOutput)
 				encoder.SetIndent("", "  ")
 				return encoder.Encode(v)
 			}
@@ -284,8 +291,8 @@ func sanitizedSettings(cfg *config.Config) map[string]interface{} {
 
 func sanitizedConfig(cfg *config.Config) map[string]interface{} {
 	servers := make(map[string]interface{}, len(cfg.Servers))
-	for alias, srv := range cfg.Servers {
-		servers[alias] = map[string]interface{}{
+	for _, srv := range cfg.Servers {
+		servers[srv.Alias] = map[string]interface{}{
 			"alias":            srv.Alias,
 			"host":             srv.Host,
 			"port":             srv.Port,
@@ -302,8 +309,8 @@ func sanitizedConfig(cfg *config.Config) map[string]interface{} {
 	}
 
 	proxies := make(map[string]interface{}, len(cfg.Proxies))
-	for alias, proxy := range cfg.Proxies {
-		proxies[alias] = map[string]interface{}{
+	for _, proxy := range cfg.Proxies {
+		proxies[proxy.Alias] = map[string]interface{}{
 			"alias":        proxy.Alias,
 			"type":         proxy.Type,
 			"host":         proxy.Host,
@@ -314,8 +321,8 @@ func sanitizedConfig(cfg *config.Config) map[string]interface{} {
 	}
 
 	keys := make(map[string]interface{}, len(cfg.Keys))
-	for alias, key := range cfg.Keys {
-		keys[alias] = map[string]interface{}{
+	for _, key := range cfg.Keys {
+		keys[key.Alias] = map[string]interface{}{
 			"alias": key.Alias,
 			"type":  key.Type,
 			"bits":  key.Length,
@@ -323,8 +330,8 @@ func sanitizedConfig(cfg *config.Config) map[string]interface{} {
 	}
 
 	syncProviders := make(map[string]interface{}, len(cfg.SyncProviders))
-	for alias, provider := range cfg.SyncProviders {
-		syncProviders[alias] = map[string]interface{}{
+	for _, provider := range cfg.SyncProviders {
+		syncProviders[provider.Alias] = map[string]interface{}{
 			"alias":        provider.Alias,
 			"type":         provider.Type,
 			"url":          provider.URL,
@@ -370,6 +377,7 @@ func lookupConfigPath(data map[string]interface{}, rawPath string) (interface{},
 
 func init() {
 	configCmd.GroupID = managementGroup.ID
+	configInitCmd.Flags().BoolP("force", "y", false, "Reset global settings without interactive confirmation")
 	configCmd.AddCommand(configInitCmd, configListCmd, configGetCmd, configSetCmd)
 	rootCmd.AddCommand(configCmd)
 }
