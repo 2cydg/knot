@@ -66,9 +66,10 @@ func formatLastUsed(t time.Time) string {
 }
 
 var listCmd = &cobra.Command{
-	Use:     "list [pattern]",
-	Aliases: []string{"ls"},
-	Short:   "List servers by alias, target, tags, and recent usage",
+	Use:               "list [pattern]",
+	Aliases:           []string{"ls"},
+	Short:             "List servers by alias, target, tags, and recent usage",
+	ValidArgsFunction: listTagCompleter,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider, err := crypto.NewProvider()
 		if err != nil {
