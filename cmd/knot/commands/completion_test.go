@@ -199,6 +199,62 @@ func TestSyncProviderAliasCompleter(t *testing.T) {
 	}
 }
 
+func TestListCommandTagCompletion(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		t.Fatalf("failed to create crypto provider: %v", err)
+	}
+
+	cfg := &config.Config{
+		Settings: config.SettingsConfig{},
+		Servers: map[string]config.ServerConfig{
+			"srv_cloud": {
+				ID:    "srv_cloud",
+				Alias: "cloud-prod",
+				Host:  "example.invalid",
+				Tags:  []string{"Cloud"},
+			},
+			"srv_db": {
+				ID:    "srv_db",
+				Alias: "db-prod",
+				Host:  "db.example.invalid",
+				Tags:  []string{"Database"},
+			},
+		},
+		Proxies:       make(map[string]config.ProxyConfig),
+		Keys:          make(map[string]config.KeyConfig),
+		SyncProviders: make(map[string]config.SyncProviderConfig),
+	}
+	if err := cfg.Save(provider); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	if listCmd.ValidArgsFunction == nil {
+		t.Fatal("list should register ValidArgsFunction")
+	}
+
+	got, directive := listCmd.ValidArgsFunction(listCmd, nil, "C")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("list tag completion directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if want := []string{"Cloud"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("list tag completions = %#v, want %#v", got, want)
+	}
+
+	got, directive = listCmd.ValidArgsFunction(listCmd, []string{"Cloud"}, "")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("list extra arg completion directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if got != nil {
+		t.Fatalf("list extra arg completions = %#v, want nil", got)
+	}
+}
+
 func TestKeyCommandAliasCompletion(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
