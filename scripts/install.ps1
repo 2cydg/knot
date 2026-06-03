@@ -51,7 +51,13 @@ function Write-NextSteps {
     Write-Green "  knot [alias]  Connect to a saved server"
     Write-Host ""
     Write-Green "Shell completion:"
-    Write-Green "  knot completion powershell | Out-String | Invoke-Expression"
+    Write-Green '  $CompletionDir = Join-Path $HOME ".config\knot"'
+    Write-Green '  New-Item -ItemType Directory -Path $CompletionDir -Force | Out-Null'
+    Write-Green '  $CompletionPath = Join-Path $CompletionDir "completion.ps1"'
+    Write-Green '  knot completion powershell > $CompletionPath'
+    Write-Green '  if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }'
+    Write-Green '  $CompletionLine = ". `"$CompletionPath`""'
+    Write-Green '  if (-not (Select-String -Path $PROFILE -SimpleMatch $CompletionLine -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`n$CompletionLine" }'
     Write-Host ""
     Write-Host "Run `"knot --help`" for the full command reference."
     Write-Host "Enjoy."

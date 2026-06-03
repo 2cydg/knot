@@ -94,7 +94,7 @@ mkdir -p ~/.config/fish/completions && knot completion fish > ~/.config/fish/com
 knot completion powershell | Out-String | Invoke-Expression
 
 # 为当前用户永久启用
-if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }; if (-not (Select-String -Path $PROFILE -SimpleMatch 'knot completion powershell | Out-String | Invoke-Expression' -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`nknot completion powershell | Out-String | Invoke-Expression" }
+$CompletionDir = Join-Path $HOME ".config\knot"; New-Item -ItemType Directory -Path $CompletionDir -Force | Out-Null; $CompletionPath = Join-Path $CompletionDir "completion.ps1"; knot completion powershell > $CompletionPath; if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }; $CompletionLine = ". `"$CompletionPath`""; if (-not (Select-String -Path $PROFILE -SimpleMatch $CompletionLine -Quiet -ErrorAction SilentlyContinue)) { Add-Content -Path $PROFILE -Value "`n$CompletionLine" }
 ```
 
 ---

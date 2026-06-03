@@ -35,7 +35,9 @@ var (
 )
 
 func Execute() error {
-	setupCommandLogging()
+	if !isCompletionInvocation(os.Args) {
+		setupCommandLogging()
+	}
 	setupCryptoBootstrapNotice()
 
 	rewrittenArgs, err := rewriteArgsForAlias(os.Args, rootCmd)
@@ -153,6 +155,13 @@ func rewriteCompletionArgsForAlias(args []string, root *cobra.Command) ([]string
 
 func isShellCompletionCommand(arg string) bool {
 	return arg == cobra.ShellCompRequestCmd || arg == cobra.ShellCompNoDescRequestCmd
+}
+
+func isCompletionInvocation(args []string) bool {
+	if len(args) <= 1 {
+		return false
+	}
+	return isShellCompletionCommand(args[1]) || args[1] == "completion"
 }
 
 func commandNameOrAliasMatches(cmd *cobra.Command, value string) bool {

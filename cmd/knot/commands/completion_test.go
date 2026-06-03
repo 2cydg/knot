@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -199,6 +200,45 @@ func TestSyncProviderAliasCompleter(t *testing.T) {
 	}
 }
 
+func TestCompletionAliasUsesRawConfigWithoutDecryptingSecrets(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+	resetCompletionConfigCache()
+
+	provider, err := crypto.NewProvider()
+	if err != nil {
+		t.Fatalf("failed to create crypto provider: %v", err)
+	}
+
+	cfg := &config.Config{
+		Settings: config.SettingsConfig{},
+		Servers: map[string]config.ServerConfig{
+			"srv_prod": {
+				ID:       "srv_prod",
+				Alias:    "prod",
+				Host:     "example.invalid",
+				Password: "secret",
+			},
+		},
+		Proxies:       make(map[string]config.ProxyConfig),
+		Keys:          make(map[string]config.KeyConfig),
+		SyncProviders: make(map[string]config.SyncProviderConfig),
+	}
+	if err := cfg.Save(provider); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	got, directive := serverAliasCompleter(nil, nil, "p")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("serverAliasCompleter directive = %v, want %v", directive, cobra.ShellCompDirectiveNoFileComp)
+	}
+	if want := []string{"prod"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("serverAliasCompleter() = %#v, want %#v", got, want)
+	}
+}
+
 func TestListCommandTagCompletion(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
@@ -253,6 +293,31 @@ func TestListCommandTagCompletion(t *testing.T) {
 	if got != nil {
 		t.Fatalf("list extra arg completions = %#v, want nil", got)
 	}
+}
+
+func TestPowerShellCompletionDefaultsToNoDescriptions(t *testing.T) {
+	cmd := newCompletionCmd()
+	root := &cobra.Command{Use: "knot"}
+	root.AddCommand(cmd)
+
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"completion", "powershell"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("completion powershell failed: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "__completeNoDesc") {
+		t.Fatalf("PowerShell completion should request no-description completions by default")
+	}
+}
+
+func resetCompletionConfigCache() {
+	completionConfigCache.Lock()
+	defer completionConfigCache.Unlock()
+	completionConfigCache.entry = completionConfigCacheEntry{}
 }
 
 func TestKeyCommandAliasCompletion(t *testing.T) {
