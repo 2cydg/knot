@@ -13,11 +13,17 @@ knot completion [command]
 | `knot completion fish` | 生成 Fish 补全。 |
 | `knot completion powershell` | 生成 PowerShell 补全。 |
 
-每个补全命令都支持：
+Bash、Zsh 和 Fish 支持：
 
 | 选项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `--no-descriptions` | bool | `false` | 禁用补全描述。 |
+
+PowerShell 默认为无描述补全，以降低 shell 启动成本。它支持：
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `--descriptions` | bool | `false` | 启用补全描述。 |
 
 示例：
 
@@ -31,7 +37,11 @@ knot completion fish | source
 PowerShell:
 
 ```powershell
-knot completion powershell | Out-String | Invoke-Expression
+$CompletionDir = Join-Path $HOME ".config\knot"
+New-Item -ItemType Directory -Path $CompletionDir -Force | Out-Null
+$CompletionPath = Join-Path $CompletionDir "completion.ps1"
+knot completion powershell > $CompletionPath
+. $CompletionPath
 ```
 
 ## Sync 命令

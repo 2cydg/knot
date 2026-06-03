@@ -13,11 +13,17 @@ knot completion [command]
 | `knot completion fish` | Generate Fish completion. |
 | `knot completion powershell` | Generate PowerShell completion. |
 
-Every completion command supports:
+Bash, Zsh, and Fish support:
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--no-descriptions` | bool | `false` | Disable completion descriptions. |
+
+PowerShell defaults to no descriptions for faster shell startup. It supports:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--descriptions` | bool | `false` | Enable completion descriptions. |
 
 Examples:
 
@@ -31,7 +37,11 @@ knot completion fish | source
 PowerShell:
 
 ```powershell
-knot completion powershell | Out-String | Invoke-Expression
+$CompletionDir = Join-Path $HOME ".config\knot"
+New-Item -ItemType Directory -Path $CompletionDir -Force | Out-Null
+$CompletionPath = Join-Path $CompletionDir "completion.ps1"
+knot completion powershell > $CompletionPath
+. $CompletionPath
 ```
 
 ## Sync Commands

@@ -4,27 +4,57 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"knot/internal/paths"
 	"knot/internal/protocol"
 	"knot/pkg/config"
-	"knot/pkg/crypto"
 	"knot/pkg/daemon"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+type completionConfigCacheEntry struct {
+	path string
+	cfg  *config.Config
+	err  error
+}
+
+var completionConfigCache = struct {
+	sync.Mutex
+	entry completionConfigCacheEntry
+}{}
+
+func loadCompletionConfig() (*config.Config, error) {
+	configPath, err := paths.GetConfigPath()
+	if err != nil {
+		return nil, err
+	}
+
+	completionConfigCache.Lock()
+	defer completionConfigCache.Unlock()
+
+	if completionConfigCache.entry.path == configPath {
+		return completionConfigCache.entry.cfg, completionConfigCache.entry.err
+	}
+
+	cfg, err := config.LoadRawFromPath(configPath)
+	completionConfigCache.entry = completionConfigCacheEntry{
+		path: configPath,
+		cfg:  cfg,
+		err:  err,
+	}
+	return cfg, err
+}
 
 func serverAliasCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	provider, err := crypto.NewProvider()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	cfg, err := config.Load(provider)
+	cfg, err := loadCompletionConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
@@ -42,12 +72,7 @@ func listTagCompleter(cmd *cobra.Command, args []string, toComplete string) ([]s
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	provider, err := crypto.NewProvider()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	cfg, err := config.Load(provider)
+	cfg, err := loadCompletionConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
@@ -56,12 +81,7 @@ func listTagCompleter(cmd *cobra.Command, args []string, toComplete string) ([]s
 }
 
 func keyAliasCompleter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	provider, err := crypto.NewProvider()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	cfg, err := config.Load(provider)
+	cfg, err := loadCompletionConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
@@ -79,12 +99,7 @@ func proxyAliasCompleter(cmd *cobra.Command, args []string, toComplete string) (
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	provider, err := crypto.NewProvider()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	cfg, err := config.Load(provider)
+	cfg, err := loadCompletionConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
@@ -106,12 +121,7 @@ func syncProviderAliasCompleter(cmd *cobra.Command, args []string, toComplete st
 }
 
 func syncProviderAliasCompletions(toComplete string) ([]string, cobra.ShellCompDirective) {
-	provider, err := crypto.NewProvider()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	cfg, err := config.Load(provider)
+	cfg, err := loadCompletionConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
@@ -287,7 +297,7 @@ var sendBroadcastCompletionRequest = func(req protocol.BroadcastRequest) (*proto
 	if err != nil {
 		return nil, err
 	}
-	return client.SendBroadcastRequest(req)
+	return client.SendBroadcastCompletionRequest(req, 250*time.Millisecond)
 }
 
 func generateZshCompletion(cmd *cobra.Command, out io.Writer, noDesc bool) error {
@@ -325,6 +335,7 @@ fi
 
 func newCompletionCmd() *cobra.Command {
 	var noDesc bool
+	var withDesc bool
 
 	completionCmd := &cobra.Command{
 		Use:                   "completion",
@@ -336,6 +347,11 @@ func newCompletionCmd() *cobra.Command {
 
 	addNoDescFlag := func(cmd *cobra.Command) {
 		cmd.Flags().BoolVar(&noDesc, "no-descriptions", false, "Disable completion descriptions")
+	}
+	addDescFlags := func(cmd *cobra.Command) {
+		addNoDescFlag(cmd)
+		cmd.Flags().BoolVar(&withDesc, "descriptions", false, "Enable completion descriptions")
+		_ = cmd.Flags().MarkHidden("no-descriptions")
 	}
 
 	bashCmd := &cobra.Command{
@@ -377,13 +393,13 @@ func newCompletionCmd() *cobra.Command {
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if noDesc {
-				return cmd.Root().GenPowerShellCompletion(cmd.OutOrStdout())
+			if withDesc {
+				return cmd.Root().GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
 			}
-			return cmd.Root().GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
+			return cmd.Root().GenPowerShellCompletion(cmd.OutOrStdout())
 		},
 	}
-	addNoDescFlag(powershellCmd)
+	addDescFlags(powershellCmd)
 
 	completionCmd.AddCommand(bashCmd, zshCmd, fishCmd, powershellCmd)
 	return completionCmd

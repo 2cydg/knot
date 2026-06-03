@@ -98,8 +98,15 @@ knot completion powershell | Out-String | Invoke-Expression
 持久启用：
 
 ```powershell
-New-Item -Type File -Path $PROFILE -Force
-Add-Content -Path $PROFILE -Value 'knot completion powershell | Out-String | Invoke-Expression'
+$CompletionDir = Join-Path $HOME ".config\knot"
+New-Item -ItemType Directory -Path $CompletionDir -Force | Out-Null
+$CompletionPath = Join-Path $CompletionDir "completion.ps1"
+knot completion powershell > $CompletionPath
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }
+$CompletionLine = ". `"$CompletionPath`""
+if (-not (Select-String -Path $PROFILE -SimpleMatch $CompletionLine -Quiet -ErrorAction SilentlyContinue)) {
+    Add-Content -Path $PROFILE -Value "`n$CompletionLine"
+}
 ```
 
 更多细节见 [Shell 补全与版本](/zh/reference/cli)。
